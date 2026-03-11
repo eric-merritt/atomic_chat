@@ -9,7 +9,7 @@ import json
 import re
 from uuid import uuid4
 import ollama as ollama_client
-from flask import Flask, request, jsonify, Response, stream_with_context, render_template_string
+from flask import Flask, request, jsonify, Response, stream_with_context, render_template_string, send_file
 
 from langchain_ollama import ChatOllama
 from langchain.agents import create_agent, AgentState
@@ -20,6 +20,9 @@ from langchain_core.caches import BaseCache
 from langgraph.types import Checkpointer
 from langgraph.store.base import BaseStore
 
+import httpx
+
+from config import AGENT_PORTS, agent_url
 from tools import ALL_TOOLS
 
 
@@ -156,49 +159,8 @@ INDEX_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" type="text/css" href="main.css">
 <title>Agentic Chat</title>
-<style>
-  :root{--bg:#1a1a2e;--surface:#16213e;--panel:#0f3460;--accent:#e94560;--text:#eee;--dim:#888;--mono:'Consolas','Monaco','Courier New',monospace;--border:#2a2a4a}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column}
-  header{background:var(--surface);padding:10px 20px;display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--border)}
-  header h1{font-size:16px;white-space:nowrap}
-  header select{background:var(--panel);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:4px;font-size:13px}
-  header .status{font-size:12px;color:var(--dim);margin-left:auto}
-  .container{display:flex;flex:1;overflow:hidden}
-  /* Tool browser sidebar */
-  .sidebar{width:340px;min-width:260px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;font-size:13px}
-  .sidebar h2{font-size:13px;padding:10px 12px 6px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
-  .tool-columns{display:flex;flex:1;overflow:hidden}
-  .tool-col{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:4px}
-  .tool-col-header{text-align:center;font-size:11px;color:var(--dim);padding:4px;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
-  .tool-btn-col{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:0 2px;min-width:32px}
-  .tool-btn-col button{background:var(--panel);color:var(--accent);border:1px solid var(--border);border-radius:3px;width:28px;height:24px;cursor:pointer;font-size:14px;font-weight:bold;display:flex;align-items:center;justify-content:center}
-  .tool-btn-col button:hover{background:var(--accent);color:#fff}
-  .tool-item{padding:5px 8px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tool-item:hover{background:var(--panel)}
-  .tool-item.active{background:var(--panel);border-left:2px solid var(--accent)}
-  .tool-detail{border-top:1px solid var(--border);padding:10px 12px;font-family:var(--mono);font-size:12px;max-height:200px;overflow-y:auto;background:var(--bg)}
-  .tool-detail .param{margin:4px 0}
-  .tool-detail .req{color:var(--accent)}
-  .tool-detail .def{color:var(--dim)}
-  /* Chat area */
-  .chat-area{flex:1;display:flex;flex-direction:column}
-  .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
-  .msg{max-width:80%;padding:10px 14px;border-radius:8px;font-size:14px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word;font-family:var(--mono)}
-  .msg.user{align-self:flex-end;background:var(--panel);border-bottom-right-radius:2px}
-  .msg.assistant{align-self:flex-start;background:var(--surface);border-bottom-left-radius:2px}
-  .msg.tool-call{align-self:flex-start;background:#1a2a1a;border-left:2px solid #4a8;font-size:12px;color:var(--dim)}
-  .msg.error{align-self:center;background:#3a1a1a;border:1px solid var(--accent);color:var(--accent);font-size:12px}
-  .input-bar{display:flex;gap:8px;padding:12px 16px;background:var(--surface);border-top:1px solid var(--border)}
-  .input-bar input{flex:1;background:var(--bg);color:var(--text);border:1px solid var(--border);padding:10px 14px;border-radius:6px;font-size:14px;font-family:var(--mono)}
-  .input-bar input:focus{outline:none;border-color:var(--accent)}
-  .input-bar button{background:var(--accent);color:#fff;border:none;padding:10px 20px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:600}
-  .input-bar button:disabled{opacity:.4;cursor:default}
-  .input-bar button:hover:not(:disabled){filter:brightness(1.2)}
-  .clear-btn{background:transparent;color:var(--dim);border:1px solid var(--border);padding:10px 14px;border-radius:6px;cursor:pointer;font-size:12px}
-  .clear-btn:hover{color:var(--text);border-color:var(--text)}
-</style>
 </head>
 <body>
 
@@ -248,7 +210,7 @@ let focusedTool=null, focusedSide=null;
 // ── Models ──
 async function loadModels(){
   const d=await api('/models');
-  const sel=$('#model-select');
+  const sel=document.getElementById('model-select');
   sel.innerHTML='<option value="">-- pick a model --</option>';
   (d.models||[]).forEach(m=>{
     const o=document.createElement('option');
@@ -257,23 +219,23 @@ async function loadModels(){
     sel.appendChild(o);
   });
   if(d.current){
-    $('#status').textContent='Model: '+d.current;
-    $('#send-btn').disabled=false;
+    document.getElementById('status').textContent='Model: '+d.current;
+    document.getElementById('send-btn').disabled=false;
   }
 }
-$('#model-select').onchange=async function(){
-  if(!this.value){$('#send-btn').disabled=true;return;}
+document.getElementById('model-select').onchange=async function(){
+  if(!this.value){document.getElementById('send-btn').disabled=true;return;}
   await post('/models',{model:this.value});
-  $('#status').textContent='Model: '+this.value;
-  $('#send-btn').disabled=false;
-  $('#messages').innerHTML='';
+  document.getElementById('status').textContent='Model: '+this.value;
+  document.getElementById('send-btn').disabled=false;
+  document.getElementById('chat-input').innerHTML='';
 };
 
 // ── Tools ──
 async function loadTools(){
   const d=await api('/tools');
-  renderToolCol($('#available-list'),d.available,'available');
-  renderToolCol($('#selected-list'),d.selected,'selected');
+  renderToolCol(document.getElementById('available-list'),d.available,'available');
+  renderToolCol(document.getElementById('selected-list'),d.selected,'selected');
 }
 function renderToolCol(el,items,side){
   const header=el.querySelector('.tool-col-header');
@@ -294,7 +256,7 @@ function renderToolCol(el,items,side){
   });
 }
 function showToolDetail(t){
-  const el=$('#tool-detail');
+  const el=document.getElementById('tool-detail');
   let h='<b>'+t.name+'</b>: '+t.description+'<br>';
   const params=t.params||{};
   if(Object.keys(params).length===0){h+='<span class="def">No parameters</span>';}
@@ -306,13 +268,13 @@ function showToolDetail(t){
   });}
   el.innerHTML=h;
 }
-$('#btn-select').onclick=async()=>{
+document.getElementById('btn-select').onclick=async()=>{
   if(focusedTool===null||focusedSide!=='available')return;
   await post('/tools/select',{index:focusedTool});
   focusedTool=null;focusedSide=null;
   loadTools();
 };
-$('#btn-deselect').onclick=async()=>{
+document.getElementById('btn-deselect').onclick=async()=>{
   if(focusedTool===null||focusedSide!=='selected')return;
   await post('/tools/deselect',{index:focusedTool});
   focusedTool=null;focusedSide=null;
@@ -324,17 +286,18 @@ function addMsg(role,text){
   const div=document.createElement('div');
   div.className='msg '+role;
   div.textContent=text;
-  $('#messages').appendChild(div);
-  $('#messages').scrollTop=$('#messages').scrollHeight;
+  const msgs = document.getElementById('messages')
+  msgs.appendChild(div);
+  msgs.scrollTop=msgs.scrollHeight;
   return div;
 }
 async function sendMessage(){
-  const input=$('#chat-input');
+  const input=document.getElementById('chat-input');
   const msg=input.value.trim();
   if(!msg)return;
   input.value='';
   addMsg('user',msg);
-  $('#send-btn').disabled=true;
+  document.getElementById('send-btn').disabled=true;
   const assistantDiv=addMsg('assistant','...');
   try{
     const resp=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
@@ -342,7 +305,7 @@ async function sendMessage(){
       const err=await resp.json().catch(()=>({}));
       addMsg('error',err.error||'HTTP '+resp.status);
       assistantDiv.remove();
-      $('#send-btn').disabled=!$('#model-select').value;
+      document.getElementById('send-btn').disabled=!document.getElementById('model-select').value;
       return;
     }
     // Try ReadableStream first, fall back to text
@@ -398,13 +361,13 @@ async function sendMessage(){
     addMsg('error','Network error: '+e.message);
     console.error(e);
   }
-  $('#send-btn').disabled=!$('#model-select').value;
+  document.getElementById('send-btn').disabled=!document.getElementById('model-select').value;
 }
-$('#send-btn').onclick=sendMessage;
-$('#chat-input').onkeydown=e=>{if(e.key==='Enter'&&!$('#send-btn').disabled)sendMessage()};
-$('#clear-btn').onclick=async()=>{
+document.getElementById('send-btn').onclick=sendMessage;
+document.getElementById('chat-input').onkeydown=e=>{if(e.key==='Enter'&&!document.getElementById('send-btn').disabled)sendMessage()};
+document.getElementById('clear-btn').onclick=async()=>{
   await fetch('/api/history',{method:'DELETE'});
-  $('#messages').innerHTML='';
+  document.getElementById('messages').innerHTML='';
 };
 
 // ── Init ──
@@ -417,6 +380,11 @@ loadModels();loadTools();
 @app.route("/")
 def index():
     return render_template_string(INDEX_HTML)
+
+
+@app.route("/main.css")
+def serve_css():
+    return send_file("main.css", mimetype="text/css")
 
 
 # ── State ────────────────────────────────────────────────────────────────────
@@ -757,6 +725,56 @@ def chat_stream():
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Agent proxy endpoints ────────────────────────────────────────────────────
+
+@app.route("/api/agent/<agent_name>/call", methods=["POST"])
+def call_agent(agent_name: str):
+    """Proxy a tool call to a specific agent.
+
+    Body: {"tool": "tool_name", "params": {...}}
+    """
+    if agent_name not in AGENT_PORTS:
+        return jsonify({"error": f"Unknown agent: {agent_name}"}), 404
+
+    data = request.get_json(force=True)
+    tool_name = data.get("tool", "")
+    params = data.get("params", {})
+
+    try:
+        url = agent_url(agent_name)
+        resp = httpx.post(
+            f"{url}/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": params},
+                "id": 1,
+            },
+            timeout=60.0,
+        )
+        return jsonify(resp.json())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/agents", methods=["GET"])
+def list_agents():
+    """List all available agents and their status."""
+    agents = {}
+    for name, port in AGENT_PORTS.items():
+        try:
+            resp = httpx.post(
+                f"http://127.0.0.1:{port}/mcp",
+                json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
+                timeout=2.0,
+            )
+            resp.raise_for_status()
+            agents[name] = {"port": port, "status": "up"}
+        except Exception:
+            agents[name] = {"port": port, "status": "down"}
+    return jsonify(agents)
 
 
 @app.route("/api/history", methods=["GET"])
