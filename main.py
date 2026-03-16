@@ -9,7 +9,8 @@ import json
 import re
 from uuid import uuid4
 import ollama as ollama_client
-from flask import Flask, request, jsonify, Response, stream_with_context, render_template_string, send_file
+import os as _os
+from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 
 from langchain_ollama import ChatOllama
 from langchain.agents import create_agent, AgentState
@@ -153,238 +154,20 @@ class ToolCallFixerChatModel(ChatOllama):
 
 app = Flask(__name__)
 
-
-INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" type="text/css" href="main.css">
-<title>Agentic Chat</title>
-</head>
-<body>
-
-<header>
-  <h1>Agentic Chat</h1>
-  <select id="model-select"><option value="">Loading models...</option></select>
-  <span class="status" id="status">No model selected</span>
-</header>
-
-<div class="container">
-  <!-- Tool browser sidebar -->
-  <div class="sidebar">
-    <h2>Tool Browser</h2>
-    <div class="tool-columns">
-      <div class="tool-col" id="available-list">
-        <div class="tool-col-header">Available</div>
-      </div>
-      <div class="tool-btn-col">
-        <button id="btn-select" title="Select tool">&gt;</button>
-        <button id="btn-deselect" title="Deselect tool">&lt;</button>
-      </div>
-      <div class="tool-col" id="selected-list">
-        <div class="tool-col-header">Selected</div>
-      </div>
-    </div>
-    <div class="tool-detail" id="tool-detail">Click a tool to see its parameters</div>
-  </div>
-
-  <!-- Chat -->
-  <div class="chat-area">
-    <div class="messages" id="messages"></div>
-    <div class="input-bar">
-      <button class="clear-btn" id="clear-btn">Clear</button>
-      <input type="text" id="chat-input" placeholder="Type a message..." autocomplete="off">
-      <button id="send-btn" disabled>Send</button>
-    </div>
-  </div>
-</div>
-
-<script>
-const $=s=>document.querySelector(s);
-const api=async(path,opts)=>{const r=await fetch('/api'+path,opts);return r.json()};
-const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-
-let focusedTool=null, focusedSide=null;
-
-// ── Models ──
-async function loadModels(){
-  const d=await api('/models');
-  const sel=document.getElementById('model-select');
-  sel.innerHTML='<option value="">-- pick a model --</option>';
-  (d.models||[]).forEach(m=>{
-    const o=document.createElement('option');
-    o.value=m;o.textContent=m;
-    if(m===d.current)o.selected=true;
-    sel.appendChild(o);
-  });
-  if(d.current){
-    document.getElementById('status').textContent='Model: '+d.current;
-    document.getElementById('send-btn').disabled=false;
-  }
-}
-document.getElementById('model-select').onchange=async function(){
-  if(!this.value){document.getElementById('send-btn').disabled=true;return;}
-  await post('/models',{model:this.value});
-  document.getElementById('status').textContent='Model: '+this.value;
-  document.getElementById('send-btn').disabled=false;
-  document.getElementById('chat-input').innerHTML='';
-};
-
-// ── Tools ──
-async function loadTools(){
-  const d=await api('/tools');
-  renderToolCol(document.getElementById('available-list'),d.available,'available');
-  renderToolCol(document.getElementById('selected-list'),d.selected,'selected');
-}
-function renderToolCol(el,items,side){
-  const header=el.querySelector('.tool-col-header');
-  el.innerHTML='';
-  el.appendChild(header);
-  items.forEach(t=>{
-    const div=document.createElement('div');
-    div.className='tool-item';
-    div.textContent=t.name;
-    div.dataset.index=t.index;
-    div.onclick=()=>{
-      el.querySelectorAll('.tool-item').forEach(x=>x.classList.remove('active'));
-      div.classList.add('active');
-      focusedTool=t.index;focusedSide=side;
-      showToolDetail(t);
-    };
-    el.appendChild(div);
-  });
-}
-function showToolDetail(t){
-  const el=document.getElementById('tool-detail');
-  let h='<b>'+t.name+'</b>: '+t.description+'<br>';
-  const params=t.params||{};
-  if(Object.keys(params).length===0){h+='<span class="def">No parameters</span>';}
-  else{Object.entries(params).forEach(([k,v])=>{
-    const req=v.required?'<span class="req">*</span>':'';
-    const def='default'in v?' <span class="def">(default: '+v.default+')</span>':'';
-    h+='<div class="param">'+req+k+' <span class="def">('+v.type+')</span>'+def+'</div>';
-    if(v.description)h+='<div class="param" style="margin-left:12px;color:var(--dim)">'+v.description+'</div>';
-  });}
-  el.innerHTML=h;
-}
-document.getElementById('btn-select').onclick=async()=>{
-  if(focusedTool===null||focusedSide!=='available')return;
-  await post('/tools/select',{index:focusedTool});
-  focusedTool=null;focusedSide=null;
-  loadTools();
-};
-document.getElementById('btn-deselect').onclick=async()=>{
-  if(focusedTool===null||focusedSide!=='selected')return;
-  await post('/tools/deselect',{index:focusedTool});
-  focusedTool=null;focusedSide=null;
-  loadTools();
-};
-
-// ── Chat ──
-function addMsg(role,text){
-  const div=document.createElement('div');
-  div.className='msg '+role;
-  div.textContent=text;
-  const msgs = document.getElementById('messages')
-  msgs.appendChild(div);
-  msgs.scrollTop=msgs.scrollHeight;
-  return div;
-}
-async function sendMessage(){
-  const input=document.getElementById('chat-input');
-  const msg=input.value.trim();
-  if(!msg)return;
-  input.value='';
-  addMsg('user',msg);
-  document.getElementById('send-btn').disabled=true;
-  const assistantDiv=addMsg('assistant','...');
-  try{
-    const resp=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
-    if(!resp.ok){
-      const err=await resp.json().catch(()=>({}));
-      addMsg('error',err.error||'HTTP '+resp.status);
-      assistantDiv.remove();
-      document.getElementById('send-btn').disabled=!document.getElementById('model-select').value;
-      return;
-    }
-    // Try ReadableStream first, fall back to text
-    if(resp.body&&resp.body.getReader){
-      const reader=resp.body.getReader();
-      const decoder=new TextDecoder();
-      let buf='',started=false;
-      while(true){
-        const{done,value}=await reader.read();
-        if(done)break;
-        buf+=decoder.decode(value,{stream:true});
-        const lines=buf.split('\n');
-        buf=lines.pop();
-        for(const line of lines){
-          if(!line.trim())continue;
-          try{
-            const ev=JSON.parse(line);
-            if(ev.tool_call){
-              addMsg('tool-call','['+ev.tool_call.tool+'] '+ev.tool_call.input);
-            }else if(ev.tool_result){
-              addMsg('tool-call','  -> '+ev.tool_result.output.slice(0,200));
-            }else if(ev.chunk){
-              if(!started){assistantDiv.textContent='';started=true;}
-              assistantDiv.textContent=ev.chunk;
-            }else if(ev.error){
-              addMsg('error',ev.error);
-            }
-          }catch(pe){console.warn('parse error',pe,line)}
-        }
-      }
-    }else{
-      // Fallback: read entire body
-      const text=await resp.text();
-      const lines=text.trim().split('\n');
-      let started=false;
-      for(const line of lines){
-        if(!line.trim())continue;
-        try{
-          const ev=JSON.parse(line);
-          if(ev.chunk){
-            if(!started){assistantDiv.textContent='';started=true;}
-            assistantDiv.textContent=ev.chunk;
-          }else if(ev.tool_call){
-            addMsg('tool-call','['+ev.tool_call.tool+'] '+ev.tool_call.input);
-          }else if(ev.error){
-            addMsg('error',ev.error);
-          }
-        }catch(pe){}
-      }
-    }
-    if(assistantDiv.textContent==='...')assistantDiv.textContent='(no response)';
-  }catch(e){
-    addMsg('error','Network error: '+e.message);
-    console.error(e);
-  }
-  document.getElementById('send-btn').disabled=!document.getElementById('model-select').value;
-}
-document.getElementById('send-btn').onclick=sendMessage;
-document.getElementById('chat-input').onkeydown=e=>{if(e.key==='Enter'&&!document.getElementById('send-btn').disabled)sendMessage()};
-document.getElementById('clear-btn').onclick=async()=>{
-  await fetch('/api/history',{method:'DELETE'});
-  document.getElementById('messages').innerHTML='';
-};
-
-// ── Init ──
-loadModels();loadTools();
-</script>
-</body>
-</html>"""
+_FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
 
 
-@app.route("/")
-def index():
-    return render_template_string(INDEX_HTML)
-
-
-@app.route("/main.css")
-def serve_css():
-    return send_file("main.css", mimetype="text/css")
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    """Serve React SPA from frontend/dist/."""
+    full = _os.path.join(_FRONTEND_DIST, path)
+    if path and _os.path.isfile(full):
+        return send_file(full)
+    index = _os.path.join(_FRONTEND_DIST, "index.html")
+    if _os.path.isfile(index):
+        return send_file(index)
+    return "Frontend not built. Run: cd frontend && npm run build", 404
 
 
 # ── State ────────────────────────────────────────────────────────────────────

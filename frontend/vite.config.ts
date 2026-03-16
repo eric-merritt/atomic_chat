@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -10,6 +10,10 @@ export default defineConfig({
       '/api': 'http://localhost:5000',
       '/static': 'http://localhost:5000',
     },
+  },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
   },
   test: {
     globals: true,
