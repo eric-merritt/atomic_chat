@@ -4,14 +4,7 @@ import { ModelProvider } from './providers/ModelProvider';
 import { ToolProvider } from './providers/ToolProvider';
 import { ChatProvider } from './providers/ChatProvider';
 import { WebSocketProvider } from './providers/WebSocketProvider';
-
-function ChatPage() {
-  return (
-    <div className="min-h-screen bg-[var(--bg-base)] text-[var(--text)]">
-      <p>Agentic Chat — providers wired</p>
-    </div>
-  );
-}
+import { ChatPage } from './pages/ChatPage';
 
 export default function App() {
   return (
