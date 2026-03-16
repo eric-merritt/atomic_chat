@@ -8,9 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+.client-venv
 
 # Git worktrees
 .worktrees/
+
+# Environment secrets
+.env
+.env.client
 
 # Logs
 *.log
