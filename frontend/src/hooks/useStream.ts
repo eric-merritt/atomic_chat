@@ -35,6 +35,9 @@ export function useStream() {
   const abortRef = useRef<(() => void) | null>(null);
 
   const start = useCallback(async (message: string, callbacks: StreamCallbacks) => {
+    // Abort any existing stream before starting a new one
+    abortRef.current?.();
+
     try {
       const { reader, abort } = await streamChatAsync(message);
       abortRef.current = abort;

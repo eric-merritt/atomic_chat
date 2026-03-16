@@ -21,9 +21,13 @@ export function ModelProvider({ children }: { children: ReactNode }) {
     apiFetchModels().then((result) => {
       setModels(result.data);
       if (result.current) {
-        const match = result.data.find((m) => modelId(m) === result.current);
+        const match = result.data.find(
+          (m) => modelId(m) === result.current
+        );
         setCurrent(match ?? null);
       }
+      setLoading(false);
+    }).catch(() => {
       setLoading(false);
     });
   }, []);

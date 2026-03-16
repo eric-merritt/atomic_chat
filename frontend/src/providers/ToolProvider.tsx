@@ -19,7 +19,7 @@ export function ToolProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<ToolCategory[]>([]);
 
   useEffect(() => {
-    apiFetchTools().then((r) => { if (r.data) setCategories(r.data); });
+    apiFetchTools().then((r) => { if (r.data) setCategories(r.data); }).catch(() => {});
   }, []);
 
   const toggleTool = useCallback(async (name: string) => {

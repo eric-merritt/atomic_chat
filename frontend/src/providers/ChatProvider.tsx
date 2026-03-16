@@ -19,21 +19,28 @@ export const ChatContext = createContext<ChatContextValue | null>(null);
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const streamingRef = useRef(false);
   const { start, stop } = useStream();
   const { current: currentModel } = useModels();
   const prevModelRef = useRef(currentModel);
 
   useEffect(() => {
     if (prevModelRef.current && currentModel && prevModelRef.current !== currentModel) {
+      stop();
+      cancelChat();
+      setStreaming(false);
+      streamingRef.current = false;
       setMessages([]);
     }
     prevModelRef.current = currentModel;
-  }, [currentModel]);
+  }, [currentModel, stop]);
 
   const sendMessage = useCallback((text: string) => {
+    if (streamingRef.current) return;
     const userMsg = createMessage('user', text);
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
+    streamingRef.current = true;
 
     let assistantCreated = false;
 
@@ -70,10 +77,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             break;
         }
       },
-      onDone: () => { setStreaming(false); },
+      onDone: () => { setStreaming(false); streamingRef.current = false; },
       onError: (error) => {
         setMessages((prev) => [...prev, createMessage('error', error)]);
         setStreaming(false);
+        streamingRef.current = false;
       },
     });
   }, [start]);
@@ -82,6 +90,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     stop();
     cancelChat();
     setStreaming(false);
+    streamingRef.current = false;
   }, [stop]);
 
   const clearHistory = useCallback(async () => {
