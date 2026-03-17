@@ -17,5 +17,12 @@ wheels/
 .env
 .env.client
 
+# Git worktrees
+.worktrees/
+
 # Logs
 *.log
+
+# Frontend
+frontend/node_modules/
+frontend/dist/

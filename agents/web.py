@@ -1,24 +1,27 @@
-"""Web agent — HTTP tool server for web search and URL fetching.
+"""Web agent — MCP server for web search and URL fetching.
 
 Port: 8103
-Tools: 3 web tools
-No LLM. Pure tool execution.
+Tools: 2 web tools
+Model: small abliterated (configured in config.py)
 """
 
-from agents.base import create_tool_server
+from agents.base import create_mcp_agent
 from tools.web import WEB_TOOLS
 from config import AGENT_PORTS
 
+SYSTEM_PROMPT = """Fetch web content and return raw results.
+Return the actual text/data from web pages. No summarization.
+If a page fails to load, return the error. Do not speculate about why."""
+
 
 def create_app():
-    return create_tool_server(
-        name="web",
+    return create_mcp_agent(
+        name="web-agent",
         tools=WEB_TOOLS,
-        port=AGENT_PORTS["web"],
+        system_prompt=SYSTEM_PROMPT,
     )
 
 
 if __name__ == "__main__":
-    import uvicorn
     app = create_app()
-    uvicorn.run(app, host="127.0.0.1", port=AGENT_PORTS["web"])
+    app.run(transport="streamable-http", port=AGENT_PORTS["web"])

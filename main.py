@@ -3,899 +3,276 @@ Agentic chat app with Flask API, Ollama model selection,
 and a 2-column tool browser with > / < selection controls.
 All tools are always bound to the agent — the browser just
 lets you inspect what params each tool needs.
-
-Dual-mode execution:
-  - Internal (personal key + home IP): tools execute server-side
-  - External (external key): tool calls route to client via WebSocket
 """
 
 import json
-import os
 import re
-import threading
-from typing import Sequence
 from uuid import uuid4
 import ollama as ollama_client
-from dotenv import load_dotenv
-from flask import Flask, request, jsonify, Response, stream_with_context, render_template_string, send_file, g, abort
-from flask_sock import Sock
+import os as _os
+from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 
-from langchain_ollama import ChatOllama, OllamaEmbeddings
-from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage, ToolCall, ToolMessage
-from langchain_core.tools import BaseTool
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_chroma import Chroma
+from langchain_ollama import ChatOllama
+from langchain.agents import create_agent, AgentState
+from langchain.agents.middleware.types import AgentMiddleware
+from langchain.agents.structured_output import ResponseFormat
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolCall
+from langchain_core.caches import BaseCache
+from langgraph.types import Checkpointer
+from langgraph.store.base import BaseStore
 
 import httpx
 
-load_dotenv()
+from config import AGENT_PORTS, agent_url
+from tools import ALL_TOOLS
 
-PERSONAL_API_KEY = os.environ["PERSONAL_API_KEY"]
-EXTERNAL_API_KEY = os.environ["EXTERNAL_API_KEY"]
-HOME_IP = os.environ.get("HOME_IP", "50.248.206.70")
 
-from config import AGENT_PORTS, agent_url, NUM_CTX, CHROMA_DIR, EMBED_MODEL, RETRIEVAL_K, RETRIEVAL_MIN_SCORE
-from tools import ALL_TOOLS, TOOL_CATEGORIES, DEFAULT_SELECTED
-
-# ── Tool typing and selection ─────────────────────────────────────────────────
+# ── Tool-call fixer ──────────────────────────────────────────────────────────
+# Many Ollama models (qwen, llama, etc.) emit tool calls as JSON text in
+# message.content instead of populating message.tool_calls.  This wrapper
+# detects that pattern and promotes the text to real ToolCall objects so
+# LangGraph's agent loop can route to the tools node.
 
 _TOOL_NAMES = {t.name for t in ALL_TOOLS}
 
 
-# ── ChromaDB context retrieval ────────────────────────────────────────────────
+def _try_parse_tool_calls(content: str) -> list[ToolCall] | None:
+    """Try to extract tool call(s) from raw JSON text content.
 
-_chroma_db = None
-
-def _get_chroma():
-    global _chroma_db
-    if _chroma_db is None:
-        _chroma_db = Chroma(
-            persist_directory=CHROMA_DIR,
-            embedding_function=OllamaEmbeddings(model=EMBED_MODEL),
-        )
-    return _chroma_db
-
-
-def get_relevant_context(query: str, k: int = RETRIEVAL_K,
-                         min_score: float = RETRIEVAL_MIN_SCORE) -> str:
-    """Retrieve relevant docs from Chroma, gated by relevance score.
-
-    Only chunks scoring above min_score are included — avoids injecting
-    irrelevant context that dilutes the prompt for tool-heavy queries.
+    Handles several patterns Ollama models use:
+    1. Pure JSON text (entire content is a valid tool call)
+    2. Content entirely wrapped in markdown fences
+    3. Markdown fences embedded in prose/explanation text
+    4. Bare JSON objects embedded in prose text
     """
-    try:
-        db = _get_chroma()
-        scored = db.similarity_search_with_relevance_scores(query, k=k)
-        if not scored:
-            return ""
-        chunks = []
-        for doc, score in scored:
-            if score < min_score:
-                continue
-            src = doc.metadata.get("path", "unknown")
-            chunks.append(f"[{src} (score={score:.2f})]\n{doc.page_content}")
-        return "\n\n---\n\n".join(chunks)
-    except Exception:
-        return ""
-
-
-# ── Tool call fixer middleware ────────────────────────────────────────────────
-# Ollama models often emit tool calls as JSON text in <tools> tags or bare JSON
-# instead of using the native tool calling protocol.  This middleware intercepts
-# after each model call and promotes text-based tool calls to real ToolCalls.
-
-def _extract_tool_calls(content: str) -> list[ToolCall] | None:
-    """Parse tool call JSON from <tools> tags or bare JSON in model output."""
-    if not content or not content.strip():
+    text = content.strip()
+    if not text:
         return None
 
-    candidates = []
+    def _parse_obj(parsed) -> list[ToolCall] | None:
+        """Convert parsed JSON to ToolCall(s) if it looks like one."""
+        if isinstance(parsed, dict) and "name" in parsed and parsed["name"] in _TOOL_NAMES:
+            return [ToolCall(
+                name=parsed["name"],
+                args=parsed.get("arguments") or parsed.get("args") or {},
+                id=str(uuid4()),
+            )]
+        if isinstance(parsed, list):
+            calls = []
+            for item in parsed:
+                if isinstance(item, dict) and item.get("name") in _TOOL_NAMES:
+                    calls.append(ToolCall(
+                        name=item["name"],
+                        args=item.get("arguments") or item.get("args") or {},
+                        id=str(uuid4()),
+                    ))
+            return calls or None
+        return None
 
-    # 1. <tools>...</tools> wrapped JSON
-    for m in re.finditer(r"<tools?>(.*?)</tools?>", content, re.DOTALL):
-        candidates.append(m.group(1).strip())
+    # 1. Try the entire content as JSON (maybe after stripping outer fences)
+    attempt = text
+    fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", attempt, re.DOTALL)
+    if fence_match:
+        attempt = fence_match.group(1).strip()
+    try:
+        result = _parse_obj(json.loads(attempt))
+        if result:
+            return result
+    except json.JSONDecodeError:
+        pass
 
-    # 2. Fenced JSON blocks
-    for m in re.finditer(r"```(?:json)?\s*\n?(.*?)\n?\s*```", content, re.DOTALL):
-        candidates.append(m.group(1).strip())
-
-    # 3. Any JSON object in the text that looks like a tool call
-    #    Handles "Let me search...\n{...}" and similar mixed text+JSON
-    for m in re.finditer(r'\{', content):
-        start = m.start()
-        # Try to parse JSON starting at each '{' that could be a tool call
-        remainder = content[start:]
-        if '"name"' not in remainder[:200]:
-            continue
+    # 2. Search for fenced JSON blocks anywhere in the text
+    for m in re.finditer(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL):
         try:
-            obj = json.loads(remainder[:remainder.index('\n\n')] if '\n\n' in remainder else remainder)
-            if isinstance(obj, dict) and "name" in obj:
-                candidates.append(json.dumps(obj))
-        except (json.JSONDecodeError, ValueError):
-            # Try progressively finding the matching closing brace
-            depth = 0
-            for i, ch in enumerate(remainder):
-                if ch == '{':
-                    depth += 1
-                elif ch == '}':
-                    depth -= 1
-                    if depth == 0:
-                        try:
-                            obj = json.loads(remainder[:i + 1])
-                            if isinstance(obj, dict) and "name" in obj:
-                                candidates.append(remainder[:i + 1])
-                        except json.JSONDecodeError:
-                            pass
-                        break
-
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
+            result = _parse_obj(json.loads(m.group(1).strip()))
+            if result:
+                return result
         except json.JSONDecodeError:
             continue
 
-        items = parsed if isinstance(parsed, list) else [parsed]
-        calls = []
-        for item in items:
-            if isinstance(item, dict) and item.get("name") in _TOOL_NAMES:
-                calls.append(ToolCall(
-                    name=item["name"],
-                    args=item.get("arguments") or item.get("args") or {},
-                    id=str(uuid4()),
-                ))
-        if calls:
-            return calls
+    # 3. Search for bare JSON objects containing a tool name anywhere in text
+    for m in re.finditer(r"\{[^{}]*\"name\"\s*:\s*\"[^\"]+\"[^{}]*\{.*?\}[^{}]*\}", text, re.DOTALL):
+        try:
+            result = _parse_obj(json.loads(m.group(0)))
+            if result:
+                return result
+        except json.JSONDecodeError:
+            continue
+
+    # 4. Greedy brace matching: find outermost { ... } containing a tool name
+    for m in re.finditer(r"\{", text):
+        start = m.start()
+        depth = 0
+        end = start
+        for i in range(start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        if depth == 0 and end > start:
+            candidate = text[start:end]
+            try:
+                result = _parse_obj(json.loads(candidate))
+                if result:
+                    return result
+            except json.JSONDecodeError:
+                continue
 
     return None
 
 
-class ToolCallFixerMiddleware(AgentMiddleware):
-    """Promote text-based tool calls to real ToolCall objects after model output."""
+class ToolCallFixerChatModel(ChatOllama):
+    """ChatOllama subclass that promotes text-based tool calls to real ones.
 
-    def after_model(self, state, runtime):
-        msgs = state.get("messages", [])
-        if not msgs:
-            return None
+    Also prevents infinite tool-call loops: if the last message in the
+    conversation is already a ToolMessage (i.e. the model just got a tool
+    result back), we strip tools from the request so the model is forced
+    to respond with natural language.
+    """
 
-        last = msgs[-1]
-        if not isinstance(last, AIMessage):
-            return None
-        if last.tool_calls:
-            return None  # already has real tool calls
-        if not last.content:
-            return None
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        # If the model just received a tool result, don't offer tools again
+        # so it responds with text instead of re-calling the same tool
+        from langchain_core.messages import ToolMessage
+        last_is_tool_result = messages and isinstance(messages[-1], ToolMessage)
+        if last_is_tool_result:
+            kwargs.pop("tools", None)
 
-        parsed = _extract_tool_calls(last.content)
-        if not parsed:
-            return None
-
-        # Replace the last message with one that has proper tool calls
-        fixed = AIMessage(content="", tool_calls=parsed, id=last.id)
-        return {"messages": [fixed]}
-
+        result = super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        if not last_is_tool_result:
+            for gen in result.generations:
+                msg = gen.message
+                if not msg.tool_calls and msg.content:
+                    parsed = _try_parse_tool_calls(msg.content)
+                    if parsed:
+                        msg.tool_calls = parsed
+                        msg.content = ""
+        return result
 
 app = Flask(__name__)
-sock = Sock(app)
 
-# ── Auth middleware ────────────────────────────────────────────────────────────
-# Routes that skip authentication (local UI, static assets)
-_PUBLIC_PATHS = frozenset({"/", "/main.css", "/health"})
-
-
-def _is_public_path(path: str) -> bool:
-    return path in _PUBLIC_PATHS or path.startswith("/static/")
-
-
-@app.before_request
-def auth_middleware():
-    """Authenticate API requests and set g.exec_mode."""
-    if _is_public_path(request.path):
-        g.exec_mode = "local"
-        return
-
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        abort(401, description="Missing or malformed Authorization header")
-
-    key = auth[7:]  # strip "Bearer "
-    client_ip = request.headers.get("X-Real-IP") or request.remote_addr
-
-    if key == PERSONAL_API_KEY and client_ip == HOME_IP:
-        g.exec_mode = "local"
-    elif key == EXTERNAL_API_KEY:
-        g.exec_mode = "remote"
-    else:
-        abort(401, description="Invalid API key or unauthorized IP")
-
-
-INDEX_HTML = r"""<!DOCTYPE html>
-<html lang="en" data-theme="obsidian">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" type="text/css" href="main.css">
-<title>Agentic Chat</title>
-</head>
-<body>
-<canvas id="particle-canvas"></canvas>
-
-<!-- Top bar -->
-<div class="topbar">
-  <div class="topbar-brand">
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-    Agentic Chat
-  </div>
-  <select id="model-select"><option value="">Loading models...</option></select>
-  <span class="topbar-status" id="status">No model selected</span>
-  <div class="topbar-spacer"></div>
-  <select class="theme-select" id="theme-select">
-    <optgroup label="Dark">
-      <option value="obsidian" selected>Obsidian</option>
-      <option value="carbon">Carbon</option>
-      <option value="amethyst">Amethyst</option>
-    </optgroup>
-    <optgroup label="Light">
-      <option value="frost">Frost</option>
-      <option value="sand">Sand</option>
-      <option value="blossom">Blossom</option>
-    </optgroup>
-  </select>
-</div>
-<!-- Sidebar / Tool panel — single element, collapsed ↔ expanded -->
-  
-<div class="main">
-  <div class="sidebar" id="sidebar">
-    <div class="sidebar-toggle" id="sidebar-toggle" title="Toggle tools">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-    </div>
-    <div class="sidebar-expanded-content">
-      <div class="sidebar-header">
-        <span class="sidebar-title">Tools</span>
-      </div>
-      <div class="sidebar-body" id="tools-modal-body"></div>
-    </div>
-  </div>
-  <div class="messages" id="messages"></div>
-
-  <div class="input-bar">
-    <div class="selected-tools-chip" id="tools-chip">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-      <span id="tools-chip-label"></span>
-      <div class="selected-tools-popup" id="tools-popup"></div>
-    </div>
-    <input id="chat-input" type="text" placeholder="Type a message..." autocomplete="off">
-    <button class="btn btn-ghost" id="clear-btn">Clear</button>
-    <button class="btn btn-primary" id="send-btn" disabled>Send</button>
-    <button class="btn btn-danger" id="stop-btn">Stop</button>
-  </div>
-</div>
-
-<!-- Image lightbox modal -->
-<div id="lightbox" onclick="closeLightbox(event)">
-  <img id="lightbox-img" src="" alt="">
-  <div id="lightbox-caption"></div>
-</div>
-
-<script>
-// ── Theme ──
-const THEMES=['obsidian','carbon','amethyst','frost','sand','blossom'];
-
-function setTheme(t){
-  document.documentElement.setAttribute('data-theme',t);
-  localStorage.setItem('agentic-theme',t);
-  document.getElementById('theme-select').value=t;
-}
-
-(function(){
-  const saved=localStorage.getItem('agentic-theme');
-  if(saved&&THEMES.includes(saved))setTheme(saved);
-})();
-
-document.getElementById('theme-select').onchange=function(){setTheme(this.value)};
-
-// ── Sidebar toggle ──
-const sidebar=document.getElementById('sidebar');
-document.getElementById('sidebar-toggle').onclick=()=>{
-  sidebar.classList.toggle('expanded');
-  if(sidebar.classList.contains('expanded')) expandToolModal();
-};
-
-// ── Lightbox ──
-function openLightbox(src,caption){
-  const lb=document.getElementById('lightbox');
-  document.getElementById('lightbox-img').src=src;
-  document.getElementById('lightbox-caption').textContent=caption||'';
-  lb.classList.add('active');
-  document.addEventListener('keydown',lightboxEsc);
-}
-function closeLightbox(e){
-  if(e&&e.target.id==='lightbox-img')return;
-  document.getElementById('lightbox').classList.remove('active');
-  document.removeEventListener('keydown',lightboxEsc);
-}
-function lightboxEsc(e){if(e.key==='Escape')closeLightbox();}
-
-// ── API helpers ──
-const api=async(path,opts)=>{const r=await fetch('/api'+path,opts);return r.json()};
-const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-
-let _toolData=null; // cached API response
-let _selectedNames=[];
-
-// ── Models ──
-async function loadModels(){
-  const d=await api('/models');
-  const sel=document.getElementById('model-select');
-  sel.textContent='';
-  const defOpt=document.createElement('option');
-  defOpt.value='';defOpt.textContent='-- pick a model --';
-  sel.appendChild(defOpt);
-  (d.models||[]).forEach(m=>{
-    const o=document.createElement('option');
-    o.value=m;o.textContent=m;
-    if(m===d.current)o.selected=true;
-    sel.appendChild(o);
-  });
-  if(d.current){
-    document.getElementById('status').textContent=d.current;
-    document.getElementById('send-btn').disabled=false;
-  }
-}
-document.getElementById('model-select').onchange=async function(){
-  if(!this.value){document.getElementById('send-btn').disabled=true;return;}
-  await post('/models',{model:this.value});
-  document.getElementById('status').textContent=this.value;
-  document.getElementById('send-btn').disabled=false;
-};
-
-// ── Tools ──
-async function loadTools(){
-  const d=await api('/tools');
-  _toolData=d;
-  _selectedNames=d.selected||[];
-  updateToolsChip();
-  if(sidebar.classList.contains('expanded')) expandToolModal();
-}
-
-
-const tools = loadTools();
-
-const sidebar = document.getElementById('sidebar');
-const sidebarHeader = sidebar.firstChild();
-const sidebarTitle = sidebar.secondChild();
-const toolsList = document.createElement('ul');
-for (const tool in tools) {(tool) => {
-  const toolItem = document.createElement('li');
-  const toolToggle = document.createElement('a');
-    toolToggle.onClick=async function(){
-     if(_selectedNames.includes(tool)){
-      _selectedNames=_selectedNames.filter(n=>{n!=tool});
-      }else{
-      _selectedNames.push(tool);
-      }
-    }
-    if (sidebar.classList.includes('expanded'){
-        toolToggle.innerHTML=tool.name; 
-    } else {
-        const toolIcon = document.createElement('img');
-        img.alt='ico'
-        img.src=tool;
-        toolToggle.appendChild(toolIcon);
-    }
-    toolItem.appendChild(toolToggle);
-    toolsList.appendChild(toolItem);
-}
-
-sidebar.appendChild(toolsList);
-sidebarHeader.addEventListener('click', toggleSidebar);
-
-
-
-}}
-
-// ── Tool panel (rendered inside sidebar) ──
-
-function expandToolModal(){
-  if(!_toolData)return;
-  const body=document.getElementById('tools-modal-body');
-  if(!body)return;
-  body.textContent='';
-  (_toolData.categories||[]).forEach(cat=>{
-    const group=document.createElement('div');
-    group.className='cat-group';
-
-    // Header
-    const header=document.createElement('div');
-    header.className='cat-header';
-
-    const chevron=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    chevron.setAttribute('viewBox','0 0 24 24');
-    chevron.setAttribute('fill','none');
-    chevron.setAttribute('stroke','currentColor');
-    chevron.setAttribute('stroke-width','2');
-    chevron.classList.add('cat-chevron');
-    const poly=document.createElementNS('http://www.w3.org/2000/svg','polyline');
-    poly.setAttribute('points','9 18 15 12 9 6');
-    chevron.appendChild(poly);
-
-    const cb=document.createElement('input');
-    cb.type='checkbox';
-    cb.className='cat-checkbox';
-    cb.checked=cat.all_selected;
-    if(cat.some_selected&&!cat.all_selected){
-      cb.indeterminate=true;
-      cb.classList.add('indeterminate');
-    }
-    cb.onclick=async(e)=>{
-      e.stopPropagation();
-      await post('/tools/toggle_category',{category:cat.name});
-      loadTools();
-    };
-
-    const name=document.createElement('span');
-    name.className='cat-name';
-    name.textContent=cat.name;
-
-    const count=document.createElement('span');
-    count.className='cat-count';
-    count.textContent=cat.selected_count+'/'+cat.count;
-
-    header.appendChild(chevron);
-    header.appendChild(cb);
-    header.appendChild(name);
-    header.appendChild(count);
-    header.onclick=(e)=>{
-      if(e.target===cb)return;
-      group.classList.toggle('open');
-    };
-
-    // Tools list
-    const toolsDiv=document.createElement('div');
-    toolsDiv.className='cat-tools';
-    cat.tools.forEach(t=>{
-      const row=document.createElement('div');
-      row.className='cat-tool-item';
-      const tcb=document.createElement('input');
-      tcb.type='checkbox';
-      tcb.checked=t.selected;
-      tcb.onclick=async()=>{
-        await post('/tools/toggle',{tool:t.name});
-        loadTools();
-      };
-      const tname=document.createElement('span');
-      tname.className='cat-tool-name';
-      tname.textContent=t.name;
-      const tdesc=document.createElement('span');
-      tdesc.className='cat-tool-desc';
-      tdesc.textContent=t.description;
-      tdesc.title=t.description;
-      row.appendChild(tcb);
-      row.appendChild(tname);
-      row.appendChild(tdesc);
-      toolsDiv.appendChild(row);
-    });
-
-    group.appendChild(header);
-    group.appendChild(toolsDiv);
-    body.appendChild(group);
-  });
-}
-
-// ── Selected tools chip (next to input) ──
-function updateToolsChip(){
-  const chip=document.getElementById('tools-chip');
-  const label=document.getElementById('tools-chip-label');
-  const popup=document.getElementById('tools-popup');
-  const n=_selectedNames.length;
-  if(n===0){
-    chip.classList.remove('visible');
-    return;
-  }
-  chip.classList.add('visible');
-  label.textContent=n+' tool'+(n===1?'':'s');
-  popup.textContent='';
-  _selectedNames.forEach(name=>{
-    const row=document.createElement('div');
-    row.className='selected-tools-popup-item';
-    const nameEl=document.createElement('span');
-    nameEl.className='stool-name';
-    nameEl.textContent=name;
-    const rm=document.createElement('span');
-    rm.className='stool-remove';
-    rm.textContent='\u00d7';
-    rm.onclick=async(e)=>{
-      e.stopPropagation();
-      await post('/tools/toggle',{tool:name});
-      loadTools();
-    };
-    row.appendChild(nameEl);
-    row.appendChild(rm);
-    popup.appendChild(row);
-  });
-}
-
-
-// ── "No tools" warning on send ──
-const _noToolsDismissed=localStorage.getItem('agentic-no-tools-dismissed')==='1';
-
-function showNoToolsWarning(){
-  if(_noToolsDismissed)return;
-  const existing=document.getElementById('no-tools-warning');
-  if(existing)existing.remove();
-  const bar=document.createElement('div');
-  bar.id='no-tools-warning';
-  bar.className='no-tools-warning';
-  bar.textContent='No tools included with this chat. To make the most of your experience, choose some tools. ';
-  const cb=document.createElement('input');
-  cb.type='checkbox';
-  cb.onchange=()=>{
-    localStorage.setItem('agentic-no-tools-dismissed','1');
-    bar.remove();
-  };
-  const lbl=document.createElement('label');
-  lbl.appendChild(cb);
-  lbl.appendChild(document.createTextNode("Don't show again"));
-  bar.appendChild(lbl);
-  setTimeout(()=>{if(bar.parentNode)bar.remove();},4500);
-}
-
-// ── Chat ──
-function renderContent(el,text){
-  const parts=text.split(/(!\[[^\]]*\]\([^)]+\))/g);
-  while(el.firstChild)el.removeChild(el.firstChild);
-  parts.forEach(p=>{
-    const imgMatch=p.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-    if(imgMatch&&imgMatch[2].startsWith('/static/images/')){
-      const img=document.createElement('img');
-      img.alt=imgMatch[1];img.src=imgMatch[2];
-      img.className='chat-image';
-      el.appendChild(img);
-    }else if(p){
-      el.appendChild(document.createTextNode(p));
-    }
-  });
-}
-
-function addMsg(role,text){
-  const div=document.createElement('div');
-  div.className='msg '+role;
-  if(role==='assistant'){renderContent(div,text);}
-  else{div.textContent=text;}
-  const msgs=document.getElementById('messages');
-  msgs.appendChild(div);
-  msgs.scrollTop=msgs.scrollHeight;
-  return div;
-}
-
-function addImageMsg(src,filename,sizeKb){
-  const div=document.createElement('div');
-  div.className='msg assistant img-msg';
-  const thumb=document.createElement('img');
-  thumb.src=src;thumb.alt=filename||'image';
-  thumb.className='chat-thumb';
-  thumb.onclick=()=>openLightbox(src,filename+(sizeKb?' ('+sizeKb+' KB)':''));
-  div.appendChild(thumb);
-  if(filename){
-    const cap=document.createElement('div');
-    cap.className='img-caption';
-    cap.textContent=filename+(sizeKb?' — '+sizeKb+' KB':'');
-    div.appendChild(cap);
-  }
-  const msgs=document.getElementById('messages');
-  msgs.appendChild(div);
-  msgs.scrollTop=msgs.scrollHeight;
-}
-
-let activeStreams=0;
-function updateStopBtn(){document.getElementById('stop-btn').style.display=activeStreams>0?'':'none';}
-
-function createThinkingIndicator(){
-  const div=document.createElement('div');
-  div.className='thinking-indicator';
-  const header=document.createElement('div');
-  header.className='thinking-header';
-  const dots=document.createElement('div');
-  dots.className='thinking-dots';
-  for(let i=0;i<3;i++){dots.appendChild(document.createElement('span'));}
-  const label=document.createElement('span');
-  label.className='thinking-label';
-  label.textContent='working';
-  const timerEl=document.createElement('span');
-  timerEl.className='thinking-timer';
-  timerEl.textContent='0s';
-  header.appendChild(dots);
-  header.appendChild(label);
-  header.appendChild(timerEl);
-  const preview=document.createElement('div');
-  preview.className='thinking-preview';
-  div.appendChild(header);
-  div.appendChild(preview);
-  const msgs=document.getElementById('messages');
-  msgs.appendChild(div);
-  msgs.scrollTop=msgs.scrollHeight;
-  const t0=Date.now();
-  const timer=setInterval(()=>{timerEl.textContent=((Date.now()-t0)/1000|0)+'s';},1000);
-  return {el:div,timer,previewBuf:'',
-    update(text,type){
-      if(type==='tool_call'){
-        label.textContent='calling tool';
-        preview.textContent=text;
-      }else if(type==='tool_result'){
-        label.textContent='got result';
-        preview.textContent=text.slice(0,120);
-      }else if(type==='token'){
-        label.textContent='thinking';
-        this.previewBuf+=text;
-        if(this.previewBuf.length>200)this.previewBuf=this.previewBuf.slice(-200);
-        preview.textContent=this.previewBuf.slice(-120);
-      }
-      msgs.scrollTop=msgs.scrollHeight;
-    },
-    remove(){clearInterval(timer);div.remove();}
-  };
-}
-
-async function sendMessage(){
-  const input=document.getElementById('chat-input');
-  const msg=input.value.trim();
-  if(!msg)return;
-  if(_selectedNames.length===0)showNoToolsWarning();
-  input.value='';
-  addMsg('user',msg);
-  activeStreams++;
-  updateStopBtn();
-  const thinking=createThinkingIndicator();
-  let tokenBuf='';
-  try{
-    const resp=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:msg})});
-    if(!resp.ok){
-      const err=await resp.json().catch(()=>({}));
-      addMsg('error',err.error||'HTTP '+resp.status);
-      thinking.remove();
-      return;
-    }
-    if(resp.body&&resp.body.getReader){
-      const reader=resp.body.getReader();
-      const decoder=new TextDecoder();
-      let lineBuf='';
-      while(true){
-        const{done,value}=await reader.read();
-        if(done)break;
-        lineBuf+=decoder.decode(value,{stream:true});
-        const lines=lineBuf.split('\n');
-        lineBuf=lines.pop();
-        for(const line of lines){
-          if(!line.trim())continue;
-          try{
-            const ev=JSON.parse(line);
-            if(ev.token){
-              tokenBuf+=ev.token;
-              thinking.update(ev.token,'token');
-            }else if(ev.tool_call){
-              thinking.update(ev.tool_call.tool+': '+ev.tool_call.input,'tool_call');
-            }else if(ev.image){
-              addImageMsg(ev.image.src,ev.image.filename,ev.image.size_kb);
-            }else if(ev.tool_result){
-              thinking.update(ev.tool_result.output,'tool_result');
-            }else if(ev.error){
-              addMsg('error',ev.error);
-            }
-          }catch(pe){console.warn('parse error',pe,line)}
-        }
-      }
-    }else{
-      const text=await resp.text();
-      const lines=text.trim().split('\n');
-      for(const line of lines){
-        if(!line.trim())continue;
-        try{
-          const ev=JSON.parse(line);
-          if(ev.token){
-            tokenBuf+=ev.token;
-            thinking.update(ev.token,'token');
-          }else if(ev.image){
-            addImageMsg(ev.image.src,ev.image.filename,ev.image.size_kb);
-          }else if(ev.tool_call){
-            thinking.update(ev.tool_call.tool+': '+ev.tool_call.input,'tool_call');
-          }else if(ev.error){
-            addMsg('error',ev.error);
-          }
-        }catch(pe){}
-      }
-    }
-    thinking.remove();
-    if(tokenBuf){
-      const assistantDiv=addMsg('assistant','');
-      renderContent(assistantDiv,tokenBuf);
-    }else{
-      addMsg('assistant','(no response)');
-    }
-  }catch(e){
-    thinking.remove();
-    addMsg('error','Network error: '+e.message);
-    console.error(e);
-  }
-  activeStreams=Math.max(0,activeStreams-1);
-  updateStopBtn();
-}
-
-document.getElementById('stop-btn').onclick=async()=>{await fetch('/api/chat/cancel',{method:'POST'})};
-document.getElementById('send-btn').onclick=sendMessage;
-document.getElementById('chat-input').onkeydown=e=>{if(e.key==='Enter'&&!document.getElementById('send-btn').disabled)sendMessage()};
-document.getElementById('clear-btn').onclick=async()=>{
-  await fetch('/api/history',{method:'DELETE'});
-  document.getElementById('messages').textContent='';
-};
-
-// ── Particle system ──
-(function(){
-  const PALETTES={
-    obsidian:  ['#2a4a8a','#4060b0','#6080d0','#3050a0','#1a3070'],
-    carbon:    ['#20a060','#30c080','#50e0a0','#18804a','#40d890'],
-    amethyst:  ['#7030b0','#9050d0','#b070f0','#6020a0','#a060e0'],
-    frost:     ['#3050c0','#4060e0','#5080ff','#2040a0','#6090ff'],
-    sand:      ['#b08020','#c89830','#dab050','#a07018','#d0a040'],
-    blossom:   ['#c02060','#d84080','#f060a0','#a01848','#e85098']
-  };
-
-  const canvas=document.getElementById('particle-canvas');
-  const ctx=canvas.getContext('2d');
-  let W,H,particles=[];
-  const COUNT=80;
-
-  function resize(){
-    W=canvas.width=window.innerWidth;
-    H=canvas.height=window.innerHeight;
-  }
-  window.addEventListener('resize',resize);
-  resize();
-
-  function getTheme(){
-    return document.documentElement.getAttribute('data-theme')||'obsidian';
-  }
-
-  function hexToRgb(hex){
-    const n=parseInt(hex.slice(1),16);
-    return [(n>>16)&255,(n>>8)&255,n&255];
-  }
-
-  const FIELD=3; // 3x viewport height loop
-
-  function spawn(i,scatter){
-    const pal=PALETTES[getTheme()]||PALETTES.obsidian;
-    const color=pal[Math.floor(Math.random()*pal.length)];
-    const rgb=hexToRgb(color);
-    const r=Math.random()*1.2+0.3;
-    particles[i]={
-      x:Math.random()*W,
-      y:scatter?Math.random()*H*FIELD:-(Math.random()*H*0.5),
-      r:r,
-      dx:(Math.random()-0.5)*0.06,
-      dy:Math.random()*0.12+0.04,
-      opacity:Math.random()*0.3+0.08,
-      rgb:rgb
-    };
-  }
-
-  for(let i=0;i<COUNT;i++) spawn(i,true);
-
-  // Re-color particles on theme change
-  const obs=new MutationObserver(()=>{
-    const pal=PALETTES[getTheme()]||PALETTES.obsidian;
-    particles.forEach(p=>{
-      const c=pal[Math.floor(Math.random()*pal.length)];
-      p.rgb=hexToRgb(c);
-    });
-  });
-  obs.observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
-
-  function draw(){
-    ctx.clearRect(0,0,W,H);
-    const totalH=H*FIELD;
-    for(let i=0;i<COUNT;i++){
-      const p=particles[i];
-      p.x+=p.dx;
-      p.y+=p.dy;
-
-      // Continuous loop: wrap around the full 3x field
-      if(p.y>totalH) p.y-=totalH;
-
-      // Only draw if within visible viewport
-      if(p.y>H+p.r*2) continue;
-
-      const [r,g,b]=p.rgb;
-      const glowR=p.r*2.5;
-
-      // Soft sphere — solid core with gentle edge falloff
-      const grad=ctx.createRadialGradient(p.x,p.y,0,p.x,p.y,glowR);
-      grad.addColorStop(0,'rgba('+r+','+g+','+b+','+p.opacity+')');
-      grad.addColorStop(0.5,'rgba('+r+','+g+','+b+','+(p.opacity*0.5)+')');
-      grad.addColorStop(1,'rgba('+r+','+g+','+b+',0)');
-
-      ctx.beginPath();
-      ctx.arc(p.x,p.y,glowR,0,Math.PI*2);
-      ctx.fillStyle=grad;
-      ctx.fill();
-
-      // Wrap horizontal
-      if(p.x<-10)p.x=W+10;
-      if(p.x>W+10)p.x=-10;
-    }
-    requestAnimationFrame(draw);
-  }
-  draw();
-})();
-
-// ── Init ──
-loadModels();loadTools();
-</script>
-</body>
-</html>"""
-
-
-@app.route("/")
-def index():
-    return render_template_string(INDEX_HTML)
-
-
-@app.route("/main.css")
-def serve_css():
-    resp = send_file("main.css", mimetype="text/css")
-    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return resp
-
-
-@app.route("/static/images/<path:filename>")
-def serve_image(filename):
-    """Serve downloaded images from static/images/."""
-    return send_file(f"static/images/{filename}")
+_FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    """Serve React SPA from frontend/dist/."""
+    full = _os.path.join(_FRONTEND_DIST, path)
+    if path and _os.path.isfile(full):
+        return send_file(full)
+    index = _os.path.join(_FRONTEND_DIST, "index.html")
+    if _os.path.isfile(index):
+        return send_file(index)
+    return "Frontend not built. Run: cd frontend && npm run build", 404
 
 
 # ── State ────────────────────────────────────────────────────────────────────
-_cancel_event = threading.Event()
-
-_checkpointer = MemorySaver()
-
 _state = {
-    "model": "huihui_ai/qwen2.5-coder-abliterate:14b",
-    "thread_id": str(uuid4()),
-    "system_prompt": (
-        "You are a helpful assistant with access to tools. "
-        "When a task requires a tool, CALL IT IMMEDIATELY. "
-        "Never describe what you plan to do — just do it. "
-        "Say what tool you're calling in one short sentence, then call it. "
-        "Present results formatted for humans, not raw JSON. "
-        "If no tool is needed, respond naturally and concisely. "
-        "Only use parameter values the user provided or that you can "
-        "confidently derive from context — never guess or fabricate "
-        "values for paths, URLs, IDs, or names the user hasn't given you.\n\n"
-        "TORRENT FILTERING RULES — apply these when presenting or downloading search results:\n"
-        "- Prefer results with high seeders (50+) from known trackers/indexers.\n"
-        "- LANGUAGE: Unless the user asks for another language, only select English releases. "
-        "Reject files tagged FRENCH, TRUEFRENCH, MULTI (unless English is confirmed), "
-        "GERMAN, SPANISH, ITA, LATINO, DUBBED, VO, VFF, VFQ, or other non-English language tags. "
-        "Look for ENG, English, or no language tag (scene releases default to English).\n"
-        "- QUALITY TAGS: Prefer scene/p2p naming: Title.Year.Source.Codec-GROUP. "
-        "Good sources: BluRay, BDRip, WEB-DL, WEBRip, HDTV, REMUX. "
-        "Good codecs: x264, x265, HEVC, AV1, AAC, FLAC, DTS. "
-        "Avoid: CAM, TS, TELESYNC, HDCAM, SCR, DVDSCR (these are low quality).\n"
-        "- RED FLAGS: Skip files that are suspiciously small for their claimed quality "
-        "(e.g. a 200MB '4K BluRay'), have .exe or .zip extensions, "
-        "have zero or very few seeders with inflated file counts, "
-        "or have generic/spammy filenames.\n"
-        "- When presenting results, briefly note why you recommend or skip each one. "
-        "If all results look bad, say so instead of recommending a poor choice."
-    ),
+    "model": None,
+    "system_prompt": """You are a helpful assistant with access to filesystem, search, and web tools.
+
+## Response discipline
+
+After receiving tool results, your ONLY job is to answer the user's specific question using those results.
+
+NEVER describe the format or structure of tool results. NEVER say things like "The tool returned a JSON object containing..." or "Each object includes details such as..." — the user does not care about the data format. They care about the CONTENT.
+
+WRONG response to eBay results:
+"The tool response is a JSON object containing an array of objects, each representing a GPU product listing. Each object includes details such as the title, URL, price text, and shipping information."
+
+CORRECT response to eBay results:
+"1. EVGA RTX 3060 12GB - $189.00 (free shipping) — ebay.com/itm/123456
+2. MSI RTX 3060 Ventus — $195.00 (+$10 shipping) — ebay.com/itm/789012"
+
+Rules:
+- Extract the actual data from tool results and present it as human-readable text.
+- Do NOT describe the JSON structure, field names, or data types.
+- Do NOT explain what the tool does or how you called it.
+- Do NOT add background context or unsolicited advice.
+- Do NOT restate the user's question back to them.
+- If results are empty, say so in one sentence and stop.
+
+## Marketplace tool selection
+
+You have tools for eBay, Amazon, Craigslist, and cross-platform flows. Choose the right one:
+
+### Single-platform tools
+- **ebay_search** — Quick single-page eBay lookup. Use for browsing or checking availability.
+- **ebay_sold_search** — eBay completed/sold listings. Use to check actual market prices.
+- **ebay_deep_scan** — Multi-page paginated eBay scan with GPU model extraction. Use for volume analysis.
+- **amazon_search** — Search Amazon product listings. Returns price, rating, Prime status.
+- **craigslist_search** — Search one Craigslist city. Denver-area cities (denver, boulder, colorado springs, fort collins, pueblo) are within 100mi and can be pickup. All other cities require shipping.
+- **craigslist_multi_search** — LOOPING tool that searches multiple Craigslist cities. Use scope='local' for Denver area only, 'shipping' for distant cities (shipping required), or 'all' for everywhere.
+
+### Flow tools (LOOPING — these run multi-step pipelines internally)
+- **cross_platform_search** — Searches eBay + Amazon + Craigslist in one call. Use when the user wants to compare across platforms or see what's available everywhere.
+- **deal_finder** — The most powerful flow. Runs a full pipeline: deep-scans eBay (3 pages), searches Amazon, searches Craigslist across all cities, groups results by product model, computes median prices per group, and flags listings >=20% below median as deals. Use this whenever the user asks for deals, bargains, underpriced listings, or best value across platforms.
+- **enrichment_pipeline** — LOOPING tool that iteratively enriches data using a small eval model. Each iteration adds a new dimension/consideration. The eval model decides when to stop. Use when the user wants data enriched with multiple considerations, ratings, categorizations, or analysis layers. Pass in data from any prior tool call + a goal describing what to add.
+
+### When to use which
+- User wants to browse one platform → use the single-platform tool
+- User wants to compare prices across platforms → use `cross_platform_search`
+- User asks "find me deals" or "what's underpriced" → use `deal_finder`
+- User asks about sold/market prices → use `ebay_sold_search`
+
+### Craigslist fulfillment rules
+- Cities within ~100mi of Denver (pickup OK): denver, boulder, colorado springs, fort collins, pueblo
+- All other cities: shipping required. The tools automatically filter for shipping-available listings in non-local cities and tag each result with fulfillment type (pickup vs shipping_required).
+
+## eBay price analysis rules
+
+When the user asks you to find deals, underpriced listings, high-margin opportunities, or compare prices from eBay search results, follow these rules strictly:
+
+1. **Group by exact model.** Only compare listings that are the same specific product model. For example, "RTX 3060" is a different group from "RTX 3060 Ti", which is different from "RTX 3070". A lower-tier model costing less than a higher-tier model is expected — that is NOT a deal.
+
+2. **Compute per-group statistics.** For each model group:
+   - Count the number of listings.
+   - Calculate the median price (not the mean — outliers skew means).
+   - Identify the lowest price in the group.
+
+3. **Flag a listing as underpriced only if** its price is ≥20% below the median price of its own model group AND the group has at least 3 listings (too few listings means unreliable comparison).
+
+4. **Include total cost.** Always add the shipping cost to the listing price before comparing. A "$200 + $50 shipping" listing is $250 total, not $200.
+
+5. **Present results clearly.** When reporting deals, show:
+   - The model name and the listing's total price (price + shipping).
+   - The group median for that model.
+   - The percentage below median.
+   - The listing URL.
+
+6. **If no listings meet the criteria**, say so explicitly — do not stretch the definition to force results.
+
+## NVIDIA GPU generations reference
+
+When searching for or analyzing GPU listings, only consider cards with current AI/ML relevance. Ignore anything older than Turing.
+
+| Generation | Architecture | Year | Consumer (GeForce) | Workstation / Data Center | AI/ML notes |
+|---|---|---|---|---|---|
+| Turing | Turing (SM 7.5) | 2018 | RTX 2060/2070/2080, GTX 1650/1660 | Quadro RTX 4000/5000/6000/8000, T4 | First-gen tensor cores. T4 still widely deployed for inference. 2060+ usable for light training. |
+| Ampere | Ampere (SM 8.0/8.6) | 2020 | RTX 3060/3070/3080/3090 | A100, A40, A30, A10, A6000, A5000, A4000 | 3rd-gen tensor cores, TF32. A100 is the workhorse of modern AI training. RTX 3090 (24GB) popular for local training. |
+| Ada Lovelace | Ada (SM 8.9) | 2022 | RTX 4060/4070/4080/4090 | L40, L40S, RTX 6000 Ada | 4th-gen tensor cores, FP8. RTX 4090 (24GB) is top consumer AI card. L40S for data center inference. |
+| Hopper | Hopper (SM 9.0) | 2022 | — | H100, H200 | Transformer Engine, HBM3. H100 is the flagship training GPU. No consumer version. |
+| Blackwell | Blackwell (SM 10.0) | 2024 | RTX 5070/5080/5090 | B100, B200, GB200 | 5th-gen tensor cores, FP4. Latest generation. RTX 5090 (32GB) for consumer. |
+
+**Skip these — no AI/ML relevance:**
+- Kepler (2012): GTX 600/700, Quadro K-series (K2200, K4200, K5200, K6000)
+- Maxwell (2014): GTX 900, Quadro M-series
+- Pascal (2016): GTX 1060/1070/1080, Quadro P-series, Tesla P100/P40 (P100 is marginal — old but has FP16)
+- Volta (2017): Titan V, Tesla V100 (V100 still has some relevance for legacy HPC but is end-of-life)
+
+When the user asks about GPU deals for AI/ML, only search for and analyze Turing or newer cards. If results contain older generation cards, filter them out and note that they were excluded.""",
     "history": [],          # list of {"role": ..., "content": ...}
-    "selected_tools": set(),  # set of tool names — user selects via modal
+    "selected_tools": [],   # indices into ALL_TOOLS (for display only)
 }
 
 
 def _tool_meta(t) -> dict:
     """Extract name, description, and parameter info from a LangChain tool."""
-    schema = t.args_schema.model_json_schema() if t.args_schema else {}
+    schema = t.args_schema.schema() if t.args_schema else {}
     props = schema.get("properties", {})
     required = schema.get("required", [])
     params = {}
@@ -914,19 +291,17 @@ def _tool_meta(t) -> dict:
     }
 
 
+TOOL_REGISTRY = [_tool_meta(t) for t in ALL_TOOLS]
+
+
 # ── Models ───────────────────────────────────────────────────────────────────
-
-def _is_abliterated(name: str) -> bool:
-    """Return True if the model name indicates an abliterated variant."""
-    return "ablit" in name.lower()
-
 
 @app.route("/api/models", methods=["GET"])
 def list_models():
-    """List locally available abliterated Ollama models only."""
+    """List locally available Ollama models."""
     try:
         models = ollama_client.list()
-        names = [m.model for m in models.models if _is_abliterated(m.model)]
+        names = [m.model for m in models.models]
         return jsonify({"models": names, "current": _state["model"]})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -934,89 +309,63 @@ def list_models():
 
 @app.route("/api/models", methods=["POST"])
 def select_model():
-    """Select an abliterated Ollama model.  Body: {"model": "name"}"""
+    """Select an Ollama model.  Body: {"model": "name"}"""
     data = request.get_json(force=True)
     model = data.get("model")
     if not model:
         return jsonify({"error": "model required"}), 400
-    if not _is_abliterated(model):
-        return jsonify({"error": "only abliterated models are allowed"}), 400
     _state["model"] = model
     _state["history"] = []
-    _state["thread_id"] = str(uuid4())  # fresh checkpointer memory for new model
     return jsonify({"model": model})
 
 
-# ── Tools (category-based) ────────────────────────────────────────────────────
-
-# Flat lookup: tool name -> meta dict
-TOOL_META = {t.name: _tool_meta(t) for t in ALL_TOOLS}
-
-# Category structure for the API
-CATEGORY_ORDER = list(TOOL_CATEGORIES.keys())
-
-
-def _get_selected_tools() -> Sequence[BaseTool]:
-    """Return the BaseTool objects for currently selected tool names."""
-    sel = _state["selected_tools"]
-    return [t for t in ALL_TOOLS if t.name in sel]
-
+# ── Tools browser ────────────────────────────────────────────────────────────
 
 @app.route("/api/tools", methods=["GET"])
 def get_tools():
-    """Return categories with tools and their selection state."""
-    sel = _state["selected_tools"]
-    categories = []
-    for cat_name in CATEGORY_ORDER:
-        cat_tools = TOOL_CATEGORIES[cat_name]
-        tools = []
-        for t in cat_tools:
-            meta = TOOL_META[t.name]
-            tools.append({**meta, "selected": t.name in sel})
-        all_selected = all(t.name in sel for t in cat_tools)
-        some_selected = any(t.name in sel for t in cat_tools)
-        categories.append({
-            "name": cat_name,
-            "tools": tools,
-            "all_selected": all_selected,
-            "some_selected": some_selected,
-            "count": len(cat_tools),
-            "selected_count": sum(1 for t in cat_tools if t.name in sel),
-        })
-    # Also return flat list of selected tool names for the chip
-    selected_names = [t.name for t in ALL_TOOLS if t.name in sel]
-    return jsonify({"categories": categories, "selected": selected_names})
+    """Return the 2-column tool state: available (left) and selected (right)."""
+    selected_idx = set(_state["selected_tools"])
+    available = []
+    selected = []
+    for i, meta in enumerate(TOOL_REGISTRY):
+        entry = {"index": i, **meta}
+        if i in selected_idx:
+            selected.append(entry)
+        else:
+            available.append(entry)
+    return jsonify({"available": available, "selected": selected})
 
 
-@app.route("/api/tools/toggle", methods=["POST"])
-def toggle_tool():
-    """Toggle a single tool on/off.  Body: {"tool": "read_file"}"""
+@app.route("/api/tools/select", methods=["POST"])
+def select_tool():
+    """Move a tool from available -> selected.  Body: {"index": N}
+    This is the > button."""
     data = request.get_json(force=True)
-    name = data.get("tool", "")
-    if name not in TOOL_META:
-        return jsonify({"error": f"unknown tool: {name}"}), 400
-    if name in _state["selected_tools"]:
-        _state["selected_tools"].discard(name)
-    else:
-        _state["selected_tools"].add(name)
+    idx = data.get("index")
+    if idx is None or idx < 0 or idx >= len(TOOL_REGISTRY):
+        return jsonify({"error": "invalid index"}), 400
+    if idx not in _state["selected_tools"]:
+        _state["selected_tools"].append(idx)
     return get_tools()
 
 
-@app.route("/api/tools/toggle_category", methods=["POST"])
-def toggle_category():
-    """Toggle all tools in a category.  Body: {"category": "Filesystem"}"""
+@app.route("/api/tools/deselect", methods=["POST"])
+def deselect_tool():
+    """Move a tool from selected -> available.  Body: {"index": N}
+    This is the < button."""
     data = request.get_json(force=True)
-    cat_name = data.get("category", "")
-    if cat_name not in TOOL_CATEGORIES:
-        return jsonify({"error": f"unknown category: {cat_name}"}), 400
-    cat_tools = TOOL_CATEGORIES[cat_name]
-    cat_names = {t.name for t in cat_tools}
-    # If all selected, deselect all; otherwise select all
-    if cat_names.issubset(_state["selected_tools"]):
-        _state["selected_tools"] -= cat_names
-    else:
-        _state["selected_tools"] |= cat_names
+    idx = data.get("index")
+    if idx in _state["selected_tools"]:
+        _state["selected_tools"].remove(idx)
     return get_tools()
+
+
+@app.route("/api/tools/<int:index>", methods=["GET"])
+def tool_detail(index: int):
+    """Get full detail (params) for a tool by index."""
+    if index < 0 or index >= len(TOOL_REGISTRY):
+        return jsonify({"error": "invalid index"}), 404
+    return jsonify(TOOL_REGISTRY[index])
 
 
 # ── System prompt ────────────────────────────────────────────────────────────
@@ -1032,346 +381,133 @@ def set_system():
     _state["system_prompt"] = data.get("system_prompt", _state["system_prompt"])
     return jsonify({"system_prompt": _state["system_prompt"]})
 
+
 # ── Chat ─────────────────────────────────────────────────────────────────────
 
 def _build_agent():
-    """Build a LangGraph agent with tools and Chroma context."""
+    """Build a LangGraph agent using create_agent (langchain >= 1.2)."""
     if not _state["model"]:
         raise ValueError("No model selected. POST /api/models first.")
 
-    llm = ChatOllama(
+    llm = ToolCallFixerChatModel(
         model=_state["model"],
         temperature=0,
-        num_ctx=NUM_CTX,
         base_url="http://localhost:11434",
     )
 
-    tools = _get_selected_tools()
-
+    # create_agent returns a compiled LangGraph — all tools always bound
     agent = create_agent(
-        model=llm,
-        tools=tools or None,
+        llm,
+        ALL_TOOLS,
         system_prompt=_state["system_prompt"],
-        middleware=[ToolCallFixerMiddleware()] if tools else [],
-        checkpointer=_checkpointer,
     )
     return agent
 
 
-def _agent_config() -> dict:
-    """Return the config dict with thread_id for the checkpointer."""
-    return {"configurable": {"thread_id": _state["thread_id"]}}
+def _history_to_messages() -> list:
+    """Convert internal history to LangChain messages."""
+    msgs = []
+    for m in _state["history"]:
+        if m["role"] == "user":
+            msgs.append(HumanMessage(content=m["content"]))
+        elif m["role"] == "assistant":
+            msgs.append(AIMessage(content=m["content"]))
+    return msgs
 
 
-# ── /api/chat (non-streaming) ─────────────────────────────
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    """Send a message.  Body: {"message": "..."}
+    Returns: {"response": "..."}
+    """
     data = request.get_json(force=True)
     user_msg = data.get("message", "").strip()
     if not user_msg:
         return jsonify({"error": "message required"}), 400
-    if not _state["model"]:
-        return jsonify({"error": "No model selected. POST /api/models first."}), 400
-
-    _state["history"].append({"role": "user", "content": user_msg})
 
     try:
         agent = _build_agent()
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    config = _agent_config()
+    messages = _history_to_messages()
+    messages.append(HumanMessage(content=user_msg))
+    _state["history"].append({"role": "user", "content": user_msg})
 
     try:
-        context = get_relevant_context(user_msg)
-        enriched = f"[Context]\n{context}\n\n[User]\n{user_msg}" if context else user_msg
-
-        result = agent.invoke(
-            {"messages": [HumanMessage(content=enriched)]},
-            config,
-        )
-
-        response = next(
-            (m.content for m in reversed(result.get("messages", []))
-             if isinstance(m, AIMessage) and m.content),
-            ""
-        )
+        result = agent.invoke({"messages": messages})
+        # Extract the last AI message from the result
+        output_msgs = result.get("messages", [])
+        response = ""
+        for msg in reversed(output_msgs):
+            if isinstance(msg, AIMessage) and msg.content:
+                response = msg.content
+                break
         _state["history"].append({"role": "assistant", "content": response})
         return jsonify({"response": response})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-# ── /api/chat/stream (streaming) ─────────────────────────
 @app.route("/api/chat/stream", methods=["POST"])
 def chat_stream():
+    """Streaming version of chat. Returns newline-delimited JSON."""
     data = request.get_json(force=True)
     user_msg = data.get("message", "").strip()
     if not user_msg:
         return jsonify({"error": "message required"}), 400
-    if not _state["model"]:
-        return jsonify({"error": "No model selected. POST /api/models first."}), 400
-
-    _state["history"].append({"role": "user", "content": user_msg})
-    _cancel_event.clear()
 
     try:
         agent = _build_agent()
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    config = _agent_config()
+    messages = _history_to_messages()
+    messages.append(HumanMessage(content=user_msg))
+    _state["history"].append({"role": "user", "content": user_msg})
 
     def generate():
+        from langchain_core.messages import ToolMessage
         full_response = ""
-        pending_tool_calls = {}
-
         try:
-            context = get_relevant_context(user_msg)
-            enriched = f"[Context]\n{context}\n\n[User]\n{user_msg}" if context else user_msg
-
-            for chunk, metadata in agent.stream(
-                {"messages": [HumanMessage(content=enriched)]},
-                config,
-                stream_mode="messages",
-            ):
-                if _cancel_event.is_set():
-                    yield json.dumps({"error": "Cancelled by user"}) + "\n"
-                    return
-
-                if isinstance(chunk, AIMessageChunk):
-                    if chunk.content:
-                        full_response += chunk.content
-                        yield json.dumps({"token": chunk.content}) + "\n"
-                    for tc in (chunk.tool_call_chunks or []):
-                        tc_id = tc.get("id") or tc.get("index", "")
-                        if tc_id not in pending_tool_calls:
-                            pending_tool_calls[tc_id] = {"name": tc.get("name", ""), "args": ""}
-                        if tc.get("name"):
-                            pending_tool_calls[tc_id]["name"] = tc["name"]
-                        if tc.get("args"):
-                            pending_tool_calls[tc_id]["args"] += tc["args"]
-
-                elif isinstance(chunk, AIMessage) and chunk.tool_calls:
-                    for call in chunk.tool_calls:
-                        yield json.dumps({"tool_call": {
-                            "tool": call.get("name", ""),
-                            "input": str(call.get("args", "")),
-                        }}) + "\n"
-
-                elif isinstance(chunk, ToolMessage):
-                    tool_name = getattr(chunk, "name", "")
-                    raw = str(chunk.content)
-                    yield json.dumps({"tool_result": {"tool": tool_name, "output": raw[:500]}}) + "\n"
-                    if tool_name == "download_image":
-                        try:
-                            img_data = json.loads(raw)
-                            if img_data.get("status") == "ok":
-                                yield json.dumps({"image": {
-                                    "src": img_data["local_path"],
-                                    "filename": img_data.get("filename", ""),
-                                    "size_kb": img_data.get("size_kb", 0),
+            for event in agent.stream({"messages": messages}, stream_mode="updates"):
+                for node_name, node_output in event.items():
+                    if "messages" not in node_output:
+                        continue
+                    for msg in node_output["messages"]:
+                        # Tool calls (AI decided to call a tool)
+                        tc = getattr(msg, "tool_calls", None)
+                        if tc:
+                            for call in tc:
+                                yield json.dumps({"tool_call": {
+                                    "tool": call.get("name", ""),
+                                    "input": str(call.get("args", "")),
                                 }}) + "\n"
-                        except (json.JSONDecodeError, KeyError):
-                            pass
-
+                        # Tool results
+                        elif isinstance(msg, ToolMessage):
+                            yield json.dumps({"tool_result": {
+                                "tool": getattr(msg, "name", ""),
+                                "output": str(msg.content)[:500],
+                            }}) + "\n"
+                        # AI text response (final answer)
+                        elif msg.content:
+                            full_response = msg.content
+                            yield json.dumps({"chunk": msg.content}) + "\n"
         except Exception as e:
             yield json.dumps({"error": str(e)}) + "\n"
             return
 
-        for tc_id, tc_info in pending_tool_calls.items():
-            if tc_info["name"]:
-                yield json.dumps({"tool_call": {"tool": tc_info["name"], "input": tc_info["args"]}}) + "\n"
-
         _state["history"].append({"role": "assistant", "content": full_response})
+        yield json.dumps({"done": True, "full_response": full_response}) + "\n"
 
     return Response(
         stream_with_context(generate()),
         mimetype="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
     )
-    
-@app.route("/api/chat/cancel", methods=["POST"])
-def chat_cancel():
-    """Signal the running agent stream to stop."""
-    _cancel_event.set()
-    return jsonify({"cancelled": True})
-
-
-# ── WebSocket endpoint for remote tool execution ─────────────────────────────
-# Remote clients connect here. The server runs the LLM, but tool calls are
-# sent to the client for local execution. Protocol (NDJSON over WebSocket):
-#
-#   Client → Server:  {"message": "read my file /tmp/foo.py"}
-#   Server → Client:  {"token": "Let me "}
-#   Server → Client:  {"token": "read that file."}
-#   Server → Client:  {"tool_call": {"id": "...", "tool": "read_file", "params": {"path": "/tmp/foo.py"}}}
-#   Client → Server:  {"tool_result": {"id": "...", "output": "contents..."}}
-#   Server → Client:  {"token": "Here's what I found..."}
-#   Server → Client:  {"done": true}
-
-@sock.route("/api/chat/ws")
-def chat_ws(ws):
-    """WebSocket endpoint for remote-mode chat with client-side tool execution."""
-    # Auth check — flask-sock bypasses before_request, so check manually
-    # The first message must be a JSON auth + chat payload
-    try:
-        raw = ws.receive(timeout=30)
-        if raw is None:
-            ws.close()
-            return
-        data = json.loads(raw)
-    except (json.JSONDecodeError, Exception):
-        ws.send(json.dumps({"error": "Invalid JSON"}))
-        ws.close()
-        return
-
-    # Authenticate
-    key = data.get("api_key", "")
-    if key != EXTERNAL_API_KEY:
-        ws.send(json.dumps({"error": "Unauthorized"}))
-        ws.close()
-        return
-
-    user_msg = data.get("message", "").strip()
-    if not user_msg:
-        ws.send(json.dumps({"error": "message required"}))
-        ws.close()
-        return
-
-    if not _state["model"]:
-        ws.send(json.dumps({"error": "No model selected"}))
-        ws.close()
-        return
-
-    # Build LLM with tools bound (but we execute the tool loop manually)
-    llm = ChatOllama(
-        model=_state["model"],
-        temperature=0,
-        num_ctx=NUM_CTX,
-        base_url="http://localhost:11434",
-    )
-    tools = _get_selected_tools()
-    if tools:
-        llm = llm.bind_tools(tools)
-
-    context = get_relevant_context(user_msg)
-    enriched = f"[Context]\n{context}\n\n[User]\n{user_msg}" if context else user_msg
-
-    messages = [
-        SystemMessage(content=_state["system_prompt"]),
-        HumanMessage(content=enriched),
-    ]
-
-    MAX_TOOL_ROUNDS = 10
-
-    try:
-        for _round in range(MAX_TOOL_ROUNDS):
-            # Stream the LLM response
-            full_content = ""
-            tool_calls_acc = []
-
-            for chunk in llm.stream(messages):
-                if isinstance(chunk, AIMessageChunk):
-                    if chunk.content:
-                        full_content += chunk.content
-                        ws.send(json.dumps({"token": chunk.content}))
-                    # Accumulate tool call chunks
-                    for tc in (chunk.tool_call_chunks or []):
-                        tc_id = tc.get("id") or tc.get("index", "")
-                        # Find or create accumulator for this tool call
-                        existing = next((t for t in tool_calls_acc if t["id"] == tc_id), None)
-                        if existing is None:
-                            existing = {"id": tc_id, "name": tc.get("name", ""), "args": ""}
-                            tool_calls_acc.append(existing)
-                        if tc.get("name"):
-                            existing["name"] = tc["name"]
-                        if tc.get("args"):
-                            existing["args"] += tc["args"]
-
-            # Also check for complete tool_calls on the accumulated message
-            # Build the AI message for history
-            parsed_tool_calls = []
-            for tc_info in tool_calls_acc:
-                if tc_info["name"]:
-                    try:
-                        args = json.loads(tc_info["args"]) if tc_info["args"] else {}
-                    except json.JSONDecodeError:
-                        args = {}
-                    parsed_tool_calls.append(ToolCall(
-                        name=tc_info["name"],
-                        args=args,
-                        id=tc_info["id"] or str(uuid4()),
-                    ))
-
-            # If no tool calls from native protocol, try text-based extraction
-            if not parsed_tool_calls and full_content:
-                extracted = _extract_tool_calls(full_content)
-                if extracted:
-                    parsed_tool_calls = extracted
-                    full_content = ""  # tool call was in text, not real content
-
-            ai_msg = AIMessage(
-                content=full_content,
-                tool_calls=parsed_tool_calls,
-            )
-            messages.append(ai_msg)
-
-            if not parsed_tool_calls:
-                # No tool calls — final response, we're done
-                break
-
-            # Send tool calls to client, collect results
-            tool_results = []
-            for tc in parsed_tool_calls:
-                ws.send(json.dumps({
-                    "tool_call": {
-                        "id": tc["id"],
-                        "tool": tc["name"],
-                        "params": tc["args"],
-                    }
-                }))
-
-                # Wait for client to send back the result
-                try:
-                    result_raw = ws.receive(timeout=120)
-                    if result_raw is None:
-                        tool_results.append(ToolMessage(
-                            content="Error: client disconnected",
-                            tool_call_id=tc["id"],
-                            name=tc["name"],
-                        ))
-                        continue
-                    result_data = json.loads(result_raw)
-                    output = result_data.get("tool_result", {}).get("output", "")
-                    tool_results.append(ToolMessage(
-                        content=str(output),
-                        tool_call_id=tc["id"],
-                        name=tc["name"],
-                    ))
-                except Exception as e:
-                    tool_results.append(ToolMessage(
-                        content=f"Error receiving tool result: {e}",
-                        tool_call_id=tc["id"],
-                        name=tc["name"],
-                    ))
-
-            messages.extend(tool_results)
-            # Loop continues — LLM will see tool results and may call more tools
-
-        ws.send(json.dumps({"done": True}))
-
-    except Exception as e:
-        try:
-            ws.send(json.dumps({"error": str(e)}))
-        except Exception:
-            pass
-
-    try:
-        ws.close()
-    except Exception:
-        pass
 
 
 # ── Agent proxy endpoints ────────────────────────────────────────────────────
@@ -1392,8 +528,13 @@ def call_agent(agent_name: str):
     try:
         url = agent_url(agent_name)
         resp = httpx.post(
-            f"{url}/call",
-            json={"tool": tool_name, "params": params},
+            f"{url}/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": tool_name, "arguments": params},
+                "id": 1,
+            },
             timeout=60.0,
         )
         return jsonify(resp.json())
@@ -1407,13 +548,13 @@ def list_agents():
     agents = {}
     for name, port in AGENT_PORTS.items():
         try:
-            resp = httpx.get(
-                f"http://127.0.0.1:{port}/health",
+            resp = httpx.post(
+                f"http://127.0.0.1:{port}/mcp",
+                json={"jsonrpc": "2.0", "method": "tools/list", "id": 1},
                 timeout=2.0,
             )
             resp.raise_for_status()
-            data = resp.json()
-            agents[name] = {"port": port, "status": "up", "tools": data.get("tools", [])}
+            agents[name] = {"port": port, "status": "up"}
         except Exception:
             agents[name] = {"port": port, "status": "down"}
     return jsonify(agents)
@@ -1427,7 +568,6 @@ def get_history():
 @app.route("/api/history", methods=["DELETE"])
 def clear_history():
     _state["history"] = []
-    _state["thread_id"] = str(uuid4())  # new thread = fresh checkpointer memory
     return jsonify({"cleared": True})
 
 
@@ -1438,8 +578,8 @@ def cli_tool_browser():
     selected_idx = set()
 
     while True:
-        available = [(i, [get_tools()]) for i in range(len( [get_tools()])) if i not in selected_idx]
-        selected = [(i, [get_tools()]) for i in sorted(selected_idx)]
+        available = [(i, TOOL_REGISTRY[i]) for i in range(len(TOOL_REGISTRY)) if i not in selected_idx]
+        selected = [(i, TOOL_REGISTRY[i]) for i in sorted(selected_idx)]
 
         # Render 2 columns
         col_w = 38
@@ -1462,9 +602,9 @@ def cli_tool_browser():
         elif cmd.startswith(">"):
             try:
                 idx = int(cmd[1:].strip())
-                if 0 <= idx < len([get_tools()]):
+                if 0 <= idx < len(TOOL_REGISTRY):
                     selected_idx.add(idx)
-                    meta = [get_tools()]
+                    meta = TOOL_REGISTRY[idx]
                     print(f"\n  + {meta['name']}: {meta['description']}")
                     if meta["params"]:
                         print("    Params required from user:")
@@ -1483,7 +623,6 @@ def cli_tool_browser():
         elif cmd.startswith("?"):
             try:
                 idx = int(cmd[1:].strip())
-                TOOL_REGISTRY = get_tools()
                 if 0 <= idx < len(TOOL_REGISTRY):
                     meta = TOOL_REGISTRY[idx]
                     print(f"\n  {meta['name']}: {meta['description']}")
@@ -1495,23 +634,19 @@ def cli_tool_browser():
                 print("  Usage: ? N")
 
     _state["selected_tools"] = sorted(selected_idx)
-    # print(f"\nSelected {len(selected_idx)} tools (all {len(ALL_TOOLS)} are still bound to agent).")
+    print(f"\nSelected {len(selected_idx)} tools (all {len(ALL_TOOLS)} are still bound to agent).")
 
 
 def cli_model_picker():
-    """Interactive model picker for the terminal (abliterated models only)."""
+    """Interactive model picker for the terminal."""
     try:
         models = ollama_client.list()
-        names = [m.model for m in models.models if _is_abliterated(m.model)]
+        names = [m.model for m in models.models]
     except Exception as e:
         print(f"Error listing models: {e}")
         return
 
-    if not names:
-        print("\nNo abliterated models found locally. Pull one with: ollama pull huihui_ai/qwen2.5-coder-abliterate:14b")
-        return
-
-    print("\nAvailable abliterated Ollama models:")
+    print("\nAvailable Ollama models:")
     for i, name in enumerate(names):
         marker = " *" if name == _state["model"] else ""
         print(f"  {i:>2}. {name}{marker}")
@@ -1530,7 +665,7 @@ def cli_chat():
         if not _state["model"]:
             return
 
-    # print(f"\nChat with {_state['model']} ({len(ALL_TOOLS)} tools bound)")
+    print(f"\nChat with {_state['model']} ({len(ALL_TOOLS)} tools bound)")
     print("Type 'quit' to exit, 'clear' to reset history.\n")
 
     while True:
@@ -1546,20 +681,17 @@ def cli_chat():
             break
         if user_input.lower() == "clear":
             _state["history"] = []
-            _state["thread_id"] = str(uuid4())
             print("  (history cleared)")
             continue
 
         agent = _build_agent()
-        config = _agent_config()
+        messages = _history_to_messages()
+        messages.append(HumanMessage(content=user_input))
         _state["history"].append({"role": "user", "content": user_input})
 
         print("Agent: ", end="", flush=True)
         try:
-            result = agent.invoke(
-                {"messages": [HumanMessage(content=user_input)]},
-                config,
-            )
+            result = agent.invoke({"messages": messages})
             output_msgs = result.get("messages", [])
             response = ""
             for msg in reversed(output_msgs):
@@ -1581,7 +713,7 @@ def main():
             if arg.startswith("--port="):
                 port = int(arg.split("=")[1])
         print(f"Starting Flask API on http://localhost:{port}")
-        app.run(host="0.0.0.0", port=port, debug=False)
+        app.run(host="0.0.0.0", port=port, debug=True)
     else:
         # Interactive CLI mode
         print("=== Agentic Chat (LangChain + Ollama) ===")
@@ -1606,7 +738,7 @@ def main():
                     _state["system_prompt"] = prompt
                     print("  Updated.")
             elif choice == "5":
-                app.run(host="0.0.0.0", port=5000, debug=False)
+                app.run(host="0.0.0.0", port=5000, debug=True)
             elif choice.lower() == "q":
                 break
 

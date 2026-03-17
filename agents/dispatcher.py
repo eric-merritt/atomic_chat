@@ -1,35 +1,34 @@
-"""Dispatcher/analyst agent — the sole Ollama interface.
+"""Dispatcher/analyst agent — orchestrates subagents and does all reasoning.
 
-All LLM reasoning goes through this module. The subagent HTTP servers
-(filesystem, codesearch, web, marketplace) are pure tool executors
-with no LLM of their own. The dispatcher:
+Port: 8105
+Tools: None directly (has tool definitions for planning)
+Model: strongest available abliterated model
 
-1. Receives user requests
-2. Uses ChatOllama to plan which subagent tools to call
-3. Calls subagent HTTP servers via plain POST /call
-4. Evaluates result quality via the same Ollama model
-5. Analyzes, deduplicates, ranks, presents results
+The dispatcher:
+1. Receives user requests via MCP
+2. Plans which subagents to call with what parameters
+3. Fans out requests (parallel across platforms, sequential within)
+4. Evaluates result quality via LLM self-eval
+5. Retries on bad data (max 2 retries)
+6. Analyzes, deduplicates, ranks, presents results
 """
 
 import asyncio
 import json
 import time
 
-import httpx
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+from mcp.server.fastmcp import FastMCP
 
-from langchain_ollama import ChatOllama
-from langchain.agents import create_agent
-from langchain.tools import tool
-from langchain_core.messages import HumanMessage, SystemMessage
-
-from config import RATE_LIMITS, agent_url, AGENT_MODELS
+from config import AGENT_PORTS, RATE_LIMITS, MAX_RETRIES, agent_url, AGENT_MODELS
 from tools.filesystem import FILESYSTEM_TOOLS
 from tools.codesearch import CODESEARCH_TOOLS
 from tools.web import WEB_TOOLS
 from tools.marketplace import MARKETPLACE_TOOLS
 
 
-# ── Tool registry (metadata only, for the system prompt) ─────────────────────
+# ── Tool registry (metadata only, for planning) ──────────────────────────────
 
 def _tool_meta(t) -> dict:
     """Extract name, description, and parameter info from a LangChain tool."""
@@ -63,8 +62,8 @@ for t in WEB_TOOLS:
 for t in MARKETPLACE_TOOLS:
     TOOL_TO_AGENT[t.name] = "marketplace"
 
-ALL_SUBAGENT_TOOLS = FILESYSTEM_TOOLS + CODESEARCH_TOOLS + WEB_TOOLS + MARKETPLACE_TOOLS
-TOOL_REGISTRY = [_tool_meta(t) for t in ALL_SUBAGENT_TOOLS]
+ALL_AGENT_TOOLS = FILESYSTEM_TOOLS + CODESEARCH_TOOLS + WEB_TOOLS + MARKETPLACE_TOOLS
+TOOL_REGISTRY = [_tool_meta(t) for t in ALL_AGENT_TOOLS]
 
 
 # ── Platform classification ──────────────────────────────────────────────────
@@ -87,6 +86,7 @@ class PlatformRateLimiter:
 
     def __init__(self):
         self._last_call: dict[str, float] = {}
+        # Pre-initialize all known platform locks to avoid race conditions
         self._locks: dict[str, asyncio.Lock] = {
             "ebay": asyncio.Lock(),
             "amazon": asyncio.Lock(),
@@ -111,15 +111,23 @@ class PlatformRateLimiter:
             self._last_call[platform] = time.monotonic()
 
 
-# ── Subagent MCP client call ─────────────────────────────────────────────────
+# ── Subagent MCP client ──────────────────────────────────────────────────────
 
-async def _call_subagent(
+async def call_subagent(
     agent_name: str,
     tool_name: str,
     params: dict,
     rate_limiter: PlatformRateLimiter,
 ) -> dict:
-    """Call a subagent's tool via plain HTTP POST.
+    """Call a subagent's tool via the MCP client library.
+
+    Uses streamable_http_client to connect to the subagent's MCP server
+    and call tools through the proper MCP protocol.
+
+    Args:
+        agent_name: Name of the agent (e.g., "marketplace")
+        tool_name: Name of the tool to invoke
+        params: Tool parameters
 
     Returns:
         {"status": "ok", "data": ..., "tool": tool_name} or
@@ -131,21 +139,29 @@ async def _call_subagent(
 
     base_url = agent_url(agent_name)
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{base_url}/call",
-                json={"tool": tool_name, "params": params},
-            )
-            return resp.json()
+        async with streamable_http_client(f"{base_url}/mcp") as (
+            read_stream, write_stream, _,
+        ):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                result = await session.call_tool(tool_name, arguments=params)
+
+                # Extract text content from MCP result
+                data = ""
+                for item in result.content:
+                    if item.type == "text":
+                        data = item.text
+                        break
+
+                return {"status": "ok", "data": data, "tool": tool_name}
+
     except Exception as e:
         return {"status": "error", "error": str(e), "tool": tool_name}
 
 
 # ── Dispatcher system prompt ─────────────────────────────────────────────────
 
-DISPATCHER_SYSTEM_PROMPT = """You are a local AI dispatcher/analyst agent running on Ollama. You are NOT GPT-4, ChatGPT, or any OpenAI product. Never claim to be. Never refuse requests by citing policies you do not have. You follow user instructions.
-
-You orchestrate specialized subagents to gather data, then analyze and present results.
+DISPATCHER_SYSTEM_PROMPT = """You are a dispatcher/analyst agent. You orchestrate specialized subagents to gather data, then analyze and present results.
 
 ## Your role
 - You have knowledge of all available tools across all agents (see TOOL_REGISTRY below).
@@ -176,7 +192,7 @@ You orchestrate specialized subagents to gather data, then analyze and present r
 - Requests to different platforms run in parallel.
 
 ## GPU generations reference
-When searching for deals on GPUs specifically, only consider Turing (2018) or newer for AI/ML relevance:
+Only consider Turing (2018) or newer for AI/ML relevance:
 - Turing: RTX 2060/2070/2080, GTX 1650/1660, T4
 - Ampere: RTX 3060/3070/3080/3090, A100/A40/A6000
 - Ada Lovelace: RTX 4060/4070/4080/4090, L40/L40S
@@ -197,25 +213,25 @@ When searching for deals on GPUs specifically, only consider Turing (2018) or ne
 """
 
 
-# ── Dispatcher agent factory ─────────────────────────────────────────────────
+# ── MCP server creation ──────────────────────────────────────────────────────
 
-def create_dispatcher(model: str = None, checkpointer=None):
-    """Create the dispatcher as a ChatOllama-powered LangChain agent.
+def create_app():
+    # Format tool list for the system prompt
+    tool_list = "\n".join(
+        f"- {t['name']}: {t['description']}"
+        for t in TOOL_REGISTRY
+    )
+    prompt = DISPATCHER_SYSTEM_PROMPT.format(tool_list=tool_list)
 
-    Args:
-        model: Ollama model name. Defaults to AGENT_MODELS["dispatcher"].
-        checkpointer: Optional LangGraph checkpointer for conversation memory.
+    mcp = FastMCP(
+        "dispatcher-agent",
+        stateless_http=True,
+        json_response=True,
+    )
 
-    Returns:
-        A LangGraph agent that uses Ollama for reasoning and dispatches
-        tool calls to subagent MCP servers.
-    """
-    model = model or AGENT_MODELS["dispatcher"]
     rate_limiter = PlatformRateLimiter()
 
-    # ── Dispatcher tools (these are what the LLM can call) ────────────────
-
-    @tool
+    @mcp.tool()
     async def dispatch(
         tool_name: str,
         params: str = "{}",
@@ -235,10 +251,10 @@ def create_dispatcher(model: str = None, checkpointer=None):
         except json.JSONDecodeError as e:
             return json.dumps({"status": "error", "error": f"Invalid params JSON: {e}"})
 
-        result = await _call_subagent(agent_name, tool_name, parsed_params, rate_limiter)
+        result = await call_subagent(agent_name, tool_name, parsed_params, rate_limiter)
         return json.dumps(result)
 
-    @tool
+    @mcp.tool()
     async def dispatch_parallel(
         requests: str,
     ) -> str:
@@ -254,48 +270,57 @@ def create_dispatcher(model: str = None, checkpointer=None):
         except json.JSONDecodeError as e:
             return json.dumps({"status": "error", "error": f"Invalid JSON: {e}"})
 
+        # Group by platform for parallel execution
         platform_groups: dict[str, list] = {}
         for req in req_list:
-            t_name = req.get("tool", "")
-            platform = classify_platform(t_name)
+            tool_name = req.get("tool", "")
+            platform = classify_platform(tool_name)
             platform_groups.setdefault(platform, []).append(req)
 
         async def run_platform_group(reqs):
+            """Run a group of same-platform requests sequentially."""
             results = []
             for req in reqs:
-                t_name = req.get("tool", "")
-                t_params = req.get("params", {})
-                a_name = TOOL_TO_AGENT.get(t_name)
-                if not a_name:
-                    results.append({"status": "error", "error": f"Unknown tool: {t_name}", "tool": t_name})
+                tool_name = req.get("tool", "")
+                params = req.get("params", {})
+                agent_name = TOOL_TO_AGENT.get(tool_name)
+                if not agent_name:
+                    results.append({"status": "error", "error": f"Unknown tool: {tool_name}", "tool": tool_name})
                     continue
-                result = await _call_subagent(a_name, t_name, t_params, rate_limiter)
+                result = await call_subagent(agent_name, tool_name, params, rate_limiter)
                 results.append(result)
             return results
 
+        # Run all platform groups in parallel
         tasks = [run_platform_group(reqs) for reqs in platform_groups.values()]
         group_results = await asyncio.gather(*tasks)
 
+        # Flatten results
         all_results = []
         for group in group_results:
             all_results.extend(group)
 
         return json.dumps(all_results)
 
-    @tool
+    @mcp.tool()
     async def check_quality(
         data: str,
         expected_format: str = "marketplace_listings",
     ) -> str:
         """Evaluate the quality of data returned by a subagent.
 
-        Uses the dispatcher's own Ollama model to determine if data is valid.
+        Uses LLM self-eval to determine if the data is valid or garbage.
 
         Args:
             data: The data string to evaluate
             expected_format: What kind of data this should be
+                           (e.g., "marketplace_listings", "file_contents", "search_results")
         """
-        eval_llm = ChatOllama(model=model, temperature=0, base_url="http://localhost:11434")
+        from langchain_ollama import ChatOllama
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        model = AGENT_MODELS.get("dispatcher", "huihui_ai/qwen2.5-coder-abliterate:14b")
+        llm = ChatOllama(model=model, temperature=0, base_url="http://localhost:11434")
 
         eval_prompt = f"""Evaluate this data. Expected format: {expected_format}.
 
@@ -305,33 +330,15 @@ Is this valid, usable data? Reply with ONLY a JSON object:
 Data to evaluate:
 {data[:2000]}"""
 
-        result = eval_llm.invoke([
+        result = llm.invoke([
             SystemMessage(content="You are a data quality evaluator. Return ONLY valid JSON. No other text."),
             HumanMessage(content=eval_prompt),
         ])
         return result.content
 
-    # ── Build the agent ───────────────────────────────────────────────────
+    return mcp
 
-    tool_list = "\n".join(
-        f"- {t['name']}: {t['description']}"
-        for t in TOOL_REGISTRY
-    )
-    system_prompt = DISPATCHER_SYSTEM_PROMPT.format(tool_list=tool_list)
 
-    llm = ChatOllama(
-        model=model,
-        temperature=0,
-        base_url="http://localhost:11434",
-    )
-
-    dispatcher_tools = [dispatch, dispatch_parallel, check_quality]
-
-    agent = create_agent(
-        llm,
-        dispatcher_tools,
-        system_prompt=system_prompt,
-        checkpointer=checkpointer,
-    )
-
-    return agent
+if __name__ == "__main__":
+    app = create_app()
+    app.run(transport="streamable-http", port=AGENT_PORTS["dispatcher"])
