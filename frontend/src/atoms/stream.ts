@@ -7,6 +7,9 @@ export type StreamEvent =
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
+  if ('chunk' in raw) {
+    return { type: 'token', token: raw.chunk };
+  }
   if ('token' in raw) {
     return { type: 'token', token: raw.token };
   }

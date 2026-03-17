@@ -12,6 +12,7 @@ interface ChatContextValue {
   cancelStream: () => void;
   clearHistory: () => Promise<void>;
   streaming: boolean;
+  ready: boolean;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -36,7 +37,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, [currentModel, stop]);
 
   const sendMessage = useCallback((text: string) => {
-    if (streamingRef.current) return;
+    if (streamingRef.current || !currentModel) return;
     const userMsg = createMessage('user', text);
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
@@ -99,7 +100,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ChatContext.Provider value={{ messages, sendMessage, cancelStream, clearHistory, streaming }}>
+    <ChatContext.Provider value={{ messages, sendMessage, cancelStream, clearHistory, streaming, ready: !!currentModel }}>
       {children}
     </ChatContext.Provider>
   );

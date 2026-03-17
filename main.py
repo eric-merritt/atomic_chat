@@ -395,10 +395,12 @@ def _build_agent():
         base_url="http://localhost:11434",
     )
 
-    # create_agent returns a compiled LangGraph — all tools always bound
+    # Only bind selected tools (or none if nothing selected)
+    selected_idx = set(_state["selected_tools"])
+    tools = [t for i, t in enumerate(ALL_TOOLS) if i in selected_idx] if selected_idx else []
     agent = create_agent(
         llm,
-        ALL_TOOLS,
+        tools,
         system_prompt=_state["system_prompt"],
     )
     return agent

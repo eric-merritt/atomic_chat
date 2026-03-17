@@ -27,6 +27,7 @@ export function MessageList({ onImageClick }: MessageListProps) {
 
   return (
     <div className="overflow-y-auto px-6 py-5 flex flex-col gap-2">
+      <div className="mt-auto" />
       {messages.map((msg) => (
         <div key={msg.id}>
           <MessageBubble message={msg} />

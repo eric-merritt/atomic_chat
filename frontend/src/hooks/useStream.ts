@@ -17,10 +17,14 @@ export function parseNdjsonLines(text: string): {
       const raw = JSON.parse(trimmed);
       const ev = parseStreamLine(raw);
       if (ev) events.push(ev);
-    } catch {
+    } catch(e: string) {
+      
+        const err = new Error();
       // skip malformed lines
+        console.log(err.message)
+      }
     }
-  }
+
 
   return { events, remainder };
 }
