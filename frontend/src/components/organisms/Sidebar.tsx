@@ -22,13 +22,13 @@ export function Sidebar({ expanded, onToggle }: SidebarProps) {
   };
 
   return (
-    <div className="flex flex-col bg-[var(--glass-bg-solid)] backdrop-blur-xl border border-[var(--glass-border)] rounded-[14px] m-2 overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.15)]">
+    <div className={`flex flex-col backdrop-blur-xl border border-[var(--accent)] rounded-[14px] m-2 overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.15)] transition-colors ${expanded ? 'bg-[var(--glass-bg)]' : 'bg-transparent hover:bg-[var(--glass-bg)]'}`}>
       <div
-        className="flex items-center justify-center p-3 cursor-pointer hover:bg-[var(--glass-highlight)] transition-colors"
+        className={`group/toggle flex items-center justify-center w-full p-3 cursor-pointer hover:bg-[var(--glass-highlight)] transition-colors ${expanded ? '' : 'flex-1'}`}
         onClick={onToggle}
         title="Toggle tools"
       >
-        <Icon name="chevron" size={18} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
+        <Icon name="chevron" size={18} className={`text-[var(--accent)] group-hover/toggle:text-[var(--glass-border)] transition-all ${expanded ? 'rotate-180' : ''}`} />
       </div>
 
       {expanded && (

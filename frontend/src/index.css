@@ -145,6 +145,28 @@
   --mode: light;
 }
 
+/* Gradient mesh backdrop for depth */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 30%, var(--bg-mesh-1) 0%, transparent 70%),
+    radial-gradient(ellipse 70% 50% at 75% 60%, var(--bg-mesh-2) 0%, transparent 70%),
+    radial-gradient(ellipse 60% 80% at 50% 80%, var(--bg-mesh-3) 0%, transparent 70%);
+  animation: meshDrift 30s ease-in-out infinite alternate;
+}
+
+@keyframes meshDrift {
+  0%   { opacity: 1; }
+  50%  { opacity: 0.8; }
+  100% { opacity: 1; }
+}
+
+body > * { position: relative; z-index: 0; }
+
 @keyframes msgIn {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }

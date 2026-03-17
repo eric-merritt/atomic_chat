@@ -9,8 +9,8 @@ const PALETTES: Record<string, string[]> = {
   blossom:   ['#c02060','#d84080','#f060a0','#a01848','#e85098'],
 };
 
-const COUNT = 80;
-const FIELD = 3;
+const COUNT = 100;
+const FIELD = 6;
 
 interface Particle {
   x: number; y: number; r: number;
@@ -49,27 +49,40 @@ export function ParticleCanvas({ theme }: ParticleCanvasProps) {
       const pal = PALETTES[theme] ?? PALETTES.obsidian;
       const color = pal[Math.floor(Math.random() * pal.length)];
       const rgb = hexToRgb(color);
-      const r = Math.random() * 1.2 + 0.3;
+      const r = (Math.random() * 15) * 2;
       particles[i] = {
         x: Math.random() * W,
         y: scatter ? Math.random() * H * FIELD : -(Math.random() * H * 0.5),
-        r, dx: (Math.random() - 0.5) * 0.06,
-        dy: Math.random() * 0.12 + 0.04,
-        opacity: Math.random() * 0.3 + 0.08, rgb,
+        r, dx: (Math.random() - 0.5) * 0.25,
+        dy: Math.random() * 0.5 + 0.04,
+        opacity: Math.random() * 0.10 + 0.25, rgb,
       };
+    }
+
+    // Sort indices by radius so smallest draw first (behind), largest last (in front)
+    const sortedIndices: number[] = [];
+
+    function rebuildSortOrder() {
+      sortedIndices.length = 0;
+      for (let i = 0; i < COUNT; i++) sortedIndices.push(i);
+      sortedIndices.sort((a, b) => particles[a].r - particles[b].r);
     }
 
     function draw() {
       ctx!.clearRect(0, 0, W, H);
-      for (let i = 0; i < COUNT; i++) {
+      for (const i of sortedIndices) {
         const p = particles[i];
         p.x += p.dx; p.y += p.dy;
         if (p.y > H * FIELD) spawn(i, false);
         const screenY = ((p.y % (H * FIELD)) + H * FIELD) % (H * FIELD) - H;
         if (screenY > -10 && screenY < H + 10) {
+          const grad = ctx!.createRadialGradient(p.x, screenY, 0, p.x, screenY, p.r);
+          grad.addColorStop(0, `rgba(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]},${p.opacity})`);
+          grad.addColorStop(0.6, `rgba(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]},${p.opacity * 0.5})`);
+          grad.addColorStop(1, `rgba(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]},0)`);
           ctx!.beginPath();
           ctx!.arc(p.x, screenY, p.r, 0, Math.PI * 2);
-          ctx!.fillStyle = `rgba(${p.rgb[0]},${p.rgb[1]},${p.rgb[2]},${p.opacity})`;
+          ctx!.fillStyle = grad;
           ctx!.fill();
         }
       }
@@ -78,6 +91,7 @@ export function ParticleCanvas({ theme }: ParticleCanvasProps) {
 
     resize();
     for (let i = 0; i < COUNT; i++) spawn(i, true);
+    rebuildSortOrder();
     draw();
     window.addEventListener('resize', resize);
 
