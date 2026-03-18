@@ -330,6 +330,18 @@ def _tool_meta(t) -> dict:
 
 TOOL_REGISTRY = [_tool_meta(t) for t in ALL_TOOLS]
 
+DEFAULT_TOOL_NAMES = {"read", "info", "ls", "tree", "write", "append", "replace", "insert", "delete", "copy", "move", "mkdir", "grep", "find", "definition"}
+DEFAULT_TOOL_INDICES = [i for i, t in enumerate(TOOL_REGISTRY) if t["name"] in DEFAULT_TOOL_NAMES]
+
+
+def _get_user_selected_tools():
+    """Get selected tool indices for the current user, falling back to defaults."""
+    if hasattr(current_user, 'preferences') and current_user.preferences:
+        user_tools = current_user.preferences.get("selected_tools")
+        if user_tools is not None:
+            return user_tools
+    return list(DEFAULT_TOOL_INDICES)
+
 
 # ── Models ───────────────────────────────────────────────────────────────────
 
@@ -359,9 +371,10 @@ def select_model():
 # ── Tools browser ────────────────────────────────────────────────────────────
 
 @app.route("/api/tools", methods=["GET"])
+@login_required
 def get_tools():
     """Return the 2-column tool state: available (left) and selected (right)."""
-    selected_idx = set(_state["selected_tools"])
+    selected_idx = set(_get_user_selected_tools())
     available = []
     selected = []
     for i, meta in enumerate(TOOL_REGISTRY):
@@ -374,26 +387,40 @@ def get_tools():
 
 
 @app.route("/api/tools/select", methods=["POST"])
+@login_required
 def select_tool():
-    """Move a tool from available -> selected.  Body: {"index": N}
-    This is the > button."""
+    """Move a tool from available -> selected. Body: {"index": N}"""
     data = request.get_json(force=True)
     idx = data.get("index")
     if idx is None or idx < 0 or idx >= len(TOOL_REGISTRY):
         return jsonify({"error": "invalid index"}), 400
-    if idx not in _state["selected_tools"]:
-        _state["selected_tools"].append(idx)
+
+    db = get_db()
+    prefs = dict(current_user.preferences or {})
+    selected = list(prefs.get("selected_tools", DEFAULT_TOOL_INDICES))
+    if idx not in selected:
+        selected.append(idx)
+    prefs["selected_tools"] = selected
+    current_user.preferences = prefs
+    db.commit()
     return get_tools()
 
 
 @app.route("/api/tools/deselect", methods=["POST"])
+@login_required
 def deselect_tool():
-    """Move a tool from selected -> available.  Body: {"index": N}
-    This is the < button."""
+    """Move a tool from selected -> available. Body: {"index": N}"""
     data = request.get_json(force=True)
     idx = data.get("index")
-    if idx in _state["selected_tools"]:
-        _state["selected_tools"].remove(idx)
+
+    db = get_db()
+    prefs = dict(current_user.preferences or {})
+    selected = list(prefs.get("selected_tools", DEFAULT_TOOL_INDICES))
+    if idx in selected:
+        selected.remove(idx)
+    prefs["selected_tools"] = selected
+    current_user.preferences = prefs
+    db.commit()
     return get_tools()
 
 
@@ -432,8 +459,8 @@ def _build_agent():
         base_url="http://localhost:11434",
     )
 
-    # Only bind selected tools (or none if nothing selected)
-    selected_idx = set(_state["selected_tools"])
+    # Use per-user tool selection
+    selected_idx = set(_get_user_selected_tools())
     tools = [t for i, t in enumerate(ALL_TOOLS) if i in selected_idx] if selected_idx else []
     agent = create_agent(
         llm,
