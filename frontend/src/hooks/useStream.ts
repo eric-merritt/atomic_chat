@@ -35,12 +35,12 @@ export interface StreamCallbacks {
 export function useStream() {
   const abortRef = useRef<(() => void) | null>(null);
 
-  const start = useCallback(async (message: string, callbacks: StreamCallbacks) => {
+  const start = useCallback(async (message: string, callbacks: StreamCallbacks, conversationId?: string | null) => {
     // Abort any existing stream before starting a new one
     abortRef.current?.();
 
     try {
-      const { reader, abort } = await streamChatAsync(message);
+      const { reader, abort } = await streamChatAsync(message, conversationId);
       abortRef.current = abort;
 
       const decoder = new TextDecoder();

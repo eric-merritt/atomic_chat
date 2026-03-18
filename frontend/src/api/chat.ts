@@ -1,4 +1,4 @@
-export async function streamChatAsync(message: string): Promise<{
+export async function streamChatAsync(message: string, conversationId?: string | null): Promise<{
   reader: ReadableStreamDefaultReader<Uint8Array>;
   abort: () => void;
 }> {
@@ -6,7 +6,7 @@ export async function streamChatAsync(message: string): Promise<{
   const resp = await fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, conversation_id: conversationId }),
     signal: controller.signal,
     credentials: 'include',
   });

@@ -3,6 +3,7 @@ import type { Message } from '../atoms/message';
 import { createMessage } from '../atoms/message';
 import { cancelChat } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
+import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
 
@@ -13,6 +14,9 @@ interface ChatContextValue {
   clearHistory: () => Promise<void>;
   streaming: boolean;
   ready: boolean;
+  conversationId: string | null;
+  loadConversation: (id: string) => Promise<void>;
+  newConversation: () => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -20,6 +24,7 @@ export const ChatContext = createContext<ChatContextValue | null>(null);
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const streamingRef = useRef(false);
   const { start, stop } = useStream();
   const { current: currentModel } = useModels();
@@ -32,9 +37,33 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setStreaming(false);
       streamingRef.current = false;
       setMessages([]);
+      setConversationId(null);
     }
     prevModelRef.current = currentModel;
   }, [currentModel, stop]);
+
+  const loadConversation = useCallback(async (id: string) => {
+    const data = await getConversation(id, 1, 50);
+    if (data.messages) {
+      const loaded: Message[] = data.messages.map((m: { id: string; role: string; content: string; images?: { src: string; filename: string; sizeKb: number }[]; tool_calls?: { tool: string; input: string }[]; created_at: string }) =>
+        ({
+          id: m.id,
+          role: m.role as 'user' | 'assistant' | 'error',
+          content: m.content,
+          images: m.images || [],
+          toolCalls: m.tool_calls || [],
+          timestamp: new Date(m.created_at).getTime(),
+        })
+      );
+      setMessages(loaded);
+      setConversationId(id);
+    }
+  }, []);
+
+  const newConversation = useCallback(() => {
+    setMessages([]);
+    setConversationId(null);
+  }, []);
 
   const sendMessage = useCallback((text: string) => {
     if (streamingRef.current || !currentModel) return;
@@ -48,6 +77,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     start(text, {
       onEvent: (ev) => {
         switch (ev.type) {
+          case 'meta':
+            if (ev.conversationId) setConversationId(ev.conversationId);
+            break;
           case 'token':
             setMessages((prev) => {
               if (!assistantCreated) {
@@ -84,8 +116,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setStreaming(false);
         streamingRef.current = false;
       },
-    });
-  }, [start, currentModel]);
+    }, conversationId);
+  }, [start, currentModel, conversationId]);
 
   const cancelStream = useCallback(() => {
     stop();
@@ -97,10 +129,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const clearHistory = useCallback(async () => {
     await apiClearHistory();
     setMessages([]);
+    setConversationId(null);
   }, []);
 
   return (
-    <ChatContext.Provider value={{ messages, sendMessage, cancelStream, clearHistory, streaming, ready: !!currentModel }}>
+    <ChatContext.Provider value={{
+      messages, sendMessage, cancelStream, clearHistory, streaming,
+      ready: !!currentModel, conversationId, loadConversation, newConversation,
+    }}>
       {children}
     </ChatContext.Provider>
   );

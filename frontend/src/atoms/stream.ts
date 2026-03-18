@@ -3,10 +3,14 @@ export type StreamEvent =
   | { type: 'tool_call'; tool: string; input: string }
   | { type: 'tool_result'; tool: string; output: string }
   | { type: 'image'; src: string; filename: string; sizeKb: number }
-  | { type: 'error'; message: string };
+  | { type: 'error'; message: string }
+  | { type: 'meta'; conversationId: string | null };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
+  if ('type' in raw && raw.type === 'meta') {
+    return { type: 'meta', conversationId: raw.conversation_id ?? null };
+  }
   if ('chunk' in raw) {
     return { type: 'token', token: raw.chunk };
   }
