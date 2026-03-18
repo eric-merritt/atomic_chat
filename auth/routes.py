@@ -48,6 +48,7 @@ def _user_json(user: User) -> dict:
         "role": user.role,
         "avatar_url": user.avatar_url,
         "auth_method": user.auth_method,
+        "preferences": user.preferences or {},
     }
 
 
