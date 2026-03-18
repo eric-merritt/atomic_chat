@@ -153,8 +153,34 @@ class ToolCallFixerChatModel(ChatOllama):
         return result
 
 app = Flask(__name__)
+app.secret_key = _os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = False  # Set True in production behind HTTPS
+
+# ── Auth setup ────────────────────────────────────────────────────────────────
+from auth.middleware import login_manager, auth_guard
+from auth.routes import auth_bp, init_oauth
+from auth.db import init_db, SessionLocal
+
+login_manager.init_app(app)
+init_oauth(app)
+app.register_blueprint(auth_bp)
+app.before_request(auth_guard)
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    SessionLocal.remove()
+
+# Create tables on first run (use Alembic migrations in production)
+with app.app_context():
+    init_db()
 
 _FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
+
+
+@app.route("/api/health")
+def health():
+    return jsonify({"status": "ok"})
 
 
 @app.route("/", defaults={"path": ""})
@@ -174,6 +200,11 @@ def serve_frontend(path):
 _state = {
     "model": None,
     "system_prompt": """You are a helpful assistant with access to filesystem, search, and web tools.
+
+## Tool families
+
+**Filesystem tools** — read, info, ls, tree, write, append, replace, insert, delete, copy, move, mkdir, grep, find, definition
+These are short-named for efficiency. They operate on the local filesystem. Use them for any file or directory operation.
 
 ## Response discipline
 

@@ -1,27 +1,50 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './providers/AuthProvider';
 import { ThemeProvider } from './providers/ThemeProvider';
 import { ModelProvider } from './providers/ModelProvider';
 import { ToolProvider } from './providers/ToolProvider';
 import { ChatProvider } from './providers/ChatProvider';
 import { WebSocketProvider } from './providers/WebSocketProvider';
 import { ChatPage } from './pages/ChatPage';
+import { LoginPage } from './pages/LoginPage';
+import { useAuth } from './hooks/useAuth';
+
+function AuthGate() {
+  const { authenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-[var(--bg-base)]">
+        <span className="text-[var(--text-muted)] text-sm">Loading...</span>
+      </div>
+    );
+  }
+
+  if (!authenticated) return <LoginPage />;
+
+  return (
+    <ModelProvider>
+      <ToolProvider>
+        <ChatProvider>
+          <WebSocketProvider enabled={false}>
+            <Routes>
+              <Route path="/" element={<ChatPage />} />
+            </Routes>
+          </WebSocketProvider>
+        </ChatProvider>
+      </ToolProvider>
+    </ModelProvider>
+  );
+}
 
 export default function App() {
   return (
     <BrowserRouter>
-      <ThemeProvider>
-        <ModelProvider>
-          <ToolProvider>
-            <ChatProvider>
-              <WebSocketProvider enabled={false}>
-                <Routes>
-                  <Route path="/" element={<ChatPage />} />
-                </Routes>
-              </WebSocketProvider>
-            </ChatProvider>
-          </ToolProvider>
-        </ModelProvider>
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider>
+          <AuthGate />
+        </ThemeProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 }
