@@ -11,6 +11,7 @@ from uuid import uuid4
 import ollama as ollama_client
 import os as _os
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
+from flask_login import login_required, current_user
 
 from langchain_ollama import ChatOllama
 from langchain.agents import create_agent, AgentState
@@ -160,7 +161,7 @@ app.config["SESSION_COOKIE_SECURE"] = False  # Set True in production behind HTT
 # ── Auth setup ────────────────────────────────────────────────────────────────
 from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
-from auth.db import init_db, SessionLocal
+from auth.db import init_db, SessionLocal, get_db
 import auth.conversations  # register conversation models with Base
 
 login_manager.init_app(app)
@@ -488,12 +489,46 @@ def chat():
 
 
 @app.route("/api/chat/stream", methods=["POST"])
+@login_required
 def chat_stream():
     """Streaming version of chat. Returns newline-delimited JSON."""
     data = request.get_json(force=True)
     user_msg = data.get("message", "").strip()
     if not user_msg:
         return jsonify({"error": "message required"}), 400
+
+    conversation_id = data.get("conversation_id")
+
+    # Auto-create conversation if save_mode is auto and no conversation_id
+    if not conversation_id:
+        prefs = (current_user.preferences or {}) if hasattr(current_user, 'preferences') else {}
+        save_mode = prefs.get("save_mode", "auto")
+        if save_mode == "auto":
+            from auth.conversations import Conversation
+            db = get_db()
+            conv = Conversation(
+                user_id=current_user.id,
+                title=user_msg[:50] if user_msg else "New Conversation",
+                model=_state.get("model"),
+            )
+            db.add(conv)
+            db.commit()
+            conversation_id = conv.id
+
+    # Persist user message
+    if conversation_id:
+        from auth.conversations import Conversation, ConversationMessage
+        db = get_db()
+        conv = db.query(Conversation).filter_by(id=conversation_id, user_id=current_user.id).first()
+        if conv:
+            db.add(ConversationMessage(
+                conversation_id=conversation_id,
+                role="user",
+                content=user_msg,
+            ))
+            from datetime import datetime, timezone
+            conv.updated_at = datetime.now(timezone.utc)
+            db.commit()
 
     try:
         agent = _build_agent()
@@ -506,7 +541,11 @@ def chat_stream():
 
     def generate():
         from langchain_core.messages import ToolMessage
+        # Emit conversation_id as first event
+        yield json.dumps({"type": "meta", "conversation_id": conversation_id}) + "\n"
+
         full_response = ""
+        tool_calls_collected = []
         try:
             for event in agent.stream({"messages": messages}, stream_mode="updates"):
                 for node_name, node_output in event.items():
@@ -517,6 +556,10 @@ def chat_stream():
                         tc = getattr(msg, "tool_calls", None)
                         if tc:
                             for call in tc:
+                                tool_calls_collected.append({
+                                    "tool": call.get("name", ""),
+                                    "input": str(call.get("args", "")),
+                                })
                                 yield json.dumps({"tool_call": {
                                     "tool": call.get("name", ""),
                                     "input": str(call.get("args", "")),
@@ -536,6 +579,19 @@ def chat_stream():
             return
 
         _state["history"].append({"role": "assistant", "content": full_response})
+
+        # Persist assistant message
+        if conversation_id:
+            from auth.conversations import ConversationMessage
+            db = get_db()
+            db.add(ConversationMessage(
+                conversation_id=conversation_id,
+                role="assistant",
+                content=full_response,
+                tool_calls=tool_calls_collected if tool_calls_collected else [],
+            ))
+            db.commit()
+
         yield json.dumps({"done": True, "full_response": full_response}) + "\n"
 
     return Response(
