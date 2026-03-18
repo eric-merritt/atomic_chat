@@ -740,6 +740,23 @@ def cli_chat():
 def main():
     import sys
 
+    if "--seed-admin" in sys.argv:
+        from auth.seed import seed_admin
+        with app.app_context():
+            seed_admin()
+        return
+
+    if "--promote-admin" in sys.argv:
+        from auth.seed import promote_admin
+        idx = sys.argv.index("--promote-admin")
+        username = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
+        if not username:
+            print("Usage: python main.py --promote-admin <username>")
+            return
+        with app.app_context():
+            promote_admin(username)
+        return
+
     if "--serve" in sys.argv:
         port = 5000
         for arg in sys.argv:
