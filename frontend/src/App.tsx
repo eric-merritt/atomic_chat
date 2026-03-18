@@ -8,6 +8,7 @@ import { WebSocketProvider } from './providers/WebSocketProvider';
 import { PreferencesProvider } from './providers/PreferencesProvider';
 import { ChatPage } from './pages/ChatPage';
 import { LoginPage } from './pages/LoginPage';
+import { DashboardPage } from './pages/DashboardPage';
 import { useAuth } from './hooks/useAuth';
 
 function AuthGate() {
@@ -31,6 +32,7 @@ function AuthGate() {
             <WebSocketProvider enabled={false}>
               <Routes>
                 <Route path="/" element={<ChatPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
               </Routes>
             </WebSocketProvider>
           </ChatProvider>
