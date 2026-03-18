@@ -1,13 +1,11 @@
 import { ModelSelect } from '../molecules/ModelSelect';
 import { Select } from '../atoms/Select';
-import { Button } from '../atoms/Button';
 import { Icon } from '../atoms/Icon';
 import { useTheme } from '../../hooks/useTheme';
-import { useAuth } from '../../hooks/useAuth';
+import { UserMenu } from '../molecules/UserMenu';
 
 export function TopBar() {
   const { theme, setTheme, themes } = useTheme();
-  const { user, logout } = useAuth();
 
   const themeOptions = themes.map((t) => ({
     value: t.id,
@@ -24,12 +22,7 @@ export function TopBar() {
       <div className="flex-1" />
       <span className="text-xs text-[var(--text)]">Theme:</span>
       <Select value={theme.id} onChange={setTheme} options={themeOptions} />
-      {user && (
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--text-muted)]">{user.username}</span>
-          <Button variant="ghost" onClick={logout}>Logout</Button>
-        </div>
-      )}
+      <UserMenu />
     </div>
   );
 }
