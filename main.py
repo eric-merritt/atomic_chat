@@ -166,6 +166,8 @@ import auth.conversations  # register conversation models with Base
 login_manager.init_app(app)
 init_oauth(app)
 app.register_blueprint(auth_bp)
+from routes.conversations import conv_bp
+app.register_blueprint(conv_bp)
 app.before_request(auth_guard)
 
 @app.teardown_appcontext
