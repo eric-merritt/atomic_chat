@@ -24,11 +24,11 @@ Write-Host ""
 Info "Checking Python..."
 
 $python = $null
-foreach ($cmd in @("python3", "python", "py")) {
+foreach ($cmd in @('python3', 'python', 'py')) {
     try {
-        $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+        $ver = & $cmd -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>$null
         if ($ver) {
-            $parts = $ver.Split(".")
+            $parts = $ver.Split('.')
             if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 12) {
                 $python = $cmd
                 break
@@ -53,14 +53,16 @@ if (-not $python) {
         Remove-Item $installerPath -ErrorAction SilentlyContinue
 
         # Refresh PATH so we can find the new install
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+        $userPath = [System.Environment]::GetEnvironmentVariable('Path', 'User')
+        $machPath = [System.Environment]::GetEnvironmentVariable('Path', 'Machine')
+        $env:Path = $userPath + ';' + $machPath
 
         # Re-check for Python
-        foreach ($cmd in @("python3", "python", "py")) {
+        foreach ($cmd in @('python3', 'python', 'py')) {
             try {
-                $ver = & $cmd -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>$null
+                $ver = & $cmd -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>$null
                 if ($ver) {
-                    $parts = $ver.Split(".")
+                    $parts = $ver.Split('.')
                     if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 12) {
                         $python = $cmd
                         break
