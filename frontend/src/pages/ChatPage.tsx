@@ -1,4 +1,6 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useChat } from '../hooks/useChat';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { TopBar } from '../components/organisms/TopBar';
 import { Sidebar } from '../components/organisms/Sidebar';
@@ -12,6 +14,13 @@ export function ChatPage() {
   const { theme } = useTheme();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; caption: string } | null>(null);
+  const [searchParams] = useSearchParams();
+  const { loadConversation } = useChat();
+
+  useEffect(() => {
+    const convId = searchParams.get('conversation');
+    if (convId) loadConversation(convId);
+  }, [searchParams, loadConversation]);
 
   const handleImageClick = useCallback((src: string, caption: string) => {
     setLightbox({ src, caption });
