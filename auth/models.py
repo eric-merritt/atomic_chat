@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     Column, String, Boolean, DateTime, ForeignKey, Text, create_engine,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship, Session
 from flask_login import UserMixin
 
@@ -34,6 +35,7 @@ class User(Base, UserMixin):
     oauth_provider_id = Column(String(255), nullable=True)
     role = Column(String(16), nullable=False, default="user")
     avatar_url = Column(String(512), nullable=True)
+    preferences = Column(JSONB, nullable=False, default=dict, server_default='{}')
     created_at = Column(DateTime(timezone=True), default=_now)
     last_login = Column(DateTime(timezone=True), default=_now)
 
