@@ -6,3 +6,5 @@ export { ToolRow } from './ToolRow';
 export { MessageBubble } from './MessageBubble';
 export { ImageThumbnail } from './ImageThumbnail';
 export { ThinkingIndicator } from './ThinkingIndicator';
+export { ApiKeyRow } from './ApiKeyRow';
+export { CreateKeyModal } from './CreateKeyModal';

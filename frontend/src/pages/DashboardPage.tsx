@@ -1,19 +1,13 @@
 import { useState } from 'react';
 import { DashboardNav } from '../components/organisms/DashboardNav';
 import { ConversationList } from '../components/organisms/ConversationList';
+import { ProfilePanel } from '../components/organisms/ProfilePanel';
+import { ApiKeyPanel } from '../components/organisms/ApiKeyPanel';
+import { ConnectionsPanel } from '../components/organisms/ConnectionsPanel';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { useTheme } from '../hooks/useTheme';
 
 type Section = 'conversations' | 'profile' | 'keys' | 'connections';
-
-function PlaceholderPanel({ title }: { title: string }) {
-  return (
-    <div>
-      <h2 className="text-lg font-semibold text-[var(--text)] mb-4">{title}</h2>
-      <p className="text-sm text-[var(--text-muted)]">Coming soon...</p>
-    </div>
-  );
-}
 
 export function DashboardPage() {
   const { theme } = useTheme();
@@ -21,9 +15,9 @@ export function DashboardPage() {
 
   const panels: Record<Section, React.ReactNode> = {
     conversations: <ConversationList />,
-    profile: <PlaceholderPanel title="Profile" />,
-    keys: <PlaceholderPanel title="API Keys" />,
-    connections: <PlaceholderPanel title="Connections" />,
+    profile: <ProfilePanel />,
+    keys: <ApiKeyPanel />,
+    connections: <ConnectionsPanel />,
   };
 
   return (
