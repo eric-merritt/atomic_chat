@@ -161,6 +161,7 @@ app.config["SESSION_COOKIE_SECURE"] = False  # Set True in production behind HTT
 from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
 from auth.db import init_db, SessionLocal
+import auth.conversations  # register conversation models with Base
 
 login_manager.init_app(app)
 init_oauth(app)
