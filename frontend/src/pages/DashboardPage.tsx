@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DashboardNav } from '../components/organisms/DashboardNav';
+import { ConversationList } from '../components/organisms/ConversationList';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { useTheme } from '../hooks/useTheme';
 
@@ -19,7 +20,7 @@ export function DashboardPage() {
   const [section, setSection] = useState<Section>('conversations');
 
   const panels: Record<Section, React.ReactNode> = {
-    conversations: <PlaceholderPanel title="Conversations" />,
+    conversations: <ConversationList />,
     profile: <PlaceholderPanel title="Profile" />,
     keys: <PlaceholderPanel title="API Keys" />,
     connections: <PlaceholderPanel title="Connections" />,
