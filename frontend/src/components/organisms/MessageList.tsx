@@ -5,6 +5,8 @@ import { ThinkingIndicator } from '../molecules/ThinkingIndicator';
 import { Timestamp } from '../atoms/Timestamp';
 import { DateSeparator } from '../atoms/DateSeparator';
 import { useChat } from '../../hooks/useChat';
+import { NewConversationButton } from '../molecules/NewConversationButton';
+import { ConversationTitle } from '../molecules/ConversationTitle';
 
 interface MessageListProps {
   onImageClick: (src: string, caption: string) => void;
@@ -56,6 +58,10 @@ export function MessageList({ onImageClick }: MessageListProps) {
       {visibleDate > 0 && (
         <DateSeparator timestamp={visibleDate} />
       )}
+      <div className="flex items-center justify-between px-2 py-1">
+        <ConversationTitle />
+        <NewConversationButton />
+      </div>
       <div className="mt-auto" />
       {messages.map((msg) => {
         const align = msg.role === 'user' ? 'right' : 'left';
