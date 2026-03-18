@@ -53,7 +53,41 @@ for cmd in python3.12 python3.13 python3; do
 done
 
 if [[ -z "$PYTHON" ]]; then
-    error "Python >= 3.12 required. Install it first:\n  Ubuntu/Debian: sudo apt install python3.12\n  macOS: brew install python@3.12\n  Other: https://www.python.org/downloads/"
+    warn "Python >= 3.12 not found."
+    read -rp "Do you want to install Python 3.12? (Y/N): " answer
+    if [[ "$answer" =~ ^[Yy] ]]; then
+        if [[ "$(uname)" == "Darwin" ]]; then
+            if command -v brew &>/dev/null; then
+                info "Installing Python 3.12 via Homebrew..."
+                brew install python@3.12
+                PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
+            else
+                error "Homebrew not found. Install it first: https://brew.sh\n  Then re-run this script."
+            fi
+        elif command -v apt-get &>/dev/null; then
+            info "Installing Python 3.12 via apt..."
+            sudo apt-get update -qq && sudo apt-get install -y python3.12 python3.12-venv
+            PYTHON="python3.12"
+        elif command -v dnf &>/dev/null; then
+            info "Installing Python 3.12 via dnf..."
+            sudo dnf install -y python3.12
+            PYTHON="python3.12"
+        elif command -v pacman &>/dev/null; then
+            info "Installing Python 3.12 via pacman..."
+            sudo pacman -S --noconfirm python
+            PYTHON="python3"
+        else
+            error "Could not detect package manager. Install Python 3.12 manually:\n  https://www.python.org/downloads/"
+        fi
+
+        # Verify it worked
+        if ! command -v "$PYTHON" &>/dev/null; then
+            error "Python installation failed. Install manually from https://www.python.org/downloads/"
+        fi
+        info "Python installed successfully!"
+    else
+        error "Python >= 3.12 is required. Install it first:\n  Ubuntu/Debian: sudo apt install python3.12\n  macOS: brew install python@3.12\n  Other: https://www.python.org/downloads/"
+    fi
 fi
 
 info "Using $PYTHON ($("$PYTHON" --version 2>&1))"
