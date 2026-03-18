@@ -24,6 +24,8 @@ Info 'Checking Python...'
 
 $python = $null
 $pyCheck = 'import sys; print(str(sys.version_info.major) + "." + str(sys.version_info.minor))'
+
+# Try PATH-based commands first
 foreach ($cmd in @('python3', 'python', 'py')) {
     try {
         $ver = & $cmd -c $pyCheck 2>$null
@@ -35,6 +37,36 @@ foreach ($cmd in @('python3', 'python', 'py')) {
             }
         }
     } catch {}
+}
+
+# If not found on PATH, scan common Windows install locations
+if (-not $python) {
+    $searchDirs = @(
+        (Join-Path $env:LOCALAPPDATA 'Programs\Python'),
+        'C:\Python',
+        'C:\Program Files\Python',
+        'C:\Program Files (x86)\Python',
+        (Join-Path $env:USERPROFILE 'AppData\Local\Programs\Python')
+    )
+    foreach ($baseDir in $searchDirs) {
+        if (-not (Test-Path $baseDir)) { continue }
+        $candidates = Get-ChildItem -Path $baseDir -Filter 'python.exe' -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch 'Scripts' }
+        foreach ($exe in $candidates) {
+            try {
+                $ver = & $exe.FullName -c $pyCheck 2>$null
+                if ($ver) {
+                    $parts = $ver.Split('.')
+                    if ([int]$parts[0] -ge 3 -and [int]$parts[1] -ge 12) {
+                        $python = $exe.FullName
+                        Info "Found Python at $python"
+                        break
+                    }
+                }
+            } catch {}
+        }
+        if ($python) { break }
+    }
 }
 
 if (-not $python) {
@@ -58,7 +90,7 @@ if (-not $python) {
         $machPath = [System.Environment]::GetEnvironmentVariable('Path', [System.EnvironmentVariableTarget]::Machine)
         $env:Path = $userPath + ';' + $machPath
 
-        # Re-check for Python
+        # Re-check for Python on PATH
         foreach ($cmd in @('python3', 'python', 'py')) {
             try {
                 $ver = & $cmd -c $pyCheck 2>$null
@@ -70,6 +102,15 @@ if (-not $python) {
                     }
                 }
             } catch {}
+        }
+
+        # If still not on PATH, check the default install location
+        if (-not $python) {
+            $defaultPath = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'
+            if (Test-Path $defaultPath) {
+                $python = $defaultPath
+                Info "Found Python at $python"
+            }
         }
 
         if (-not $python) {
