@@ -268,21 +268,21 @@ def _tool_delete_lines(params: dict) -> str:
 # ── Tool registry ────────────────────────────────────────────────────────────
 
 READ_TOOLS = {
-    "read_file": _tool_read_file,
-    "file_info": _tool_file_info,
-    "list_dir": _tool_list_dir,
+    "read": _tool_read_file,
+    "info": _tool_file_info,
+    "ls": _tool_list_dir,
     "tree": _tool_tree,
     "grep": _tool_grep,
-    "find_files": _tool_find_files,
-    "find_definition": _tool_find_definition,
+    "find": _tool_find_files,
+    "definition": _tool_find_definition,
 }
 
 WRITE_TOOLS = {
-    "write_file": _tool_write_file,
-    "append_file": _tool_append_file,
-    "replace_in_file": _tool_replace_in_file,
-    "insert_at_line": _tool_insert_at_line,
-    "delete_lines": _tool_delete_lines,
+    "write": _tool_write_file,
+    "append": _tool_append_file,
+    "replace": _tool_replace_in_file,
+    "insert": _tool_insert_at_line,
+    "delete": _tool_delete_lines,
 }
 
 

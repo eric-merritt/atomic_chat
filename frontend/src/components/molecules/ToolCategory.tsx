@@ -1,7 +1,7 @@
 import { Checkbox } from '../atoms/Checkbox';
 import { Icon } from '../atoms/Icon';
 
-interface CategoryHeaderProps {
+interface ToolCategoryProps {
   name: string;
   count: number;
   selectedCount: number;
@@ -12,28 +12,24 @@ interface CategoryHeaderProps {
   onToggleAll: () => void;
 }
 
-export function CategoryHeader({
+export function ToolCategory({
   name, count, selectedCount, allSelected, someSelected,
   expanded, onToggleExpand, onToggleAll,
-}: CategoryHeaderProps) {
+}: ToolCategoryProps) {
   return (
     <div
-      className="flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-[var(--glass-highlight)] rounded-lg transition-colors"
+      className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer transition-colors ${expanded ? 'bg-[var(--msg-user)]' : ''}`}
       onClick={onToggleExpand}
     >
-      <Icon
-        name="chevron"
-        size={14}
-        className={`transition-transform ${expanded ? 'rotate-90' : ''}`}
-      />
+      <Icon name="chevron" size={14} className={`text-[var(--text-muted)] transition-transform ${expanded ? 'rotate-90' : ''}`} />
+      <span className="flex-1 text-sm text-[var(--text)] font-medium">{name}</span>
+      <span className="text-xs text-[var(--text-muted)] font-mono mr-1">{selectedCount}/{count}</span>
       <Checkbox
         checked={allSelected}
         indeterminate={someSelected && !allSelected}
         onChange={(e) => { e.stopPropagation(); onToggleAll(); }}
         onClick={(e) => e.stopPropagation()}
       />
-      <span className="text-sm text-[var(--text)] font-medium flex-1">{name}</span>
-      <span className="text-xs text-[var(--text-muted)] font-mono">{selectedCount}/{count}</span>
     </div>
   );
 }

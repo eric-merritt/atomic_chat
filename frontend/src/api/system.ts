@@ -2,7 +2,7 @@ import type { ApiResponse } from '../atoms/api';
 
 export async function fetchSystemPrompt(): Promise<ApiResponse<string>> {
   try {
-    const resp = await fetch('/api/system');
+    const resp = await fetch('/api/system', { credentials: 'include' });
     if (!resp.ok) return { data: '', error: `Failed: ${resp.status}` };
     const json = await resp.json();
     return { data: json.system_prompt };
@@ -17,6 +17,7 @@ export async function setSystemPrompt(prompt: string): Promise<ApiResponse<strin
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ system_prompt: prompt }),
+      credentials: 'include',
     });
     if (!resp.ok) return { data: '', error: `Failed: ${resp.status}` };
     const json = await resp.json();

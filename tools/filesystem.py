@@ -12,7 +12,7 @@ from langchain.tools import tool
 # ── Read Operations ──────────────────────────────────────────────────────────
 
 @tool
-def read_file(path: str, start_line: int = 0, end_line: int = -1) -> str:
+def read(path: str, start_line: int = 0, end_line: int = -1) -> str:
     """Read a file and return its contents with line numbers.
 
     Args:
@@ -30,7 +30,7 @@ def read_file(path: str, start_line: int = 0, end_line: int = -1) -> str:
 
 
 @tool
-def file_info(path: str) -> str:
+def info(path: str) -> str:
     """Return metadata about a file: size, modified time, type, line count.
 
     Args:
@@ -56,7 +56,7 @@ def file_info(path: str) -> str:
 
 
 @tool
-def list_dir(path: str = ".", recursive: bool = False, pattern: str = "*") -> str:
+def ls(path: str = ".", recursive: bool = False, pattern: str = "*") -> str:
     """List directory contents, optionally recursive with glob pattern.
 
     Args:
@@ -74,7 +74,7 @@ def list_dir(path: str = ".", recursive: bool = False, pattern: str = "*") -> st
 
 @tool
 def tree(path: str = ".", max_depth: int = 3, show_hidden: bool = False) -> str:
-    """Generate a directory tree string.
+    """Prints the directory tree.
 
     Args:
         path: Root directory.
@@ -110,7 +110,7 @@ def tree(path: str = ".", max_depth: int = 3, show_hidden: bool = False) -> str:
 # ── Write Operations ─────────────────────────────────────────────────────────
 
 @tool
-def write_file(path: str, content: str) -> str:
+def write(path: str, content: str) -> str:
     """Write content to a file, creating parent directories if needed.
 
     Args:
@@ -125,7 +125,7 @@ def write_file(path: str, content: str) -> str:
 
 
 @tool
-def append_file(path: str, content: str) -> str:
+def append(path: str, content: str) -> str:
     """Append content to the end of a file.
 
     Args:
@@ -139,7 +139,7 @@ def append_file(path: str, content: str) -> str:
 
 
 @tool
-def replace_in_file(path: str, old: str, new: str, count: int = 1) -> str:
+def replace(path: str, old: str, new: str, count: int = 1) -> str:
     """Replace exact string occurrences in a file.
 
     Args:
@@ -166,7 +166,7 @@ def replace_in_file(path: str, old: str, new: str, count: int = 1) -> str:
 
 
 @tool
-def insert_at_line(path: str, line_number: int, content: str) -> str:
+def insert(path: str, line_number: int, content: str) -> str:
     """Insert content at a specific line number (1-indexed).
 
     Args:
@@ -186,28 +186,38 @@ def insert_at_line(path: str, line_number: int, content: str) -> str:
 
 
 @tool
-def delete_lines(path: str, start: int, end: int) -> str:
-    """Delete a range of lines from a file (1-indexed, inclusive).
+def delete(path: str, start: int = 0, end: int = 0) -> str:
+    """Delete a file, empty directory, or a range of lines from a file.
+
+    If start and end are both 0, deletes the file/directory.
+    Otherwise, deletes lines start-end (1-indexed, inclusive) from the file.
 
     Args:
-        path: File to edit.
-        start: First line to delete (1-indexed).
-        end: Last line to delete (1-indexed, inclusive).
+        path: Path to delete or file to edit.
+        start: First line to delete (1-indexed). 0 = delete the file itself.
+        end: Last line to delete (1-indexed, inclusive). 0 = delete the file itself.
     """
     path = os.path.expanduser(path)
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    removed = lines[start - 1 : end]
-    del lines[start - 1 : end]
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    return f"Deleted lines {start}-{end} ({len(removed)} lines) from {os.path.abspath(path)}"
+    if start == 0 and end == 0:
+        if os.path.isdir(path):
+            os.rmdir(path)
+        else:
+            os.remove(path)
+        return f"Deleted {os.path.abspath(path)}"
+    else:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        removed = lines[start - 1 : end]
+        del lines[start - 1 : end]
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+        return f"Deleted lines {start}-{end} ({len(removed)} lines) from {os.path.abspath(path)}"
 
 
 # ── File Management ──────────────────────────────────────────────────────────
 
 @tool
-def copy_file(src: str, dst: str) -> str:
+def copy(src: str, dst: str) -> str:
     """Copy a file or directory.
 
     Args:
@@ -224,7 +234,7 @@ def copy_file(src: str, dst: str) -> str:
 
 
 @tool
-def move_file(src: str, dst: str) -> str:
+def move(src: str, dst: str) -> str:
     """Move/rename a file or directory.
 
     Args:
@@ -238,22 +248,7 @@ def move_file(src: str, dst: str) -> str:
 
 
 @tool
-def delete_file(path: str) -> str:
-    """Delete a file or empty directory.
-
-    Args:
-        path: Path to delete.
-    """
-    path = os.path.expanduser(path)
-    if os.path.isdir(path):
-        os.rmdir(path)
-    else:
-        os.remove(path)
-    return f"Deleted {os.path.abspath(path)}"
-
-
-@tool
-def make_dir(path: str) -> str:
+def mkdir(path: str) -> str:
     """Create a directory and any missing parents.
 
     Args:
@@ -265,17 +260,16 @@ def make_dir(path: str) -> str:
 
 
 FILESYSTEM_TOOLS = [
-    read_file,
-    file_info,
-    list_dir,
+    read,
+    info,
+    ls,
     tree,
-    write_file,
-    append_file,
-    replace_in_file,
-    insert_at_line,
-    delete_lines,
-    copy_file,
-    move_file,
-    delete_file,
-    make_dir,
+    write,
+    append,
+    replace,
+    insert,
+    delete,
+    copy,
+    move,
+    mkdir,
 ]

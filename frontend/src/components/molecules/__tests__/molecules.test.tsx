@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ChatInput } from '../ChatInput';
 import { ToolChip } from '../ToolChip';
-import { CategoryHeader } from '../CategoryHeader';
+import { ToolCategory } from '../ToolCategory';
 import { ToolRow } from '../ToolRow';
 
 describe('ChatInput', () => {
@@ -34,10 +34,10 @@ describe('ToolChip', () => {
   });
 });
 
-describe('CategoryHeader', () => {
+describe('ToolCategory', () => {
   it('renders category name and count', () => {
     render(
-      <CategoryHeader
+      <ToolCategory
         name="Filesystem"
         count={10}
         selectedCount={5}

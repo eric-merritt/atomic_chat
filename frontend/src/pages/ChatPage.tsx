@@ -27,7 +27,7 @@ export function ChatPage() {
       <div
         className="flex-1 grid grid-rows-[1fr_auto] transition-[grid-template-columns] duration-300 ease-in-out overflow-hidden"
         style={{
-          gridTemplateColumns: sidebarExpanded ? '35rem 1fr' : '4.5rem 1fr',
+          gridTemplateColumns: sidebarExpanded ? '22rem 1fr' : '6rem 1fr',
         }}
       >
         <ErrorBoundary>

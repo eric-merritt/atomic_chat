@@ -1,22 +1,27 @@
-import { useRef, useEffect, type InputHTMLAttributes } from 'react';
+import { type MouseEventHandler } from 'react';
 
-interface CheckboxProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> {
+interface CheckboxProps {
+  checked?: boolean;
   indeterminate?: boolean;
+  onChange?: (e: { stopPropagation: () => void }) => void;
+  onClick?: MouseEventHandler;
+  className?: string;
 }
 
-export function Checkbox({ indeterminate = false, className = '', ...props }: CheckboxProps) {
-  const ref = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = indeterminate;
-  }, [indeterminate]);
-
+export function Checkbox({ checked = false, indeterminate = false, onChange, onClick, className = '' }: CheckboxProps) {
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      className={`accent-[var(--accent)] cursor-pointer ${className}`}
-      {...props}
-    />
+    <div
+      className={`w-4 h-4 rounded border border-[var(--accent)] flex items-center justify-center cursor-pointer shrink-0 transition-colors ${className}`}
+      style={{
+        background: checked || indeterminate
+          ? 'radial-gradient(circle at center, color-mix(in srgb, var(--accent) 70%, transparent) 0%, color-mix(in srgb, var(--accent) 30%, transparent) 60%, transparent 100%)'
+          : 'transparent',
+      }}
+      onClick={(e) => {
+        onClick?.(e);
+        onChange?.(e);
+      }}
+    >
+    </div>
   );
 }

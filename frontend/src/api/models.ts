@@ -4,7 +4,7 @@ import type { ApiResponse } from '../atoms/api';
 
 export async function fetchModels(): Promise<ApiResponse<Model[]> & { current: string | null }> {
   try {
-    const resp = await fetch('/api/models');
+    const resp = await fetch('/api/models', { credentials: 'include' });
     if (!resp.ok) {
       return { data: [], error: `Failed to fetch models: ${resp.status}`, current: null };
     }
@@ -23,6 +23,7 @@ export async function selectModel(model: Model): Promise<ApiResponse<string>> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: id }),
+      credentials: 'include',
     });
     if (!resp.ok) {
       return { data: '', error: `Failed to select model: ${resp.status}` };

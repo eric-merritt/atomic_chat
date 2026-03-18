@@ -4,7 +4,7 @@ import type { ApiResponse } from '../atoms/api';
 
 export async function fetchHistory(): Promise<ApiResponse<Message[]>> {
   try {
-    const resp = await fetch('/api/history');
+    const resp = await fetch('/api/history', { credentials: 'include' });
     if (!resp.ok) {
       return { data: [], error: `Failed: ${resp.status}` };
     }
@@ -18,5 +18,5 @@ export async function fetchHistory(): Promise<ApiResponse<Message[]>> {
 }
 
 export async function clearHistory(): Promise<void> {
-  await fetch('/api/history', { method: 'DELETE' });
+  await fetch('/api/history', { method: 'DELETE', credentials: 'include' });
 }

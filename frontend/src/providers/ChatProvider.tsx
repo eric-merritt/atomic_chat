@@ -85,7 +85,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         streamingRef.current = false;
       },
     });
-  }, [start]);
+  }, [start, currentModel]);
 
   const cancelStream = useCallback(() => {
     stop();

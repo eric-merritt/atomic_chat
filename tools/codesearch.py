@@ -1,4 +1,4 @@
-"""Code search tools: grep, find_files, find_definition."""
+"""Code search tools: grep, find, definition."""
 
 import os
 import re
@@ -65,7 +65,7 @@ def grep(
 
 
 @tool
-def find_files(
+def find(
     path: str = ".",
     name: str = "",
     pattern: str = "",
@@ -115,7 +115,7 @@ def find_files(
 
 
 @tool
-def find_definition(symbol: str, path: str = ".", file_pattern: str = "*.py") -> str:
+def definition(symbol: str, path: str = ".", file_pattern: str = "*.py") -> str:
     """Find where a function, class, or variable is defined.
 
     Args:
@@ -132,4 +132,4 @@ def find_definition(symbol: str, path: str = ".", file_pattern: str = "*.py") ->
     return grep.invoke({"pattern": combined, "path": path, "file_pattern": file_pattern, "context": 3})
 
 
-CODESEARCH_TOOLS = [grep, find_files, find_definition]
+CODESEARCH_TOOLS = [grep, find, definition]

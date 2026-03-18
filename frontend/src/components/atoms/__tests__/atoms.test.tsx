@@ -51,7 +51,7 @@ describe('Icon', () => {
   });
 
   it('renders different icon names', () => {
-    const { container } = render(<Icon name="globe" />);
+    const { container } = render(<Icon name="atom" />);
     expect(container.querySelector('svg')).toBeInTheDocument();
   });
 });

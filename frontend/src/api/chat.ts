@@ -8,6 +8,7 @@ export async function streamChatAsync(message: string): Promise<{
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message }),
     signal: controller.signal,
+    credentials: 'include',
   });
   if (!resp.ok || !resp.body) throw new Error(`Stream failed: ${resp.status}`);
   return {
@@ -17,5 +18,5 @@ export async function streamChatAsync(message: string): Promise<{
 }
 
 export async function cancelChat(): Promise<void> {
-  await fetch('/api/chat/cancel', { method: 'POST' });
+  await fetch('/api/chat/cancel', { method: 'POST', credentials: 'include' });
 }
