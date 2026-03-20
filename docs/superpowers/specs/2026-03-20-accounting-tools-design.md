@@ -7,7 +7,7 @@
 
 ## Architecture
 
-New file: `tools/accounting.py` — 18 LLM-facing tools + 10 internal primitives.
+New file: `tools/accounting.py` — 21 LLM-facing tools + 10 internal primitives.
 New file: `agents/accounting.py` — MCP agent server (follows existing pattern).
 New migration: adds 6 tables to the existing PostgreSQL database.
 
@@ -26,6 +26,7 @@ User isolation: every table is keyed by `ledger_id`, and every ledger belongs to
 | `id` | serial PK | |
 | `user_id` | FK → users | unique — one ledger per user |
 | `name` | varchar(255) | e.g. "Personal", "My Business" |
+| `currency` | varchar(3) | default 'USD' — stored for future multi-currency support |
 | `created_at` | timestamptz | default now() |
 
 ### `accounts`
@@ -42,7 +43,7 @@ User isolation: every table is keyed by `ledger_id`, and every ledger belongs to
 | `is_active` | boolean | default true |
 | `created_at` | timestamptz | default now() |
 
-Unique constraint: `(ledger_id, name)`.
+Unique constraints: `(ledger_id, name)`, `(ledger_id, account_number) WHERE account_number IS NOT NULL`.
 
 ### `journal_entries`
 
@@ -54,6 +55,7 @@ Unique constraint: `(ledger_id, name)`.
 | `memo` | text | |
 | `is_void` | boolean | default false |
 | `void_of_id` | FK → journal_entries | nullable — points to original if this is a reversal |
+| `source_type` | enum | manual, fifo_sale, lifo_sale, inventory_receipt, period_close, void — identifies how this entry was created |
 | `created_at` | timestamptz | default now() |
 
 ### `journal_lines`
@@ -65,6 +67,7 @@ Unique constraint: `(ledger_id, name)`.
 | `account_id` | FK → accounts | |
 | `debit` | decimal(15,2) | default 0 |
 | `credit` | decimal(15,2) | default 0 |
+| `memo` | text | nullable — per-line description (e.g. cost layer details on FIFO entries) |
 
 Constraint: `CHECK (debit >= 0 AND credit >= 0 AND (debit > 0) != (credit > 0))` — each line is one side only, never both, never zero.
 
@@ -89,6 +92,7 @@ Unique constraint: `(ledger_id, sku)`.
 |--------|------|-------|
 | `id` | serial PK | |
 | `item_id` | FK → inventory_items | |
+| `journal_entry_id` | FK → journal_entries | links layer to the purchase entry that created it |
 | `quantity_purchased` | decimal(15,4) | original quantity |
 | `quantity_remaining` | decimal(15,4) | decremented on sale/usage |
 | `unit_cost` | decimal(15,4) | |
@@ -137,15 +141,22 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 
 ---
 
-## Tool Definitions (18 LLM-facing)
+## Tool Definitions (21 LLM-facing)
 
 ### Ledger Setup (2)
 
 **`create_ledger`**
 - Initializes a ledger for the current user
-- Creates default accounts: Cash, Accounts Receivable, Accounts Payable, Owner's Capital, Revenue, Cost of Goods Sold, plus common expense categories
+- Creates default accounts (these are the **canonical names** referenced by automated tools):
+  - **Assets:** Cash, Accounts Receivable, Inventory
+  - **Liabilities:** Accounts Payable
+  - **Equity:** Owner's Capital, Income Summary
+  - **Revenue:** Revenue
+  - **Expenses:** Cost of Goods Sold, Rent Expense, Utilities Expense, Supplies Expense, Wages Expense
 - Returns: ledger id, list of default accounts created
 - Error if user already has a ledger
+
+**Canonical account names:** FIFO/LIFO tools use exact names "Inventory", "Cost of Goods Sold", "Revenue", and "Cash" for auto-generated journal lines. The `receive_inventory` tool uses "Inventory" as the debit account. Users can create additional accounts but must not rename or deactivate canonical accounts while inventory tools depend on them.
 
 **`create_account`**
 - Args: `name` (str), `account_type` (asset/liability/equity/revenue/expense), `account_number` (optional str), `parent_id` (optional int)
@@ -162,13 +173,17 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 - Returns: journal entry id, line details with account types and effects
 
 **`journalize_fifo_transaction`**
-- Args: `date` (str), `memo` (str), `item_sku` (str), `quantity` (float), `sale_price_per_unit` (optional float — null for internal usage/consumption)
+- Args: `date` (str), `memo` (str), `item_sku` (str), `quantity` (float), `sale_price_per_unit` (optional float — null for internal usage/consumption), `revenue_account` (optional str, default "Revenue"), `receivable_account` (optional str, default "Cash")
+- Rejects if item is `item_type = 'service'` (services have no cost layers)
+- Rejects if total `quantity_remaining` across all layers < requested quantity (no partial fulfillment, no negative inventory)
 - Pulls cost layers oldest-first, decrements `quantity_remaining`
-- Auto-generates journal lines: debit COGS + credit Inventory (at cost), debit Cash/AR + credit Revenue (at sale price, if sale)
+- Auto-generates journal lines using canonical account names: Debit "Cost of Goods Sold" + Credit "Inventory" (at cost). If sale: Debit receivable_account + Credit revenue_account (at sale price).
+- Per-line memo on each COGS line identifies which cost layer was consumed
 - Returns: journal entry id, cost layers consumed, total COGS, sale total
 
 **`journalize_lifo_transaction`**
 - Same as FIFO but pulls newest cost layers first
+- Same rejection rules: no services, no insufficient inventory
 
 ### Inventory (3)
 
@@ -191,11 +206,13 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 **`close_period`**
 - Args: `period_end_date` (str, YYYY-MM-DD)
 - Executes 3 steps atomically:
-  1. Zero all revenue accounts → credit Income Summary
-  2. Zero all expense accounts → debit Income Summary
-  3. Close Income Summary → credit or debit Owner's Capital
+  1. Close revenue: **Debit** each revenue account (zeroing it), **Credit** Income Summary for the total
+  2. Close expenses: **Credit** each expense account (zeroing it), **Debit** Income Summary for the total
+  3. Close Income Summary: if net income (credit balance) → **Debit** Income Summary, **Credit** Owner's Capital. If net loss (debit balance) → **Credit** Income Summary, **Debit** Owner's Capital.
 - Creates Income Summary as a temporary equity account if it doesn't exist
-- Returns: net income/loss amount, 3 journal entry IDs
+- Skips accounts with zero balances (avoids zero-amount lines that violate the journal_lines CHECK constraint)
+- If all revenue and expense accounts are zero, returns early with a "nothing to close" message — no journal entries created
+- Returns: net income/loss amount, journal entry IDs (up to 3, fewer if steps were skipped)
 
 ### Reporting (6)
 
@@ -229,11 +246,27 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 - Args: `method` ("fifo"/"lifo", default "fifo")
 - Returns: per-item valuation with quantity on hand, total cost, weighted average unit cost
 
-### Utilities (3)
+### Utilities (6)
 
 **`list_accounts`**
 - Args: `account_type` (optional str — filter by type)
 - Returns: chart of accounts with id, name, type, number, balance, active status
+
+**`get_account_balance`**
+- Args: `account_name` (str), `as_of_date` (optional str)
+- Returns: single account's current balance, normal balance side, account type
+- Lightweight alternative to pulling full trial_balance
+
+**`update_account`**
+- Args: `account_name` (str), `new_name` (optional str), `new_account_number` (optional str), `is_active` (optional bool)
+- Validates: new name unique if changed, cannot deactivate canonical accounts with non-zero balances
+- Returns: updated account details
+
+**`deactivate_inventory_item`**
+- Args: `item_sku` (str)
+- Sets `is_active = false`
+- Rejects if `quantity_remaining > 0` on any layer (must be depleted first)
+- Returns: confirmation with item details
 
 **`search_journal`**
 - Args: `start_date` (optional), `end_date` (optional), `memo_text` (optional), `min_amount` (optional), `max_amount` (optional), `account_name` (optional)
@@ -241,8 +274,11 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 
 **`void_transaction`**
 - Args: `journal_entry_id` (int), `date` (str), `memo` (str)
-- Creates an equal and opposite reversing entry
+- **Rejects** if the entry is already voided (`is_void = true`)
+- **Rejects** if the entry is itself a reversal (`void_of_id IS NOT NULL`) — cannot void a void
+- Creates an equal and opposite reversing entry with `source_type = 'void'`
 - Marks original entry as `is_void = true`
+- **Inventory-aware:** if the original entry's `source_type` is `fifo_sale`, `lifo_sale`, or `inventory_receipt`, the void also restores `quantity_remaining` on affected inventory layers (or removes layers created by a receipt)
 - Never deletes — preserves audit trail
 - Returns: new reversal journal entry id
 
@@ -251,7 +287,7 @@ These are dispatched automatically by `journalize_transaction` based on the acco
 ## File Structure
 
 ```
-tools/accounting.py          — 18 @tool functions + 10 _primitives + schema helpers
+tools/accounting.py          — 21 @tool functions + 10 _primitives + schema helpers
 tools/_output.py             — tool_result() (already planned)
 agents/accounting.py         — MCP agent server
 tests/test_tools_accounting.py
