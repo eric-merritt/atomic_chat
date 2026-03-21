@@ -3,6 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { oauthRedirect } from '../api/auth';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { Icon } from '../components/atoms/Icon';
+import { PasswordInput } from '../components/atoms/PasswordInput';
 import { useTheme } from '../hooks/useTheme';
 
 export function LoginPage() {
@@ -68,11 +69,10 @@ export function LoginPage() {
                 className="w-full bg-[var(--input-bg)] text-[var(--text)] border border-[var(--glass-border)] rounded-lg px-4 py-2.5 text-sm font-mono outline-none focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-glow)] transition-all placeholder:text-[var(--text-muted)]"
               />
             )}
-            <input
-              type="password"
-              placeholder="Password"
+            <PasswordInput
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={setPassword}
+              placeholder="Password"
               className="w-full bg-[var(--input-bg)] text-[var(--text)] border border-[var(--glass-border)] rounded-lg px-4 py-2.5 text-sm font-mono outline-none focus:border-[var(--accent)] focus:shadow-[0_0_0_2px_var(--accent-glow)] transition-all placeholder:text-[var(--text-muted)]"
               required
             />

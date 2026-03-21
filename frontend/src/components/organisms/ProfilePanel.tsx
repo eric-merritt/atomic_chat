@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { updateProfile, changePassword } from '../../api/preferences';
 import { Avatar } from '../atoms/Avatar';
+import { PasswordInput } from '../atoms/PasswordInput';
 
 export function ProfilePanel() {
   const { user } = useAuth();
@@ -65,10 +66,10 @@ export function ProfilePanel() {
         <div className="border-t border-[var(--glass-border)] pt-4">
           <h3 className="text-sm font-medium text-[var(--text)] mb-3">Change Password</h3>
           <div className="space-y-3">
-            <input type="password" placeholder="Current password" value={currentPw}
-              onChange={e => setCurrentPw(e.target.value)} className={inputClass} />
-            <input type="password" placeholder="New password (min 8 chars)" value={newPw}
-              onChange={e => setNewPw(e.target.value)} className={inputClass} />
+            <PasswordInput value={currentPw} onChange={setCurrentPw}
+              placeholder="Current password" className={inputClass} />
+            <PasswordInput value={newPw} onChange={setNewPw}
+              placeholder="New password (min 8 chars)" className={inputClass} />
             <button onClick={handleChangePassword} className={btnClass}>Change Password</button>
             {pwMessage && <p className="text-xs text-[var(--text-muted)]">{pwMessage}</p>}
           </div>

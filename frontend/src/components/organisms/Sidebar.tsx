@@ -22,7 +22,7 @@ function groupBySub(tools: Tool[]): Map<string, Tool[]> {
   return groups;
 }
 
-const SUBCATEGORIZED = new Set(['Marketplace']);
+const SUBCATEGORIZED = new Set(['Ecommerce']);
 
 export function Sidebar({ expanded, onToggle }: SidebarProps) {
   const { categories, toggleTool, toggleCategory } = useTools();

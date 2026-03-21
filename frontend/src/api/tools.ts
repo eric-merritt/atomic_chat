@@ -29,10 +29,10 @@ interface ToolsResponse {
 const CATEGORY_RULES: [RegExp, string][] = [
   [/^(read|info|ls|tree|write|append|replace|insert|delete|copy|move|mkdir|grep|find|definition)$/, 'Filesystem'],
   [/^(web_search|fetch_url)$/, 'Web'],
-  [/^ebay_/, 'Marketplace'],
-  [/^(amazon_search)$/, 'Marketplace'],
-  [/^craigslist_/, 'Marketplace'],
-  [/^(cross_platform_search|deal_finder|enrichment_pipeline)$/, 'Marketplace'],
+  [/^ebay_/, 'Ecommerce'],
+  [/^(amazon_search)$/, 'Ecommerce'],
+  [/^craigslist_/, 'Ecommerce'],
+  [/^(cross_platform_search|deal_finder|enrichment_pipeline)$/, 'Ecommerce'],
 ];
 
 export function getSubcategory(name: string): string | undefined {
@@ -69,7 +69,7 @@ function groupIntoCategories(allTools: (RawTool & { selected: boolean })[]): Too
   }
 
   // Stable ordering
-  const order = ['Filesystem', 'Web', 'Marketplace', 'Other'];
+  const order = ['Filesystem', 'Web', 'Ecommerce', 'Other'];
   const sorted = [...groups.entries()].sort((a, b) => {
     const ai = order.indexOf(a[0]), bi = order.indexOf(b[0]);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);

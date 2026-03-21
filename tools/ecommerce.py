@@ -1,6 +1,6 @@
-"""Marketplace tools: eBay, Amazon, Craigslist search and analysis.
+"""Ecommerce tools: eBay, Amazon, Craigslist search and analysis.
 
-Platform tools (6): Direct marketplace scrapers that return raw structured data.
+Platform tools (6): Direct ecommerce scrapers that return raw structured data.
 Flow tools (3): Cross-platform orchestration tools owned by the dispatcher agent.
 """
 
@@ -1239,7 +1239,7 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
 
 # ── Registry ─────────────────────────────────────────────────────────────────
 
-MARKETPLACE_TOOLS = [
+ECOMMERCE_TOOLS = [
     ebay_search,
     ebay_sold_search,
     ebay_deep_scan,
@@ -1248,7 +1248,7 @@ MARKETPLACE_TOOLS = [
     craigslist_multi_search,
 ]
 
-# Flow tools call marketplace tools internally — owned by dispatcher, not marketplace agent
+# Flow tools call ecommerce tools internally — owned by dispatcher, not ecommerce agent
 FLOW_TOOLS = [
     cross_platform_search,
     deal_finder,
