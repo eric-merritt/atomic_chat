@@ -1355,6 +1355,471 @@ def inventory_valuation(method: str = "fifo") -> str:
         db.close()
 
 
+# ── Reporting & Period Close Tools ───────────────────────────────────────────
+
+def _trial_balance_impl(db: Session, user_id: str, as_of_date: str = None) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    as_of = _parse_date(as_of_date) if as_of_date else None
+    accounts = db.query(Account).filter_by(ledger_id=ledger.id).order_by(Account.account_type, Account.name).all()
+
+    total_debits = Decimal("0")
+    total_credits = Decimal("0")
+    rows = []
+
+    for acct in accounts:
+        balance = _get_account_balance(db, acct, as_of)
+        if acct.normal_balance == NormalBalance.DEBIT:
+            debit_bal = balance if balance >= 0 else Decimal("0")
+            credit_bal = abs(balance) if balance < 0 else Decimal("0")
+        else:
+            credit_bal = balance if balance >= 0 else Decimal("0")
+            debit_bal = abs(balance) if balance < 0 else Decimal("0")
+
+        total_debits += debit_bal
+        total_credits += credit_bal
+
+        rows.append({
+            "account": acct.name,
+            "account_type": acct.account_type.value,
+            "debit": str(debit_bal),
+            "credit": str(credit_bal),
+            "balance": str(balance),
+        })
+
+    return tool_result(data={
+        "as_of_date": as_of_date or "current",
+        "accounts": rows,
+        "total_debits": str(total_debits),
+        "total_credits": str(total_credits),
+    })
+
+
+@tool
+def trial_balance(as_of_date: str = None) -> str:
+    """Generate a trial balance showing all accounts with debit/credit totals.
+
+    WHEN TO USE: To verify the books balance (total debits == total credits).
+
+    Args:
+        as_of_date: Optional cutoff date (YYYY-MM-DD). Defaults to all time.
+
+    Output format:
+        {"status": "success", "data": {"accounts": [...], "total_debits": "...", "total_credits": "..."}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _trial_balance_impl(db, current_user.id, as_of_date)
+    finally:
+        db.close()
+
+
+def _income_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+
+    revenue_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.REVENUE, is_active=True
+    ).all()
+    expense_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.EXPENSE, is_active=True
+    ).all()
+
+    # For income statement we need balances within the date range only.
+    # Balance at end minus balance at start-1 gives the period activity.
+    from datetime import timedelta
+    day_before_start = start - timedelta(days=1)
+
+    revenue_rows = []
+    total_revenue = Decimal("0")
+    for acct in revenue_accounts:
+        end_bal = _get_account_balance(db, acct, end)
+        start_bal = _get_account_balance(db, acct, day_before_start)
+        period_bal = end_bal - start_bal
+        if period_bal != 0:
+            revenue_rows.append({"account": acct.name, "amount": str(period_bal)})
+            total_revenue += period_bal
+
+    expense_rows = []
+    total_expenses = Decimal("0")
+    for acct in expense_accounts:
+        end_bal = _get_account_balance(db, acct, end)
+        start_bal = _get_account_balance(db, acct, day_before_start)
+        period_bal = end_bal - start_bal
+        if period_bal != 0:
+            expense_rows.append({"account": acct.name, "amount": str(period_bal)})
+            total_expenses += period_bal
+
+    net_income = total_revenue - total_expenses
+
+    return tool_result(data={
+        "start_date": start_date,
+        "end_date": end_date,
+        "revenue": revenue_rows,
+        "total_revenue": str(total_revenue),
+        "expenses": expense_rows,
+        "total_expenses": str(total_expenses),
+        "net_income": str(net_income),
+    })
+
+
+@tool
+def income_statement(start_date: str, end_date: str) -> str:
+    """Generate an income statement (profit & loss) for a date range.
+
+    WHEN TO USE: To see revenue, expenses, and net income for a period.
+
+    Args:
+        start_date: Period start (YYYY-MM-DD).
+        end_date: Period end (YYYY-MM-DD).
+
+    Output format:
+        {"status": "success", "data": {"total_revenue": "...", "total_expenses": "...", "net_income": "..."}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _income_statement_impl(db, current_user.id, start_date, end_date)
+    finally:
+        db.close()
+
+
+def _balance_sheet_impl(db: Session, user_id: str, as_of_date: str = None) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    as_of = _parse_date(as_of_date) if as_of_date else None
+
+    assets = []
+    total_assets = Decimal("0")
+    liabilities = []
+    total_liabilities = Decimal("0")
+    equity = []
+    total_equity = Decimal("0")
+
+    accounts = db.query(Account).filter_by(ledger_id=ledger.id).order_by(Account.name).all()
+
+    for acct in accounts:
+        balance = _get_account_balance(db, acct, as_of)
+        entry = {"account": acct.name, "balance": str(balance)}
+
+        if acct.account_type == AccountType.ASSET:
+            assets.append(entry)
+            total_assets += balance
+        elif acct.account_type == AccountType.LIABILITY:
+            liabilities.append(entry)
+            total_liabilities += balance
+        elif acct.account_type in (AccountType.EQUITY, AccountType.REVENUE, AccountType.EXPENSE):
+            # Revenue/expense are temporary equity accounts (pre-close).
+            # Expense has debit-normal balance (positive = cost), which reduces equity.
+            equity.append(entry)
+            if acct.account_type == AccountType.EXPENSE:
+                total_equity -= balance
+            else:
+                total_equity += balance
+
+    return tool_result(data={
+        "as_of_date": as_of_date or "current",
+        "assets": assets,
+        "total_assets": str(total_assets),
+        "liabilities": liabilities,
+        "total_liabilities": str(total_liabilities),
+        "equity": equity,
+        "total_equity": str(total_equity),
+        "balanced": str(abs(total_assets - (total_liabilities + total_equity)) < Decimal("0.01")),
+    })
+
+
+@tool
+def balance_sheet(as_of_date: str = None) -> str:
+    """Generate a balance sheet: Assets = Liabilities + Equity.
+
+    WHEN TO USE: To see the financial position at a point in time.
+
+    Revenue/expense accounts are included in equity (as unclosed temporary accounts).
+
+    Args:
+        as_of_date: Optional date (YYYY-MM-DD). Defaults to all time.
+
+    Output format:
+        {"status": "success", "data": {"total_assets": "...", "total_liabilities": "...", "total_equity": "...", "balanced": "True"}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _balance_sheet_impl(db, current_user.id, as_of_date)
+    finally:
+        db.close()
+
+
+def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    end_date = _parse_date(period_end_date)
+
+    # Get revenue and expense accounts with non-zero balances
+    revenue_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.REVENUE
+    ).all()
+    expense_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.EXPENSE
+    ).all()
+
+    revenue_with_balance = [(a, _get_account_balance(db, a, end_date)) for a in revenue_accounts]
+    revenue_with_balance = [(a, b) for a, b in revenue_with_balance if b != 0]
+
+    expense_with_balance = [(a, _get_account_balance(db, a, end_date)) for a in expense_accounts]
+    expense_with_balance = [(a, b) for a, b in expense_with_balance if b != 0]
+
+    if not revenue_with_balance and not expense_with_balance:
+        return tool_result(data={"message": "Nothing to close — all revenue and expense accounts have zero balances."})
+
+    income_summary = _resolve_account(db, ledger.id, "Income Summary")
+    owners_capital = _resolve_account(db, ledger.id, "Owner's Capital")
+
+    journal_entry_ids = []
+
+    import json as _json
+
+    # Step 1: Close revenue → Income Summary
+    # Debit each revenue account (zeroing it), Credit Income Summary
+    if revenue_with_balance:
+        lines = []
+        total_revenue = Decimal("0")
+        for acct, bal in revenue_with_balance:
+            lines.append({"account": acct.name, "debit": float(bal), "credit": 0})
+            total_revenue += bal
+        lines.append({"account": "Income Summary", "debit": 0, "credit": float(total_revenue)})
+
+        result = _journalize_transaction_impl(
+            db, user_id, period_end_date, f"Close revenue accounts for period ending {period_end_date}",
+            lines, source_type=SourceType.PERIOD_CLOSE,
+        )
+        jr = _json.loads(result)
+        if jr["status"] == "error":
+            return result
+        journal_entry_ids.append(jr["data"]["journal_entry_id"])
+        db.flush()
+
+    # Step 2: Close expenses → Income Summary
+    # Credit each expense account (zeroing it), Debit Income Summary
+    if expense_with_balance:
+        lines = []
+        total_expenses = Decimal("0")
+        for acct, bal in expense_with_balance:
+            lines.append({"account": acct.name, "debit": 0, "credit": float(bal)})
+            total_expenses += bal
+        lines.append({"account": "Income Summary", "debit": float(total_expenses), "credit": 0})
+
+        result = _journalize_transaction_impl(
+            db, user_id, period_end_date, f"Close expense accounts for period ending {period_end_date}",
+            lines, source_type=SourceType.PERIOD_CLOSE,
+        )
+        jr = _json.loads(result)
+        if jr["status"] == "error":
+            return result
+        journal_entry_ids.append(jr["data"]["journal_entry_id"])
+        db.flush()
+
+    # Step 3: Close Income Summary → Owner's Capital
+    is_balance = _get_account_balance(db, income_summary)
+    if is_balance != 0:
+        if is_balance > 0:
+            # Net income: Debit Income Summary, Credit Owner's Capital
+            lines = [
+                {"account": "Income Summary", "debit": float(is_balance), "credit": 0},
+                {"account": "Owner's Capital", "debit": 0, "credit": float(is_balance)},
+            ]
+        else:
+            # Net loss: Credit Income Summary, Debit Owner's Capital
+            loss = abs(is_balance)
+            lines = [
+                {"account": "Income Summary", "debit": 0, "credit": float(loss)},
+                {"account": "Owner's Capital", "debit": float(loss), "credit": 0},
+            ]
+
+        result = _journalize_transaction_impl(
+            db, user_id, period_end_date, f"Close Income Summary to Owner's Capital",
+            lines, source_type=SourceType.PERIOD_CLOSE,
+        )
+        jr = _json.loads(result)
+        if jr["status"] == "error":
+            return result
+        journal_entry_ids.append(jr["data"]["journal_entry_id"])
+        db.flush()
+
+    total_revenue = sum(b for _, b in revenue_with_balance)
+    total_expenses_val = sum(b for _, b in expense_with_balance)
+    net_income = total_revenue - total_expenses_val
+
+    return tool_result(data={
+        "period_end_date": period_end_date,
+        "net_income": str(net_income),
+        "total_revenue_closed": str(total_revenue),
+        "total_expenses_closed": str(total_expenses_val),
+        "journal_entry_ids": journal_entry_ids,
+    })
+
+
+@tool
+def close_period(period_end_date: str) -> str:
+    """Close revenue and expense accounts for a period, transferring net income to Owner's Capital.
+
+    WHEN TO USE: At the end of an accounting period (month, quarter, year).
+
+    Executes 3 closing entries:
+    1. Close revenue accounts to Income Summary
+    2. Close expense accounts to Income Summary
+    3. Close Income Summary to Owner's Capital
+
+    Args:
+        period_end_date: Last day of the period (YYYY-MM-DD).
+
+    Output format:
+        {"status": "success", "data": {"net_income": "...", "journal_entry_ids": [...]}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _close_period_impl(db, current_user.id, period_end_date)
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
+def _cash_flow_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    start = _parse_date(start_date)
+    end = _parse_date(end_date)
+    from datetime import timedelta
+    day_before = start - timedelta(days=1)
+
+    cash_account = _resolve_account(db, ledger.id, "Cash")
+    if not cash_account:
+        return tool_result(error="Cash account not found.")
+
+    beginning_cash = _get_account_balance(db, cash_account, day_before)
+    ending_cash = _get_account_balance(db, cash_account, end)
+    net_change = ending_cash - beginning_cash
+
+    # Compute net income for the period
+    revenue_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.REVENUE
+    ).all()
+    expense_accounts = db.query(Account).filter_by(
+        ledger_id=ledger.id, account_type=AccountType.EXPENSE
+    ).all()
+
+    total_revenue = Decimal("0")
+    for acct in revenue_accounts:
+        end_bal = _get_account_balance(db, acct, end)
+        start_bal = _get_account_balance(db, acct, day_before)
+        total_revenue += end_bal - start_bal
+
+    total_expenses = Decimal("0")
+    for acct in expense_accounts:
+        end_bal = _get_account_balance(db, acct, end)
+        start_bal = _get_account_balance(db, acct, day_before)
+        total_expenses += end_bal - start_bal
+
+    net_income = total_revenue - total_expenses
+
+    # Working capital changes (AR, AP, Inventory)
+    operating_adjustments = []
+    for name in ["Accounts Receivable", "Inventory", "Accounts Payable"]:
+        acct = _resolve_account(db, ledger.id, name)
+        if acct:
+            end_bal = _get_account_balance(db, acct, end)
+            start_bal = _get_account_balance(db, acct, day_before)
+            change = end_bal - start_bal
+            if change != 0:
+                # For assets: increase = cash outflow (negative)
+                # For liabilities: increase = cash inflow (positive)
+                if acct.account_type == AccountType.ASSET:
+                    adjustment = -change
+                else:
+                    adjustment = change
+                operating_adjustments.append({
+                    "account": name,
+                    "change": str(change),
+                    "cash_effect": str(adjustment),
+                })
+
+    operating_total = net_income + sum(Decimal(a["cash_effect"]) for a in operating_adjustments)
+
+    # Financing: equity changes (excluding retained earnings/net income)
+    financing_items = []
+    for acct_name in ["Owner's Capital"]:
+        acct = _resolve_account(db, ledger.id, acct_name)
+        if acct:
+            end_bal = _get_account_balance(db, acct, end)
+            start_bal = _get_account_balance(db, acct, day_before)
+            change = end_bal - start_bal
+            if change != 0:
+                financing_items.append({"account": acct_name, "amount": str(change)})
+
+    financing_total = sum(Decimal(f["amount"]) for f in financing_items)
+
+    return tool_result(data={
+        "start_date": start_date,
+        "end_date": end_date,
+        "operating_activities": {
+            "net_income": str(net_income),
+            "adjustments": operating_adjustments,
+            "total": str(operating_total),
+        },
+        "investing_activities": {
+            "items": [],
+            "total": "0",
+        },
+        "financing_activities": {
+            "items": financing_items,
+            "total": str(financing_total),
+        },
+        "net_change_in_cash": str(net_change),
+        "beginning_cash": str(beginning_cash),
+        "ending_cash": str(ending_cash),
+    })
+
+
+@tool
+def cash_flow_statement(start_date: str, end_date: str) -> str:
+    """Generate a cash flow statement using the indirect method.
+
+    WHEN TO USE: To understand where cash came from and went during a period.
+
+    Args:
+        start_date: Period start (YYYY-MM-DD).
+        end_date: Period end (YYYY-MM-DD).
+
+    Output format:
+        {"status": "success", "data": {"operating_activities": {...}, "investing_activities": {...}, "financing_activities": {...}, "ending_cash": "..."}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _cash_flow_statement_impl(db, current_user.id, start_date, end_date)
+    finally:
+        db.close()
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 ACCOUNTING_TOOLS = [
@@ -1374,4 +1839,9 @@ ACCOUNTING_TOOLS = [
     journalize_fifo_transaction,
     journalize_lifo_transaction,
     inventory_valuation,
+    close_period,
+    trial_balance,
+    income_statement,
+    balance_sheet,
+    cash_flow_statement,
 ]
