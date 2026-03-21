@@ -6,8 +6,8 @@ interface DashboardNavProps {
 }
 
 const NAV_ITEMS: { id: Section; label: string }[] = [
-  { id: 'conversations', label: 'Conversations' },
   { id: 'profile', label: 'Profile' },
+  { id: 'conversations', label: 'Conversations' },
   { id: 'keys', label: 'API Keys' },
   { id: 'connections', label: 'Connections' },
 ];

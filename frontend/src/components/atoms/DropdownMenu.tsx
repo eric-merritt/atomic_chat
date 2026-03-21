@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 interface MenuItem {
   label: string;
@@ -9,10 +10,11 @@ interface DropdownMenuProps {
   items: MenuItem[];
   open: boolean;
   onClose: () => void;
+  anchorRef?: React.RefObject<HTMLElement | null>;
   className?: string;
 }
 
-export function DropdownMenu({ items, open, onClose, className = '' }: DropdownMenuProps) {
+export function DropdownMenu({ items, open, onClose, anchorRef, className = '' }: DropdownMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -26,10 +28,16 @@ export function DropdownMenu({ items, open, onClose, className = '' }: DropdownM
 
   if (!open) return null;
 
-  return (
+  const rect = anchorRef?.current?.getBoundingClientRect();
+  const style: React.CSSProperties = rect
+    ? { position: 'fixed', top: rect.bottom + 4, right: window.innerWidth - rect.right }
+    : {};
+
+  const menu = (
     <div
       ref={ref}
-      className={`absolute z-50 bg-[var(--glass-bg-solid)] border border-[var(--accent)] rounded-lg shadow-lg overflow-hidden ${className}`}
+      style={style}
+      className={`${rect ? 'fixed' : 'absolute'} z-[9999] bg-[var(--glass-bg-solid)] backdrop-blur-lg border border-[var(--accent)] rounded-lg shadow-lg overflow-hidden ${className}`}
     >
       {items.map((item) => (
         <button
@@ -42,4 +50,6 @@ export function DropdownMenu({ items, open, onClose, className = '' }: DropdownM
       ))}
     </div>
   );
+
+  return rect ? createPortal(menu, document.body) : menu;
 }

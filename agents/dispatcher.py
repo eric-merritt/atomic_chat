@@ -25,7 +25,7 @@ from config import AGENT_PORTS, RATE_LIMITS, MAX_RETRIES, agent_url, AGENT_MODEL
 from tools.filesystem import FILESYSTEM_TOOLS
 from tools.codesearch import CODESEARCH_TOOLS
 from tools.web import WEB_TOOLS
-from tools.marketplace import MARKETPLACE_TOOLS
+from tools.ecommerce import ECOMMERCE_TOOLS
 
 
 # ── Tool registry (metadata only, for planning) ──────────────────────────────
@@ -59,10 +59,10 @@ for t in CODESEARCH_TOOLS:
     TOOL_TO_AGENT[t.name] = "codesearch"
 for t in WEB_TOOLS:
     TOOL_TO_AGENT[t.name] = "web"
-for t in MARKETPLACE_TOOLS:
-    TOOL_TO_AGENT[t.name] = "marketplace"
+for t in ECOMMERCE_TOOLS:
+    TOOL_TO_AGENT[t.name] = "ecommerce"
 
-ALL_AGENT_TOOLS = FILESYSTEM_TOOLS + CODESEARCH_TOOLS + WEB_TOOLS + MARKETPLACE_TOOLS
+ALL_AGENT_TOOLS = FILESYSTEM_TOOLS + CODESEARCH_TOOLS + WEB_TOOLS + ECOMMERCE_TOOLS
 TOOL_REGISTRY = [_tool_meta(t) for t in ALL_AGENT_TOOLS]
 
 
@@ -125,7 +125,7 @@ async def call_subagent(
     and call tools through the proper MCP protocol.
 
     Args:
-        agent_name: Name of the agent (e.g., "marketplace")
+        agent_name: Name of the agent (e.g., "ecommerce")
         tool_name: Name of the tool to invoke
         params: Tool parameters
 
@@ -179,7 +179,7 @@ DISPATCHER_SYSTEM_PROMPT = """You are a dispatcher/analyst agent. You orchestrat
 ## Available tools (for planning — you delegate execution):
 {tool_list}
 
-## Marketplace tool selection
+## Ecommerce tool selection
 - ebay_search: Quick single-page eBay lookup
 - ebay_sold_search: eBay completed/sold listings for market prices
 - ebay_deep_scan: Multi-page paginated eBay scan with GPU model extraction
@@ -305,7 +305,7 @@ def create_app():
     @mcp.tool()
     async def check_quality(
         data: str,
-        expected_format: str = "marketplace_listings",
+        expected_format: str = "ecommerce_listings",
     ) -> str:
         """Evaluate the quality of data returned by a subagent.
 
@@ -314,7 +314,7 @@ def create_app():
         Args:
             data: The data string to evaluate
             expected_format: What kind of data this should be
-                           (e.g., "marketplace_listings", "file_contents", "search_results")
+                           (e.g., "ecommerce_listings", "file_contents", "search_results")
         """
         from langchain_ollama import ChatOllama
         from langchain_core.messages import HumanMessage, SystemMessage

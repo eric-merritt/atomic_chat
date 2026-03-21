@@ -13,7 +13,7 @@ from langchain.tools import tool
 
 QB_URL = os.environ.get("QB_URL", "http://localhost:9441")
 QB_USER = os.environ.get("QB_USER", "admin")
-QB_PASS = os.environ.get("QB_PASS", "ayBabtU2095!")
+QB_PASS = os.environ.get("QBITTORRENT_PASSWORD")
 
 # Cache last search results so torrent_download can reference by index
 _last_search_results: list[dict] = []

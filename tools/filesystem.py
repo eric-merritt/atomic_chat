@@ -5,7 +5,7 @@ import json
 import glob as glob_mod
 import shutil
 from pathlib import Path
-
+import subprocess
 from langchain.tools import tool
 
 
@@ -118,11 +118,14 @@ def write(path: str, content: str) -> str:
         content: Full file content.
     """
     path = os.path.expanduser(path)
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        written = f.write(content)
-    return f"Wrote {written} bytes to {os.path.abspath(path)}"
-
+    try:
+        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            written = f.write(content)
+        return f"Wrote {written} bytes to {os.path.abspath(path)}"
+    except(PermissionError):
+        args = ["pkexec", "mkdir", "-p", os.path.dirname(os.path.abspath(path))]
+        subprocess.run(args)
 
 @tool
 def append(path: str, content: str) -> str:

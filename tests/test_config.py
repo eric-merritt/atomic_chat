@@ -7,7 +7,7 @@ def test_config_ports():
     assert "filesystem" in AGENT_PORTS
     assert "codesearch" in AGENT_PORTS
     assert "web" in AGENT_PORTS
-    assert "marketplace" in AGENT_PORTS
+    assert "ecommerce" in AGENT_PORTS
     assert "dispatcher" in AGENT_PORTS
 
 

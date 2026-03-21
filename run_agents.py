@@ -3,7 +3,7 @@
 Usage:
     python run_agents.py              # Start all agents
     python run_agents.py filesystem   # Start only filesystem agent
-    python run_agents.py marketplace dispatcher  # Start specific agents
+    python run_agents.py ecommerce dispatcher  # Start specific agents
 """
 
 import os
@@ -18,7 +18,7 @@ AGENT_SCRIPTS = {
     "filesystem": os.path.join("agents", "filesystem.py"),
     "codesearch": os.path.join("agents", "codesearch.py"),
     "web": os.path.join("agents", "web.py"),
-    "marketplace": os.path.join("agents", "marketplace.py"),
+    "ecommerce": os.path.join("agents", "ecommerce.py"),
     "dispatcher": os.path.join("agents", "dispatcher.py"),
 }
 

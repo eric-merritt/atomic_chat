@@ -11,11 +11,11 @@ type Section = 'conversations' | 'profile' | 'keys' | 'connections';
 
 export function DashboardPage() {
   const { theme } = useTheme();
-  const [section, setSection] = useState<Section>('conversations');
+  const [section, setSection] = useState<Section>('profile');
 
   const panels: Record<Section, React.ReactNode> = {
-    conversations: <ConversationList />,
     profile: <ProfilePanel />,
+    conversations: <ConversationList />,
     keys: <ApiKeyPanel />,
     connections: <ConnectionsPanel />,
   };

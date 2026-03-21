@@ -5,7 +5,7 @@ AGENT_PORTS = {
     "filesystem": 8101,
     "codesearch": 8102,
     "web": 8103,
-    "marketplace": 8104,
+    "ecommerce": 8104,
     "dispatcher": 8105,
 }
 
@@ -14,7 +14,7 @@ AGENT_MODELS = {
     "filesystem": "huihui_ai/qwen2.5-coder-abliterate:7b",
     "codesearch": "huihui_ai/qwen2.5-coder-abliterate:7b",
     "web": "huihui_ai/qwen2.5-coder-abliterate:7b",
-    "marketplace": "huihui_ai/qwen2.5-coder-abliterate:14b",
+    "ecommerce": "huihui_ai/qwen2.5-coder-abliterate:14b",
     "dispatcher": "huihui_ai/qwen2.5-coder-abliterate:14b",
 }
 
