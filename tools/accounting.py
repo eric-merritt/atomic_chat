@@ -855,6 +855,254 @@ def account_ledger(account_name: str, start_date: str = None, end_date: str = No
         db.close()
 
 
+# ── Inventory Tools ───────────────────────────────────────────────────────────
+
+def _register_inventory_item_impl(
+    db: Session, user_id: str, sku: str, description: str,
+    item_type: str, default_sale_price: float = None,
+) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    try:
+        itype = ItemType(item_type.lower())
+    except ValueError:
+        return tool_result(error=f"Invalid item_type '{item_type}'. Must be 'goods' or 'service'.")
+
+    existing = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=sku).first()
+    if existing:
+        return tool_result(error=f"SKU '{sku}' already exists in this ledger.")
+
+    item = InventoryItem(
+        ledger_id=ledger.id,
+        item_type=itype,
+        sku=sku,
+        description=description,
+        default_sale_price=Decimal(str(default_sale_price)) if default_sale_price else None,
+    )
+    db.add(item)
+    db.flush()
+
+    return tool_result(data={
+        "item_id": item.id,
+        "sku": item.sku,
+        "description": item.description,
+        "item_type": item.item_type.value,
+        "default_sale_price": str(item.default_sale_price) if item.default_sale_price else None,
+    })
+
+
+@tool
+def register_inventory_item(sku: str, description: str, item_type: str, default_sale_price: float = None) -> str:
+    """Register a new inventory item (goods or service).
+
+    WHEN TO USE: Before receiving inventory or recording sales for a new product/service.
+
+    Args:
+        sku: Unique stock-keeping unit code.
+        description: Item description.
+        item_type: "goods" (physical, has cost layers) or "service" (no inventory tracking).
+        default_sale_price: Optional default price per unit.
+
+    Output format:
+        {"status": "success", "data": {"item_id": N, "sku": "...", ...}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _register_inventory_item_impl(db, current_user.id, sku, description, item_type, default_sale_price)
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
+def _receive_inventory_impl(
+    db: Session, user_id: str, item_sku: str, quantity: float,
+    unit_cost: float, date_str: str, payment_account: str,
+) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku, is_active=True).first()
+    if not item:
+        return tool_result(error=f"Item '{item_sku}' not found or inactive.")
+
+    if item.item_type == ItemType.SERVICE:
+        return tool_result(error="Cannot receive inventory for service items.")
+
+    qty = Decimal(str(quantity))
+    cost = Decimal(str(unit_cost))
+    total = qty * cost
+
+    # Auto-journal: debit Inventory, credit payment_account
+    journal_result = _journalize_transaction_impl(
+        db, user_id, date_str, f"Receive {qty} x {item_sku} @ {cost}",
+        [
+            {"account": "Inventory", "debit": float(total), "credit": 0},
+            {"account": payment_account, "debit": 0, "credit": float(total)},
+        ],
+        source_type=SourceType.INVENTORY_RECEIPT,
+    )
+    import json
+    jr = json.loads(journal_result)
+    if jr["status"] == "error":
+        return journal_result
+
+    # Create cost layer
+    layer = InventoryLayer(
+        item_id=item.id,
+        journal_entry_id=jr["data"]["journal_entry_id"],
+        quantity_purchased=qty,
+        quantity_remaining=qty,
+        unit_cost=cost,
+        received_date=_parse_date(date_str),
+    )
+    db.add(layer)
+    db.flush()
+
+    return tool_result(data={
+        "journal_entry_id": jr["data"]["journal_entry_id"],
+        "layer": {
+            "layer_id": layer.id,
+            "item_sku": item_sku,
+            "quantity_purchased": str(layer.quantity_purchased),
+            "unit_cost": str(layer.unit_cost),
+            "total_cost": str(total),
+            "received_date": date_str,
+        },
+    })
+
+
+@tool
+def receive_inventory(item_sku: str, quantity: float, unit_cost: float, date: str, payment_account: str) -> str:
+    """Receive inventory and auto-record the purchase journal entry.
+
+    WHEN TO USE: When goods arrive and need to be added to inventory.
+
+    Creates a cost layer and journals: debit Inventory, credit payment_account.
+
+    Args:
+        item_sku: SKU of the item being received.
+        quantity: Number of units received.
+        unit_cost: Cost per unit.
+        date: Receipt date (YYYY-MM-DD).
+        payment_account: Account to credit (e.g. "Cash", "Accounts Payable").
+
+    Output format:
+        {"status": "success", "data": {"journal_entry_id": N, "layer": {...}}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _receive_inventory_impl(db, current_user.id, item_sku, quantity, unit_cost, date, payment_account)
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
+def _list_inventory_items_impl(db: Session, user_id: str) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    items = db.query(InventoryItem).filter_by(ledger_id=ledger.id).order_by(InventoryItem.sku).all()
+
+    result_items = []
+    for item in items:
+        qty_on_hand = sum(l.quantity_remaining for l in item.layers)
+        result_items.append({
+            "item_id": item.id,
+            "sku": item.sku,
+            "description": item.description,
+            "item_type": item.item_type.value,
+            "is_active": item.is_active,
+            "quantity_on_hand": str(qty_on_hand),
+            "cost_layers": len(item.layers),
+            "default_sale_price": str(item.default_sale_price) if item.default_sale_price else None,
+        })
+
+    return tool_result(data={"count": len(result_items), "items": result_items})
+
+
+@tool
+def list_inventory_items() -> str:
+    """List all inventory items with quantity on hand.
+
+    WHEN TO USE: When you need to see what's in stock.
+
+    Output format:
+        {"status": "success", "data": {"count": N, "items": [...]}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _list_inventory_items_impl(db, current_user.id)
+    finally:
+        db.close()
+
+
+def _deactivate_inventory_item_impl(db: Session, user_id: str, item_sku: str) -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku).first()
+    if not item:
+        return tool_result(error=f"Item '{item_sku}' not found.")
+
+    # Check for remaining inventory
+    remaining = sum(l.quantity_remaining for l in item.layers)
+    if remaining > 0:
+        return tool_result(error=f"Cannot deactivate '{item_sku}': quantity_remaining = {remaining}. Must deplete inventory first.")
+
+    item.is_active = False
+    db.flush()
+
+    return tool_result(data={
+        "item_id": item.id,
+        "sku": item.sku,
+        "description": item.description,
+        "is_active": item.is_active,
+    })
+
+
+@tool
+def deactivate_inventory_item(item_sku: str) -> str:
+    """Deactivate an inventory item.
+
+    WHEN TO USE: When an item is discontinued and fully depleted.
+
+    Rejects if any cost layers still have remaining quantity.
+
+    Args:
+        item_sku: SKU of the item to deactivate.
+
+    Output format:
+        {"status": "success", "data": {"item_id": N, "sku": "...", "is_active": false}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _deactivate_inventory_item_impl(db, current_user.id, item_sku)
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 ACCOUNTING_TOOLS = [
@@ -867,4 +1115,8 @@ ACCOUNTING_TOOLS = [
     search_journal,
     void_transaction,
     account_ledger,
+    register_inventory_item,
+    receive_inventory,
+    list_inventory_items,
+    deactivate_inventory_item,
 ]
