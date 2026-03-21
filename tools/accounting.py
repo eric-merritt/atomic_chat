@@ -1103,6 +1103,258 @@ def deactivate_inventory_item(item_sku: str) -> str:
         db.close()
 
 
+# ── FIFO/LIFO Costing Tools ───────────────────────────────────────────────────
+
+def _journalize_cost_layer_sale(
+    db: Session, user_id: str, date_str: str, memo: str,
+    item_sku: str, quantity: float, sale_price_per_unit: float = None,
+    revenue_account: str = "Revenue", receivable_account: str = "Cash",
+    method: str = "fifo",
+) -> str:
+    """Shared FIFO/LIFO implementation. method='fifo' or 'lifo'."""
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku, is_active=True).first()
+    if not item:
+        return tool_result(error=f"Item '{item_sku}' not found or inactive.")
+
+    if item.item_type == ItemType.SERVICE:
+        return tool_result(error=f"Cannot use {method.upper()} costing on service items. Services have no cost layers.")
+
+    qty_needed = Decimal(str(quantity))
+
+    # Check total available
+    total_available = sum(l.quantity_remaining for l in item.layers)
+    if total_available < qty_needed:
+        return tool_result(error=f"Insufficient inventory for '{item_sku}': need {qty_needed}, have {total_available}.")
+
+    # Pull layers in order
+    order = InventoryLayer.received_date.asc() if method == "fifo" else InventoryLayer.received_date.desc()
+    layers = db.query(InventoryLayer).filter(
+        InventoryLayer.item_id == item.id,
+        InventoryLayer.quantity_remaining > 0,
+    ).order_by(order).all()
+
+    # Consume layers
+    remaining = qty_needed
+    total_cogs = Decimal("0")
+    layers_consumed = []
+    journal_lines = []
+
+    for layer in layers:
+        if remaining <= 0:
+            break
+        take = min(remaining, layer.quantity_remaining)
+        cost = take * layer.unit_cost
+        layer.quantity_remaining -= take
+        remaining -= take
+        total_cogs += cost
+
+        layers_consumed.append({
+            "layer_id": layer.id,
+            "quantity_taken": str(take),
+            "unit_cost": str(layer.unit_cost),
+            "layer_cost": str(cost),
+            "received_date": str(layer.received_date),
+        })
+
+        # Per-layer COGS line
+        journal_lines.append({"account": "Cost of Goods Sold", "debit": float(cost), "credit": 0,
+                              "memo": f"Layer {layer.id}: {take} x {layer.unit_cost} from {layer.received_date}"})
+        journal_lines.append({"account": "Inventory", "debit": 0, "credit": float(cost)})
+
+    # Sale revenue lines (if sale_price provided)
+    sale_total = None
+    if sale_price_per_unit is not None:
+        sale_total = qty_needed * Decimal(str(sale_price_per_unit))
+        journal_lines.append({"account": receivable_account, "debit": float(sale_total), "credit": 0})
+        journal_lines.append({"account": revenue_account, "debit": 0, "credit": float(sale_total)})
+
+    source = SourceType.FIFO_SALE if method == "fifo" else SourceType.LIFO_SALE
+    journal_result = _journalize_transaction_impl(db, user_id, date_str, memo, journal_lines, source_type=source)
+
+    import json as _json
+    jr = _json.loads(journal_result)
+    if jr["status"] == "error":
+        return journal_result
+
+    return tool_result(data={
+        "journal_entry_id": jr["data"]["journal_entry_id"],
+        "method": method,
+        "item_sku": item_sku,
+        "quantity_sold": str(qty_needed),
+        "total_cogs": str(total_cogs),
+        "sale_total": str(sale_total) if sale_total else None,
+        "layers_consumed": layers_consumed,
+    })
+
+
+def _journalize_fifo_transaction_impl(
+    db: Session, user_id: str, date_str: str, memo: str,
+    item_sku: str, quantity: float, sale_price_per_unit: float = None,
+    revenue_account: str = "Revenue", receivable_account: str = "Cash",
+) -> str:
+    return _journalize_cost_layer_sale(
+        db, user_id, date_str, memo, item_sku, quantity,
+        sale_price_per_unit, revenue_account, receivable_account, method="fifo",
+    )
+
+
+@tool
+def journalize_fifo_transaction(
+    date: str, memo: str, item_sku: str, quantity: float,
+    sale_price_per_unit: float = None, revenue_account: str = "Revenue",
+    receivable_account: str = "Cash",
+) -> str:
+    """Record a FIFO (first-in, first-out) inventory sale or consumption.
+
+    WHEN TO USE: When selling goods using FIFO costing (oldest inventory used first).
+
+    Pulls cost from oldest layers first. Auto-generates COGS and revenue journal lines.
+
+    Args:
+        date: Sale date (YYYY-MM-DD).
+        memo: Transaction description.
+        item_sku: SKU of the item being sold.
+        quantity: Units sold/consumed.
+        sale_price_per_unit: Price per unit (null for internal consumption).
+        revenue_account: Revenue account name (default "Revenue").
+        receivable_account: Account to debit for sale (default "Cash").
+
+    Output format:
+        {"status": "success", "data": {"total_cogs": "...", "sale_total": "...", "layers_consumed": [...]}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _journalize_fifo_transaction_impl(
+            db, current_user.id, date, memo, item_sku, quantity,
+            sale_price_per_unit, revenue_account, receivable_account,
+        )
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
+def _journalize_lifo_transaction_impl(
+    db: Session, user_id: str, date_str: str, memo: str,
+    item_sku: str, quantity: float, sale_price_per_unit: float = None,
+    revenue_account: str = "Revenue", receivable_account: str = "Cash",
+) -> str:
+    return _journalize_cost_layer_sale(
+        db, user_id, date_str, memo, item_sku, quantity,
+        sale_price_per_unit, revenue_account, receivable_account, method="lifo",
+    )
+
+
+@tool
+def journalize_lifo_transaction(
+    date: str, memo: str, item_sku: str, quantity: float,
+    sale_price_per_unit: float = None, revenue_account: str = "Revenue",
+    receivable_account: str = "Cash",
+) -> str:
+    """Record a LIFO (last-in, first-out) inventory sale or consumption.
+
+    WHEN TO USE: When selling goods using LIFO costing (newest inventory used first).
+
+    Pulls cost from newest layers first. Auto-generates COGS and revenue journal lines.
+
+    Args:
+        date: Sale date (YYYY-MM-DD).
+        memo: Transaction description.
+        item_sku: SKU of the item being sold.
+        quantity: Units sold/consumed.
+        sale_price_per_unit: Price per unit (null for internal consumption).
+        revenue_account: Revenue account name (default "Revenue").
+        receivable_account: Account to debit for sale (default "Cash").
+
+    Output format:
+        {"status": "success", "data": {"total_cogs": "...", "sale_total": "...", "layers_consumed": [...]}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        result = _journalize_lifo_transaction_impl(
+            db, current_user.id, date, memo, item_sku, quantity,
+            sale_price_per_unit, revenue_account, receivable_account,
+        )
+        db.commit()
+        return result
+    except Exception as e:
+        db.rollback()
+        return tool_result(error=str(e))
+    finally:
+        db.close()
+
+
+def _inventory_valuation_impl(db: Session, user_id: str, method: str = "fifo") -> str:
+    ledger = _get_ledger(db, user_id)
+    if not ledger:
+        return tool_result(error="No ledger found. Call create_ledger first.")
+
+    items = db.query(InventoryItem).filter_by(
+        ledger_id=ledger.id, item_type=ItemType.GOODS,
+    ).order_by(InventoryItem.sku).all()
+
+    result_items = []
+    for item in items:
+        layers = db.query(InventoryLayer).filter(
+            InventoryLayer.item_id == item.id,
+            InventoryLayer.quantity_remaining > 0,
+        ).order_by(
+            InventoryLayer.received_date.asc() if method == "fifo" else InventoryLayer.received_date.desc()
+        ).all()
+
+        qty_on_hand = sum(l.quantity_remaining for l in layers)
+        total_cost = sum(l.quantity_remaining * l.unit_cost for l in layers)
+        avg_cost = total_cost / qty_on_hand if qty_on_hand > 0 else Decimal("0")
+
+        result_items.append({
+            "sku": item.sku,
+            "description": item.description,
+            "quantity_on_hand": str(qty_on_hand),
+            "total_cost": str(total_cost),
+            "weighted_avg_unit_cost": str(avg_cost.quantize(Decimal("0.0001"))),
+            "layers": [
+                {
+                    "layer_id": l.id,
+                    "quantity_remaining": str(l.quantity_remaining),
+                    "unit_cost": str(l.unit_cost),
+                    "received_date": str(l.received_date),
+                }
+                for l in layers
+            ],
+        })
+
+    return tool_result(data={"method": method, "items": result_items})
+
+
+@tool
+def inventory_valuation(method: str = "fifo") -> str:
+    """Get current inventory valuation with cost layer details.
+
+    WHEN TO USE: When you need to know the value of inventory on hand.
+
+    Args:
+        method: "fifo" (default) or "lifo" — determines layer ordering in report.
+
+    Output format:
+        {"status": "success", "data": {"method": "fifo", "items": [{"sku": "...", "total_cost": "...", ...}]}, "error": ""}
+    """
+    from flask_login import current_user
+    db = _get_db()
+    try:
+        return _inventory_valuation_impl(db, current_user.id, method)
+    finally:
+        db.close()
+
+
 # ── Tool registry ─────────────────────────────────────────────────────────────
 
 ACCOUNTING_TOOLS = [
@@ -1119,4 +1371,7 @@ ACCOUNTING_TOOLS = [
     receive_inventory,
     list_inventory_items,
     deactivate_inventory_item,
+    journalize_fifo_transaction,
+    journalize_lifo_transaction,
+    inventory_valuation,
 ]
