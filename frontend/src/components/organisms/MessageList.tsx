@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { MessageBubble } from '../molecules/MessageBubble';
 import { ImageThumbnail } from '../molecules/ImageThumbnail';
 import { ThinkingIndicator } from '../molecules/ThinkingIndicator';
+import { ToolCallPanel } from '../atoms/ToolCallPanel';
 import { Timestamp } from '../atoms/Timestamp';
 import { DateSeparator } from '../atoms/DateSeparator';
 import { useChat } from '../../hooks/useChat';
@@ -13,7 +14,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ onImageClick }: MessageListProps) {
-  const { messages, streaming } = useChat();
+  const { messages, streaming, toolActivities } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const msgRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -63,24 +64,37 @@ export function MessageList({ onImageClick }: MessageListProps) {
         <NewConversationButton />
       </div>
       <div className="mt-auto" />
-      {messages.map((msg) => {
-        const align = msg.role === 'user' ? 'right' : 'left';
-        return (
-          <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); }} className="flex flex-col">
-            <MessageBubble message={msg} />
-            {msg.images.map((img, i) => (
-              <ImageThumbnail
-                key={i}
-                src={img.src}
-                filename={img.filename}
-                sizeKb={img.sizeKb}
-                onClick={() => onImageClick(img.src, img.filename)}
-              />
-            ))}
-            <Timestamp timestamp={msg.timestamp} align={align} />
-          </div>
-        );
-      })}
+      {(() => {
+        // Find the index of the last assistant message to attach tool panel to
+        const lastAsstIdx = toolActivities.length > 0
+          ? messages.reduce((acc, m, i) => m.role === 'assistant' ? i : acc, -1)
+          : -1;
+
+        return messages.map((msg, idx) => {
+          const align = msg.role === 'user' ? 'right' : 'left';
+          return (
+            <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); }} className="flex flex-col">
+              {idx === lastAsstIdx && (
+                <ToolCallPanel activities={toolActivities} />
+              )}
+              <MessageBubble message={msg} />
+              {msg.images.map((img, i) => (
+                <ImageThumbnail
+                  key={i}
+                  src={img.src}
+                  filename={img.filename}
+                  sizeKb={img.sizeKb}
+                  onClick={() => onImageClick(img.src, img.filename)}
+                />
+              ))}
+              <Timestamp timestamp={msg.timestamp} align={align} />
+            </div>
+          );
+        });
+      })()}
+      {toolActivities.length > 0 && !messages.some((m) => m.role === 'assistant') && (
+        <ToolCallPanel activities={toolActivities} />
+      )}
       {streaming && (
         <ThinkingIndicator label="Working..." elapsed={elapsed} preview="" />
       )}

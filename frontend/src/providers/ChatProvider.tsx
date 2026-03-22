@@ -6,6 +6,7 @@ import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
+import type { ToolActivity } from '../components/atoms/ToolCallPanel';
 
 interface ChatContextValue {
   messages: Message[];
@@ -17,6 +18,7 @@ interface ChatContextValue {
   conversationId: string | null;
   loadConversation: (id: string) => Promise<void>;
   newConversation: () => void;
+  toolActivities: ToolActivity[];
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -25,6 +27,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const streamingRef = useRef(false);
   const { start, stop } = useStream();
   const { current: currentModel } = useModels();
@@ -70,6 +73,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const userMsg = createMessage('user', text);
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
+    setToolActivities([]);
     streamingRef.current = true;
 
     let assistantCreated = false;
@@ -105,6 +109,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               return prev;
             });
             break;
+          case 'tool_call':
+            setToolActivities((prev) => [...prev, {
+              type: 'call', tool: ev.tool, content: ev.input, timestamp: Date.now(),
+            }]);
+            break;
+          case 'tool_result':
+            setToolActivities((prev) => [...prev, {
+              type: 'result', tool: ev.tool, content: ev.output, timestamp: Date.now(),
+            }]);
+            break;
           case 'error':
             setMessages((prev) => [...prev, createMessage('error', ev.message)]);
             break;
@@ -136,6 +150,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     <ChatContext.Provider value={{
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
+      toolActivities,
     }}>
       {children}
     </ChatContext.Provider>
