@@ -11,13 +11,10 @@ from flask import Flask, request, jsonify, Response, stream_with_context, send_f
 from flask_login import login_required, current_user
 import ollama as ollama_client
 from langchain_ollama import ChatOllama
-from langchain.agents import create_agent
-from langchain.agents.structured_output import ResponseFormat
 from langchain_core.messages import (
     HumanMessage,
     AIMessage,
     SystemMessage,
-    ToolCall,
     ToolMessage,
 )
 import httpx
@@ -45,59 +42,137 @@ SYSTEM_PROMPT = """You are an execution agent with tool access.
 
 RULES:
 - If a tool can solve the task, you MUST call it.
-- Do NOT explain how to do things.
-- Do NOT give instructions.
-- Do NOT fabricate data.
-
-TOOL CALL FORMAT:
-You MUST respond with JSON when calling tools:
-
-{
-  "name": "<tool_name>",
-  "params": {...}
-}
-
-Example:
-{
-  "name": "fetch_data",
-  "params": {
-    "query": "latest weather in New York"
-  }
-}
-
-If you need to make multiple tool calls, return an array of calls:
-
-[
-  {
-    "name": "fetch_data",
-    "params": {
-      "query": "latest weather in New York"
-    }
-  },
-  {
-    "name": "analyze_data",
-    "params": {
-      "data_id": "12345"
-    }
-  }
-]
-
-Do not include any other text or markdown formatting.
+- Do NOT explain how to do things — just do them.
+- Do NOT give instructions — take action.
+- Do NOT fabricate data — use your tools.
+- Do NOT describe which tools you would use — call them directly.
+- When you need information, call the appropriate tool immediately.
+- Tool results are shown to you in the conversation. You can read and analyze them directly.
+- Do NOT pass placeholder strings like "{result of tool}" to other tools. Use the actual data from the tool result.
+- If a tool returns data you need to process, analyze it yourself from the conversation context rather than calling another tool with a placeholder.
+- If a tool call returns the same result twice, STOP retrying and work with what you have.
 """
+
+# ─────────────────────────────────────────────────────────────
+# HTML STRIPPING (for cleaner LLM context)
+# ─────────────────────────────────────────────────────────────
+
+def _strip_html_noise(html: str) -> str:
+    """Strip non-structural noise from HTML for LLM consumption.
+
+    Removes: <head>, <script>, <style>, <svg>, <noscript>, comments,
+    inline style/onclick attrs, data- attrs. Keeps structural <body> content.
+    """
+    # Remove entire <head>...</head> (meta, CSS, etc. — useless for element finding)
+    cleaned = re.sub(r'<head\b[^>]*>[\s\S]*?</head>', '', html, flags=re.IGNORECASE)
+    # Remove script, style, svg, noscript blocks
+    cleaned = re.sub(r'<script\b[^>]*>[\s\S]*?</script>', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<style\b[^>]*>[\s\S]*?</style>', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<svg\b[^>]*>[\s\S]*?</svg>', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<noscript\b[^>]*>[\s\S]*?</noscript>', '', cleaned, flags=re.IGNORECASE)
+    # Remove HTML comments
+    cleaned = re.sub(r'<!--[\s\S]*?-->', '', cleaned)
+    # Remove inline style, onclick, onload, data- attributes
+    cleaned = re.sub(r'\s+style="[^"]*"', '', cleaned)
+    cleaned = re.sub(r"\s+style='[^']*'", '', cleaned)
+    cleaned = re.sub(r'\s+on\w+="[^"]*"', '', cleaned)
+    cleaned = re.sub(r'\s+data-\w+="[^"]*"', '', cleaned)
+    # Collapse whitespace
+    cleaned = re.sub(r'\n\s*\n', '\n', cleaned)
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    cleaned = re.sub(r'\n ', '\n', cleaned)
+    return cleaned.strip()
+
+
+def _clean_tool_result(result_str: str) -> str:
+    """If a tool result contains HTML, strip noise before feeding to LLM."""
+    try:
+        parsed = json.loads(result_str)
+        if isinstance(parsed, dict):
+            data = parsed.get("data", {})
+            if isinstance(data, dict) and "html" in data:
+                data["html"] = _strip_html_noise(data["html"])
+                return json.dumps(parsed)
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # If the raw string looks like HTML, strip it
+    if '<html' in result_str[:500].lower() or '<!doctype' in result_str[:500].lower():
+        return _strip_html_noise(result_str)
+    return result_str
+
+
+# ─────────────────────────────────────────────────────────────
+# TOOL FAILURE DETECTION
+# ─────────────────────────────────────────────────────────────
+
+def _is_tool_failure(result_str: str) -> bool:
+    """Detect if a tool result is an error or empty/useless response."""
+    if result_str.startswith("Error:") or result_str.startswith("Unknown tool:"):
+        return True
+    try:
+        parsed = json.loads(result_str)
+        if isinstance(parsed, dict):
+            # Check for error status
+            if parsed.get("status") == "error" or parsed.get("error"):
+                return True
+            # Check for empty results
+            data = parsed.get("data", {})
+            if isinstance(data, dict):
+                count = data.get("count")
+                if count == 0:
+                    return True
+                for key in ("files", "elements", "matches", "entries", "results"):
+                    val = data.get(key)
+                    if isinstance(val, list) and len(val) == 0:
+                        return True
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return False
+
 
 # ─────────────────────────────────────────────────────────────
 # TOOL CALL PARSER
 # ─────────────────────────────────────────────────────────────
 
 def parse_tool_calls(response_content):
+    """Parse tool calls from model text output.
+
+    Handles both {name, params} and {name, arguments} formats,
+    and strips <tools>...</tools> wrappers from abliterated models.
+    """
+    text = response_content.strip()
+    # Strip <tools>...</tools> wrapper
+    import re as _re
+    match = _re.search(r"<tools>(.*?)</tools>", text, flags=_re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+
     try:
-        tool_calls = json.loads(response_content)
-        if isinstance(tool_calls, dict) and "name" in tool_calls and "params" in tool_calls:
-            return [tool_calls]
-        elif isinstance(tool_calls, list) and all(isinstance(call, dict) and "name" in call and "params" in call for call in tool_calls):
-            return tool_calls
+        parsed = json.loads(text)
     except json.JSONDecodeError:
-        pass
+        # Try to extract JSON from mixed text
+        match = _re.search(r"[\[{].*[\]}]", text, flags=_re.DOTALL)
+        if match:
+            try:
+                parsed = json.loads(match.group())
+            except json.JSONDecodeError:
+                return []
+        else:
+            return []
+
+    def _normalize(call):
+        """Normalize a tool call dict to {name, params}."""
+        if not isinstance(call, dict) or "name" not in call:
+            return None
+        params = call.get("params") or call.get("arguments") or {}
+        return {"name": call["name"], "params": params}
+
+    if isinstance(parsed, dict):
+        norm = _normalize(parsed)
+        return [norm] if norm else []
+    elif isinstance(parsed, list):
+        results = [_normalize(c) for c in parsed if isinstance(c, dict)]
+        return [r for r in results if r]
     return []
 
 
@@ -185,49 +260,33 @@ def serve_frontend(path):
 # Build lookup dict for fetching tools by name
 _TOOL_BY_NAME = {t.name: t for t in ALL_TOOLS}
 
-# Per-conversation cache: conversation_id → last tool names used
-_last_tool_selection: dict[str, tuple[str, list[str]]] = {}  # conv_id → (model, tool_names)
-_last_agent_cache: dict[str, object] = {}
+# Per-conversation cache: conversation_id → (model, tool_names, llm)
+_llm_cache: dict[str, tuple[str, list[str], object]] = {}
+
+MAX_TOOL_ROUNDS = 30  # safety limit on tool-calling loop
 
 
-def _build_agent(model_name: str, tool_names: list[str], conversation_id: str | None = None):
-    """Build a LangChain agent with only the specified tools bound.
+def _get_llm(model_name: str, tool_names: list[str], conversation_id: str | None = None):
+    """Get a ChatOllama instance with tools bound for schema awareness.
 
-    Caches per conversation_id. If tool_names match the previous turn's
-    selection for this conversation, returns the cached agent.
-
-    Args:
-        model_name: Ollama model name.
-        tool_names: List of tool name strings to bind.
-        conversation_id: Optional conversation ID for caching.
+    Caches per conversation_id to avoid rebuilding when tool selection
+    hasn't changed.
     """
-    if conversation_id and conversation_id in _last_tool_selection:
-        prev_model, prev_tools = _last_tool_selection[conversation_id]
+    if conversation_id and conversation_id in _llm_cache:
+        prev_model, prev_tools, cached_llm = _llm_cache[conversation_id]
         if prev_model == model_name and sorted(prev_tools) == sorted(tool_names):
-            cached = _last_agent_cache.get(conversation_id)
-            if cached is not None:
-                return cached
+            return cached_llm
 
     llm = ChatOllama(
         model=model_name,
         temperature=0,
         base_url="http://localhost:11434",
-    ).bind(response_format=ResponseFormat.JSON)
-
-    tools = [_TOOL_BY_NAME[name] for name in tool_names if name in _TOOL_BY_NAME]
-
-    agent = create_agent(
-        llm,
-        tools,
-        system_prompt=SYSTEM_PROMPT,
-        response_format=ResponseFormat.JSON,
     )
 
     if conversation_id:
-        _last_tool_selection[conversation_id] = (model_name, tool_names)
-        _last_agent_cache[conversation_id] = agent
+        _llm_cache[conversation_id] = (model_name, tool_names, llm)
 
-    return agent
+    return llm
 
 # ─────────────────────────────────────────────────────────────
 # STREAMING CHAT
@@ -248,6 +307,8 @@ def chat_stream():
 
     if not model_name:
         return jsonify({"error": "No model selected"}), 400
+
+    print(f"[CHAT_START] user_msg={user_msg[:50]!r}, conv_id={conversation_id}, model={model_name}", flush=True)
 
     db = get_db()
 
@@ -282,65 +343,214 @@ def chat_stream():
     history = build_history(history_rows)
 
     # --- Tool pre-pass ---
+    print(f"[PREPASS_START]", flush=True)
     fallback_names = _get_user_selected_tools()
     tool_names = select_tools(user_msg, fallback_names)
 
-    agent = _build_agent(model_name, tool_names, conversation_id)
+    print(f"[CHAT] model={model_name}, prepass_selected={len(tool_names)} tools: {tool_names}, conv={conversation_id}", flush=True)
+
+    llm = _get_llm(model_name, tool_names, conversation_id)
+
+    # --- Build tool schema block for system prompt ---
+    tool_schemas = []
+    for name in tool_names:
+        t = _TOOL_BY_NAME.get(name)
+        if t:
+            schema = t.args_schema.model_json_schema() if t.args_schema else {}
+            props = schema.get("properties", {})
+            params_desc = ", ".join(f'{k}: {v.get("type", "str")}' for k, v in props.items())
+            desc = (t.description.split("\n")[0] if t.description else "")
+            tool_schemas.append(f'- {name}({params_desc}): {desc}')
+
+    tools_block = "\n".join(tool_schemas)
+
+    system_with_tools = f"""{SYSTEM_PROMPT}
+
+AVAILABLE TOOLS:
+{tools_block}
+
+To call a tool, respond with ONLY a JSON array like:
+[{{"name": "tool_name", "arguments": {{"param": "value"}}}}]
+
+If you do not need to call a tool, respond with plain text."""
 
     # --- Assemble messages ---
     messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        SystemMessage(content="Respond ONLY with valid JSON when calling tools."),
+        SystemMessage(content=system_with_tools),
     ] + history + [
         HumanMessage(content=user_msg),
     ]
 
     def generate():
+        nonlocal messages
         full_response = ""
-        # Collect messages in order as (type, data) tuples to preserve
-        # correct tool_call → tool_result interleaving for DB persistence
         ordered_messages = []
+        prev_call_sig = None  # detect repeated identical tool calls
 
-        # Send conversation_id first so frontend can track it
         yield json.dumps({"conversation_id": conversation_id}) + "\n"
 
         try:
-            for event in agent.stream({"messages": messages}, stream_mode="updates"):
-                for node_output in event.values():
-                    for msg in node_output.get("messages", []):
-                        # Tool calls — LangChain ToolCall is a TypedDict, use dict access
-                        if getattr(msg, "tool_calls", None):
-                            for call in msg.tool_calls:
-                                ordered_messages.append(("tool_call", {
-                                    "name": call["name"],
-                                    "args": call["args"],
-                                    "id": call.get("id", ""),
-                                }))
-                                yield json.dumps({
-                                    "tool_call": {
-                                        "tool": call["name"],
-                                        "input": str(call["args"])
-                                    }
-                                }) + "\n"
+            for _round in range(MAX_TOOL_ROUNDS):
+                print(f"[ROUND {_round}] invoking LLM with {len(messages)} messages", flush=True)
 
-                        # Tool results
-                        elif isinstance(msg, ToolMessage):
-                            ordered_messages.append(("tool_result", {
-                                "name": msg.name,
-                                "tool_call_id": getattr(msg, "tool_call_id", ""),
-                                "content": str(msg.content),
-                            }))
-                            yield json.dumps({
-                                "tool_result": {
-                                    "tool": msg.name,
-                                    "output": str(msg.content)[:500]
-                                }
-                            }) + "\n"
+                # Buffer the full streamed response, then decide what to do
+                chunks = []
+                for chunk in llm.stream(messages):
+                    token = chunk.content or ""
+                    if token:
+                        chunks.append(token)
 
-                        # Normal text
-                        elif msg.content:
-                            full_response += msg.content
-                            yield json.dumps({"chunk": msg.content}) + "\n"
+                content = "".join(chunks)
+                print(f"[ROUND {_round}] got {len(content)} chars, starts with: {content[:80]!r}", flush=True)
+
+                # Check for tool calls
+                calls = parse_tool_calls(content)
+
+                if not calls:
+                    # Final text response — replay buffered tokens for streaming effect
+                    for token in chunks:
+                        full_response += token
+                        yield json.dumps({"chunk": token}) + "\n"
+                    break
+
+                # Detect repeated tool calls (stuck in a loop) — compare names only,
+                # not params (which may contain varying HTML content)
+                call_sig = json.dumps([c["name"] for c in calls], sort_keys=True)
+                if call_sig == prev_call_sig:
+                    print(f"[ROUND {_round}] LOOP DETECTED — same tool calls as previous round, breaking", flush=True)
+                    # Tell the model to stop and respond with what it has
+                    messages.append(AIMessage(content=content))
+                    messages.append(HumanMessage(
+                        content="STOP: You are repeating the same tool calls. The previous attempt returned the same result. Summarize what you know so far and respond to the user."
+                    ))
+                    # Do one more round for final text
+                    final_chunks = []
+                    for chunk in llm.stream(messages):
+                        token = chunk.content or ""
+                        if token:
+                            final_chunks.append(token)
+                            # Stream immediately — this should be text
+                            full_response += token
+                            yield json.dumps({"chunk": token}) + "\n"
+                    break
+                prev_call_sig = call_sig
+
+                # Tool call round — process tools
+                messages.append(AIMessage(content=content))
+                for call in calls:
+                    tool_name = call["name"]
+                    tool_params = call["params"]
+
+                    # Stream tool_call event to frontend
+                    yield json.dumps({
+                        "tool_call": {
+                            "tool": tool_name,
+                            "input": json.dumps(tool_params),
+                        }
+                    }) + "\n"
+
+                    # Execute the tool with self-correcting retry
+                    tool_obj = _TOOL_BY_NAME.get(tool_name)
+                    if not tool_obj:
+                        result_str = f"Unknown tool: {tool_name}"
+                    else:
+                        retry_attempts = []
+                        max_retries = 3
+                        result_str = None
+
+                        for attempt in range(max_retries):
+                            try:
+                                result = tool_obj.invoke(tool_params)
+                                result_str = str(result)
+                            except Exception as tool_err:
+                                result_str = f"Error: {tool_err}"
+
+                            # Check if the result is an error or empty
+                            is_error = _is_tool_failure(result_str)
+
+                            if not is_error or attempt == max_retries - 1:
+                                break
+
+                            # Self-correct: ask the LLM what to fix
+                            retry_attempts.append({
+                                "params": tool_params,
+                                "result": result_str[:500],
+                            })
+
+                            if attempt == 0:
+                                fix_prompt = (
+                                    f"Tool '{tool_name}' was called with {json.dumps(tool_params)} "
+                                    f"but returned an error/empty result: {result_str[:500]}\n\n"
+                                    f"What caused this error? What would you change about the "
+                                    f"parameters to make it succeed? Respond with ONLY a JSON "
+                                    f"object of corrected parameters, nothing else."
+                                )
+                            else:
+                                history_str = "\n".join(
+                                    f"  Attempt {i+1}: params={json.dumps(a['params'])}, result={a['result']}"
+                                    for i, a in enumerate(retry_attempts)
+                                )
+                                fix_prompt = (
+                                    f"Tool '{tool_name}' has failed {len(retry_attempts)} times:\n"
+                                    f"{history_str}\n\n"
+                                    f"What would you change this time? Respond with ONLY a JSON "
+                                    f"object of corrected parameters, nothing else."
+                                )
+
+                            print(f"[RETRY] {tool_name} attempt {attempt+1} failed, asking LLM to fix", flush=True)
+
+                            # Ask LLM for corrected params
+                            try:
+                                fix_resp = llm.invoke([
+                                    SystemMessage(content="You are fixing a failed tool call. Respond with ONLY valid JSON parameters."),
+                                    HumanMessage(content=fix_prompt),
+                                ])
+                                fix_text = fix_resp.content.strip()
+                                # Extract JSON from response
+                                fix_match = re.search(r'\{.*\}', fix_text, flags=re.DOTALL)
+                                if fix_match:
+                                    new_params = json.loads(fix_match.group())
+                                    print(f"[RETRY] LLM suggested: {json.dumps(new_params)}", flush=True)
+                                    tool_params = new_params
+
+                                    # Stream the retry to frontend
+                                    yield json.dumps({
+                                        "tool_call": {
+                                            "tool": f"{tool_name} (retry {attempt+2})",
+                                            "input": json.dumps(tool_params),
+                                        }
+                                    }) + "\n"
+                            except Exception:
+                                break  # can't self-correct, use what we have
+
+                    # Stream tool_result event to frontend
+                    yield json.dumps({
+                        "tool_result": {
+                            "tool": tool_name,
+                            "output": result_str[:500],
+                        }
+                    }) + "\n"
+
+                    ordered_messages.append(("tool_call", {
+                        "name": tool_name,
+                        "args": tool_params,
+                        "id": "",
+                    }))
+                    ordered_messages.append(("tool_result", {
+                        "name": tool_name,
+                        "tool_call_id": "",
+                        "content": result_str,
+                    }))
+
+                    # Clean HTML noise and truncate before feeding back to LLM
+                    cleaned = _clean_tool_result(result_str)
+                    truncated = cleaned[:12000]
+                    if len(cleaned) > 12000:
+                        truncated += f"\n... (truncated, {len(cleaned)} chars total)"
+                    print(f"[TOOL] {tool_name}: raw={len(result_str)} → cleaned={len(cleaned)} → ctx={len(truncated)}", flush=True)
+                    messages.append(HumanMessage(
+                        content=f"Tool '{tool_name}' returned:\n{truncated}"
+                    ))
 
         except Exception as e:
             yield json.dumps({"error": str(e)}) + "\n"
@@ -348,7 +558,6 @@ def chat_stream():
 
         # --- Persist messages to DB (in correct order) ---
         try:
-            # Save user message
             user_row = serialize_user_message(user_msg)
             db.add(ConversationMessage(
                 conversation_id=conversation_id,
@@ -357,7 +566,6 @@ def chat_stream():
                 tool_calls=user_row["tool_calls"],
             ))
 
-            # Save tool calls and results in the order they occurred
             for msg_type, msg_data in ordered_messages:
                 if msg_type == "tool_call":
                     db.add(ConversationMessage(
@@ -377,7 +585,6 @@ def chat_stream():
                         tool_calls=result_row["tool_calls"],
                     ))
 
-            # Save assistant response
             if full_response:
                 asst_row = serialize_assistant_message(full_response, tool_calls=[])
                 db.add(ConversationMessage(
@@ -510,8 +717,8 @@ def cli_chat():
     print(f"\nChatting with: {model}")
     print("Type 'quit' to exit\n")
 
-    agent = _build_agent(model, [t.name for t in ALL_TOOLS])
-    history = []
+    llm = _get_llm(model, [t.name for t in ALL_TOOLS])
+    history = [SystemMessage(content=SYSTEM_PROMPT)]
 
     while True:
         try:
@@ -525,24 +732,38 @@ def cli_chat():
         if user_input.lower() == "quit":
             break
 
-        messages = history + [HumanMessage(content=user_input)]
-
+        history.append(HumanMessage(content=user_input))
         print("Agent: ", end="", flush=True)
 
         try:
-            result = agent.invoke({"messages": messages})
-            output_msgs = result.get("messages", [])
+            for _round in range(MAX_TOOL_ROUNDS):
+                resp = llm.invoke(history)
+                content = resp.content or ""
+                calls = parse_tool_calls(content)
 
-            response = ""
-            for msg in reversed(output_msgs):
-                if isinstance(msg, AIMessage) and msg.content:
-                    response = msg.content
+                if not calls:
+                    print(content)
+                    history.append(AIMessage(content=content))
                     break
 
-            print(response)
-
-            history.append(HumanMessage(content=user_input))
-            history.append(AIMessage(content=response))
+                history.append(AIMessage(content=content))
+                for call in calls:
+                    tool_name = call["name"]
+                    tool_params = call["params"]
+                    print(f"\n  [calling {tool_name}({tool_params})]")
+                    tool_obj = _TOOL_BY_NAME.get(tool_name)
+                    if tool_obj:
+                        try:
+                            result = str(tool_obj.invoke(tool_params))
+                        except Exception as te:
+                            result = f"Error: {te}"
+                    else:
+                        result = f"Unknown tool: {tool_name}"
+                    print(f"  [result: {result[:200]}]")
+                    history.append(HumanMessage(
+                        content=f"Tool '{tool_name}' returned:\n{result}"
+                    ))
+                print("Agent: ", end="", flush=True)
 
         except Exception as e:
             print(f"\n[Error: {e}]")

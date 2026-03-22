@@ -1,7 +1,9 @@
 """Web tools: search and fetch URLs."""
 
+import os
 import re
 import json
+import time
 import urllib.request
 import urllib.parse
 
@@ -10,6 +12,11 @@ import requests
 
 from langchain.tools import tool
 from tools._output import tool_result
+
+
+# ── Shared session for cookie persistence across tool calls ──────────────────
+_web_session = requests.Session()
+_web_session.headers.update({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
 
 
 # ── Web Operations ───────────────────────────────────────────────────────────
@@ -56,7 +63,7 @@ def web_search(query: str, num_results: int = 5) -> str:
 
 
 @tool
-def fetch_url(url: str, max_chars: int = 5000) -> str:
+def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None) -> str:
     """Fetch a URL and return its text content with HTML tags stripped.
 
     WHEN TO USE: When you need to read the text content of a specific webpage.
@@ -65,6 +72,7 @@ def fetch_url(url: str, max_chars: int = 5000) -> str:
     Args:
         url: Full URL to fetch. Must start with http:// or https://.
         max_chars: Maximum characters to return. Range: 100-50000.
+        cookies: Optional list of cookie strings in "name=value" format (e.g. ["age_verified=1", "consent=yes"]).
 
     Output format:
         {"status": "success", "data": {"url": "...", "content": "...", "truncated": false}, "error": ""}
@@ -73,10 +81,15 @@ def fetch_url(url: str, max_chars: int = 5000) -> str:
         return tool_result(error="url must start with http:// or https://")
 
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "AgentTooling/1.0"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            content_type = resp.headers.get("Content-Type", "")
-            raw = resp.read().decode("utf-8", errors="replace")
+        if cookies:
+            for c in cookies:
+                if "=" in c:
+                    name, _, value = c.partition("=")
+                    _web_session.cookies.set(name.strip(), value.strip())
+        resp = _web_session.get(url, timeout=15)
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "")
+        raw = resp.text
     except Exception as e:
         return tool_result(error=f"Failed to fetch {url}: {e}")
 
@@ -94,7 +107,7 @@ def fetch_url(url: str, max_chars: int = 5000) -> str:
 
 
 @tool
-def webscrape(url: str) -> str:
+def webscrape(url: str, cookies: list[str] | None = None) -> str:
     """Fetch a URL and return the raw HTML content.
 
     WHEN TO USE: When you need the raw HTML of a webpage for parsing with find_all or find_download_link.
@@ -102,6 +115,7 @@ def webscrape(url: str) -> str:
 
     Args:
         url: Full URL to fetch. Must start with http:// or https://.
+        cookies: Optional list of cookie strings in "name=value" format (e.g. ["age_verified=1", "consent=yes"]).
 
     Output format:
         {"status": "success", "data": {"url": "...", "html": "..."}, "error": ""}
@@ -110,7 +124,12 @@ def webscrape(url: str) -> str:
         return tool_result(error="url must start with http:// or https://")
 
     try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "AgentTooling/1.0"})
+        if cookies:
+            for c in cookies:
+                if "=" in c:
+                    name, _, value = c.partition("=")
+                    _web_session.cookies.set(name.strip(), value.strip())
+        r = _web_session.get(url, timeout=15)
         r.raise_for_status()
     except Exception as e:
         return tool_result(error=f"Failed to fetch {url}: {e}")
@@ -234,4 +253,89 @@ def find_allowed_routes(url: str) -> str:
     return tool_result(data={"url": url, "allowed": allowed})
 
 
-WEB_TOOLS = [web_search, fetch_url, webscrape, find_all, find_download_link, find_allowed_routes]
+# ── Headless Browser ────────────────────────────────────────────────────────
+
+_browser_driver = None
+
+
+def _get_or_create_browser(geckodriver_path: str = ""):
+    """Get or create a headless Firefox browser instance."""
+    global _browser_driver
+    if _browser_driver is not None:
+        return _browser_driver
+
+    from selenium import webdriver
+    from selenium.webdriver.firefox.options import Options
+    from selenium.webdriver.firefox.service import Service
+
+    if not geckodriver_path:
+        geckodriver_path = os.environ.get(
+            "GECKODRIVER_PATH", "/home/ermer/.local/bin/geckodriver"
+        )
+
+    options = Options()
+    options.add_argument("--headless")
+    options.set_preference("general.useragent.override",
+                           "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+
+    service = Service(geckodriver_path)
+    _browser_driver = webdriver.Firefox(service=service, options=options)
+    _browser_driver.set_page_load_timeout(30)
+    return _browser_driver
+
+
+@tool
+def browser_fetch(url: str, wait_seconds: int = 3, cookies: list[str] | None = None) -> str:
+    """Fetch a URL using a headless browser that executes JavaScript.
+
+    WHEN TO USE: When a page loads content dynamically via JavaScript (lazy-loaded
+    images, SPAs, infinite scroll). This renders the full DOM including JS-generated content.
+    WHEN NOT TO USE: For static pages — use fetch_url or webscrape instead (much faster).
+
+    Args:
+        url: Full URL to fetch. Must start with http:// or https://.
+        wait_seconds: Seconds to wait after page load for JS to execute. Range: 1-30.
+        cookies: Optional list of cookie strings in "name=value" format.
+
+    Output format:
+        {"status": "success", "data": {"url": "...", "html": "...", "title": "..."}, "error": ""}
+    """
+    if not url or not url.startswith(("http://", "https://")):
+        return tool_result(error="url must start with http:// or https://")
+
+    wait_seconds = max(1, min(30, wait_seconds))
+
+    try:
+        driver = _get_or_create_browser()
+
+        # Set cookies before navigating — need to visit domain first
+        if cookies:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc
+            # Navigate to domain root to set cookies
+            driver.get(f"{parsed.scheme}://{domain}")
+            time.sleep(1)
+            for c in cookies:
+                if "=" in c:
+                    name, _, value = c.partition("=")
+                    driver.add_cookie({
+                        "name": name.strip(),
+                        "value": value.strip(),
+                        "domain": domain,
+                    })
+
+        driver.get(url)
+        time.sleep(wait_seconds)
+
+        html = driver.page_source
+        title = driver.title
+
+    except Exception as e:
+        return tool_result(error=f"Browser fetch failed: {e}")
+
+    return tool_result(data={"url": url, "html": html, "title": title})
+
+
+WEB_TOOLS = [web_search, fetch_url, webscrape, find_all, find_download_link, find_allowed_routes, browser_fetch]
