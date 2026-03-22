@@ -233,44 +233,98 @@ def _build_agent(model_name: str, tool_names: list[str], conversation_id: str | 
 def chat_stream():
     data = request.get_json(force=True)
     user_msg = data.get("message", "").strip()
+    conversation_id = data.get("conversation_id")
 
     if not user_msg:
         return jsonify({"error": "message required"}), 400
 
     prefs = current_user.preferences or {}
     model_name = prefs.get("model")
-    selected_tools = prefs.get("selected_tools", [])
 
     if not model_name:
         return jsonify({"error": "No model selected"}), 400
 
-    agent = _build_agent(model_name, selected_tools)
+    db = get_db()
 
+    # --- Conversation management ---
+    if conversation_id:
+        conv = db.query(Conversation).filter_by(
+            id=conversation_id, user_id=current_user.id
+        ).first()
+        if not conv:
+            return jsonify({"error": "Conversation not found"}), 404
+    else:
+        conv = Conversation(
+            user_id=current_user.id,
+            title=user_msg[:60],
+            model=model_name,
+        )
+        db.add(conv)
+        db.commit()
+        conversation_id = conv.id
+
+    # --- Load conversation history ---
+    db_messages = (
+        db.query(ConversationMessage)
+        .filter_by(conversation_id=conversation_id)
+        .order_by(ConversationMessage.created_at.asc())
+        .all()
+    )
+    history_rows = [
+        {"role": m.role, "content": m.content, "tool_calls": m.tool_calls or []}
+        for m in db_messages
+    ]
+    history = build_history(history_rows)
+
+    # --- Tool pre-pass ---
+    fallback_names = _get_user_selected_tools()
+    tool_names = select_tools(user_msg, fallback_names)
+
+    agent = _build_agent(model_name, tool_names, conversation_id)
+
+    # --- Assemble messages ---
     messages = [
         SystemMessage(content=SYSTEM_PROMPT),
         SystemMessage(content="Respond ONLY with valid JSON when calling tools."),
+    ] + history + [
         HumanMessage(content=user_msg),
     ]
 
     def generate():
         full_response = ""
+        # Collect messages in order as (type, data) tuples to preserve
+        # correct tool_call → tool_result interleaving for DB persistence
+        ordered_messages = []
+
+        # Send conversation_id first so frontend can track it
+        yield json.dumps({"conversation_id": conversation_id}) + "\n"
 
         try:
             for event in agent.stream({"messages": messages}, stream_mode="updates"):
                 for node_output in event.values():
                     for msg in node_output.get("messages", []):
-                        # Tool calls
+                        # Tool calls — LangChain ToolCall is a TypedDict, use dict access
                         if getattr(msg, "tool_calls", None):
                             for call in msg.tool_calls:
+                                ordered_messages.append(("tool_call", {
+                                    "name": call["name"],
+                                    "args": call["args"],
+                                    "id": call.get("id", ""),
+                                }))
                                 yield json.dumps({
                                     "tool_call": {
-                                        "tool": call.name,
-                                        "input": str(call.args)
+                                        "tool": call["name"],
+                                        "input": str(call["args"])
                                     }
                                 }) + "\n"
 
                         # Tool results
                         elif isinstance(msg, ToolMessage):
+                            ordered_messages.append(("tool_result", {
+                                "name": msg.name,
+                                "tool_call_id": getattr(msg, "tool_call_id", ""),
+                                "content": str(msg.content),
+                            }))
                             yield json.dumps({
                                 "tool_result": {
                                     "tool": msg.name,
@@ -287,9 +341,56 @@ def chat_stream():
             yield json.dumps({"error": str(e)}) + "\n"
             return
 
+        # --- Persist messages to DB (in correct order) ---
+        try:
+            # Save user message
+            user_row = serialize_user_message(user_msg)
+            db.add(ConversationMessage(
+                conversation_id=conversation_id,
+                role=user_row["role"],
+                content=user_row["content"],
+                tool_calls=user_row["tool_calls"],
+            ))
+
+            # Save tool calls and results in the order they occurred
+            for msg_type, msg_data in ordered_messages:
+                if msg_type == "tool_call":
+                    db.add(ConversationMessage(
+                        conversation_id=conversation_id,
+                        role="assistant",
+                        content="",
+                        tool_calls=[msg_data],
+                    ))
+                elif msg_type == "tool_result":
+                    result_row = serialize_tool_result(
+                        msg_data["name"], msg_data["tool_call_id"], msg_data["content"]
+                    )
+                    db.add(ConversationMessage(
+                        conversation_id=conversation_id,
+                        role=result_row["role"],
+                        content=result_row["content"],
+                        tool_calls=result_row["tool_calls"],
+                    ))
+
+            # Save assistant response
+            if full_response:
+                asst_row = serialize_assistant_message(full_response, tool_calls=[])
+                db.add(ConversationMessage(
+                    conversation_id=conversation_id,
+                    role=asst_row["role"],
+                    content=asst_row["content"],
+                    tool_calls=asst_row["tool_calls"],
+                ))
+
+            conv.updated_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception as e:
+            logging.getLogger(__name__).error("Failed to persist messages: %s", e)
+
         yield json.dumps({
             "done": True,
-            "full_response": full_response
+            "full_response": full_response,
+            "conversation_id": conversation_id,
         }) + "\n"
 
     return Response(
