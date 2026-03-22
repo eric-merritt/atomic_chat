@@ -130,6 +130,8 @@ from routes.conversations import conv_bp
 app.register_blueprint(conv_bp)
 from routes.preferences import prefs_bp
 app.register_blueprint(prefs_bp)
+from routes.accounting import acct_bp
+app.register_blueprint(acct_bp)
 app.before_request(auth_guard)
 
 @app.teardown_appcontext

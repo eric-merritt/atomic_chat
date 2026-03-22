@@ -4,10 +4,11 @@ import { ConversationList } from '../components/organisms/ConversationList';
 import { ProfilePanel } from '../components/organisms/ProfilePanel';
 import { ApiKeyPanel } from '../components/organisms/ApiKeyPanel';
 import { ConnectionsPanel } from '../components/organisms/ConnectionsPanel';
+import { JournalEntryForm } from '../components/organisms/JournalEntryForm';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { useTheme } from '../hooks/useTheme';
 
-type Section = 'conversations' | 'profile' | 'keys' | 'connections';
+type Section = 'conversations' | 'profile' | 'keys' | 'connections' | 'accounting';
 
 export function DashboardPage() {
   const { theme } = useTheme();
@@ -16,6 +17,7 @@ export function DashboardPage() {
   const panels: Record<Section, React.ReactNode> = {
     profile: <ProfilePanel />,
     conversations: <ConversationList />,
+    accounting: <JournalEntryForm />,
     keys: <ApiKeyPanel />,
     connections: <ConnectionsPanel />,
   };

@@ -11,10 +11,12 @@ import time
 import random
 import urllib.request
 import urllib.parse
+from typing import Optional
 
 from langchain.tools import tool
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
+from tools._output import tool_result, retry
 
 
 # ── eBay Operations ──────────────────────────────────────────────────────────
@@ -42,7 +44,6 @@ def _parse_ebay_listings(html: str) -> list[dict]:
     listings = []
 
     # ── New layout (s-card) ──────────────────────────────────────────────
-    # Each listing card starts with class="s-card s-card--horizontal"
     card_starts = [m.start() for m in re.finditer(r'class="s-card\s+s-card--', html)]
     if card_starts:
         for idx, start in enumerate(card_starts):
@@ -50,27 +51,22 @@ def _parse_ebay_listings(html: str) -> list[dict]:
             block = html[start:end]
             listing = {}
 
-            # Title: inside <div ... class=s-card__title><span class="su-styled-text primary default">TEXT</span>
             title_match = re.search(
                 r'class=s-card__title[^>]*>(.*?)</div>',
                 block, re.DOTALL,
             )
             if title_match:
                 title = re.sub(r"<[^>]+>", "", title_match.group(1)).strip()
-                # Remove eBay boilerplate suffixes/prefixes
                 title = re.sub(r"Opens in a new window or tab$", "", title).strip()
                 title = re.sub(r"^New Listing", "", title).strip()
                 if title.lower() in ("shop on ebay", "results matching fewer words", ""):
                     continue
                 listing["title"] = title
 
-            # URL: href=https://www.ebay.com/itm/NNN (may or may not be quoted)
             url_match = re.search(r'href=["\']?(https://www\.ebay\.com/itm/\d+)', block)
             if url_match:
                 listing["url"] = url_match.group(1)
 
-            # Price: class="... s-card__price">$XX.XX</span>
-            # Collect all price spans and join them (handles "X to Y" ranges)
             price_spans = re.findall(r's-card__price">(.*?)</span>', block, re.DOTALL)
             if price_spans:
                 price_text = " ".join(re.sub(r"<[^>]+>", "", p).strip() for p in price_spans)
@@ -79,7 +75,6 @@ def _parse_ebay_listings(html: str) -> list[dict]:
                 if nums:
                     listing["price"] = float(nums[0].replace(",", ""))
 
-            # Shipping: look for "delivery" or "shipping" text
             ship_match = re.search(
                 r'su-styled-text[^>]*>([^<]*(?:delivery|shipping)[^<]*)</span>',
                 block, re.IGNORECASE,
@@ -135,30 +130,43 @@ def _parse_ebay_listings(html: str) -> list[dict]:
 
 
 @tool
+@retry()
 def ebay_search(
     query: str,
     sort: str = "best_match",
-    min_price: float = -1,
-    max_price: float = -1,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
     condition: str = "",
     max_results: int = 20,
 ) -> str:
-    """Search eBay and return parsed listings.
+    """Search eBay Buy It Now listings and return parsed results.
+
+    WHEN TO USE: When searching for products on eBay specifically.
+    WHEN NOT TO USE: When you want to search multiple platforms at once (use cross_platform_search).
 
     Args:
-        query: Search terms.
-        sort: Sort order (best_match, ending_soonest, newly_listed, price_low, price_high).
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        condition: Filter (new, used, refurbished, parts). Empty to skip.
-        max_results: Max listings to return.
+        query: Search terms (e.g. "RTX 3060", "mechanical keyboard"). Must be non-empty.
+        sort: Sort order. One of: "best_match", "ending_soonest", "newly_listed", "price_low", "price_high".
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        condition: Item condition filter. One of: "new", "used", "refurbished", "parts", or "" to skip.
+        max_results: Maximum listings to return. Range: 1-100.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "count": N, "listings": [
+            {"title": "...", "url": "...", "price": 123.45, "price_text": "$123.45", "shipping": "..."},
+            ...
+        ]}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     encoded = urllib.parse.quote_plus(query)
     url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}"
     url += EBAY_SORT_OPTIONS.get(sort, "")
-    if min_price >= 0:
+    if min_price is not None:
         url += f"&_udlo={min_price}"
-    if max_price >= 0:
+    if max_price is not None:
         url += f"&_udhi={max_price}"
     condition_map = {
         "new": "&LH_ItemCondition=1000",
@@ -177,20 +185,30 @@ def ebay_search(
         with urllib.request.urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
-        return json.dumps([{"error": str(e)}])
+        return tool_result(error=str(e))
 
     listings = _parse_ebay_listings(html)[:max_results]
-    return json.dumps(listings, indent=2)
+    return tool_result(data={"query": query, "count": len(listings), "listings": listings})
 
 
 @tool
+@retry()
 def ebay_sold_search(query: str, max_results: int = 20) -> str:
     """Search eBay completed/sold listings to find market prices.
 
+    WHEN TO USE: When you need historical sold prices for market value analysis.
+    WHEN NOT TO USE: When you need currently available listings (use ebay_search instead).
+
     Args:
-        query: Search terms.
-        max_results: Max listings to return.
+        query: Search terms. Must be non-empty.
+        max_results: Maximum listings to return. Range: 1-100.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "count": N, "listings": [...]}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     encoded = urllib.parse.quote_plus(query)
     url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}&LH_Complete=1&LH_Sold=1&rt=nc"
     try:
@@ -200,22 +218,19 @@ def ebay_sold_search(query: str, max_results: int = 20) -> str:
         with urllib.request.urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
-        return json.dumps([{"error": str(e)}])
+        return tool_result(error=str(e))
 
     listings = _parse_ebay_listings(html)[:max_results]
     for listing in listings:
         listing["sold"] = True
-    return json.dumps(listings, indent=2)
+    return tool_result(data={"query": query, "count": len(listings), "listings": listings})
 
 
 # ── GPU model extraction & shipping parsing ──────────────────────────────────
 
 _GPU_MODEL_PATTERNS = [
-    # GeForce RTX consumer (Turing → Blackwell)
     re.compile(r"(RTX)\s*(\d0[5-9]0)(\s*Ti|\s*Super)?", re.IGNORECASE),
-    # GTX 16-series (Turing)
     re.compile(r"(GTX)\s*(16[56]0)(\s*Ti|\s*Super)?", re.IGNORECASE),
-    # Data center / workstation (match longer names first)
     re.compile(r"(Quadro\s*RTX\s*[4-8]000)", re.IGNORECASE),
     re.compile(r"\b(A100|A6000|A5000|A4000|A40|A30|A10)\b", re.IGNORECASE),
     re.compile(r"\b(L40S|L40)\b", re.IGNORECASE),
@@ -226,33 +241,20 @@ _GPU_MODEL_PATTERNS = [
 
 
 def _extract_gpu_model(title: str) -> str:
-    """Extract a normalized GPU model name from a listing title.
-
-    Returns a canonical string like 'RTX 3060 Ti' or 'A100', or '' if no
-    known model is found.
-    """
+    """Extract a normalized GPU model name from a listing title."""
     for pat in _GPU_MODEL_PATTERNS:
         m = pat.search(title)
         if m:
             groups = [g.strip() for g in m.groups() if g]
             model = " ".join(groups)
-            # Normalize spacing: "RTX3060" → "RTX 3060"
             model = re.sub(r"(RTX|GTX)\s*(\d)", r"\1 \2", model, flags=re.IGNORECASE)
-            # Collapse any double spaces
             model = re.sub(r"\s+", " ", model).strip()
             return model.upper()
     return ""
 
 
 def _parse_shipping_cost(shipping: str) -> float:
-    """Parse a shipping string into a numeric cost.
-
-    Examples:
-        '+$10.00 delivery'  → 10.0
-        'Free delivery'     → 0.0
-        'delivery in 2-4 days' → 0.0  (assumed free when no price stated)
-        ''                  → 0.0
-    """
+    """Parse a shipping string into a numeric cost."""
     if not shipping:
         return 0.0
     shipping_lower = shipping.lower()
@@ -265,38 +267,48 @@ def _parse_shipping_cost(shipping: str) -> float:
 
 
 @tool
+@retry()
 def ebay_deep_scan(
     query: str,
     condition: str = "used",
-    min_price: float = -1,
-    max_price: float = -1,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
     sort: str = "best_match",
     pages: int = 5,
     max_results: int = 200,
 ) -> str:
     """Paginated eBay search that compresses results to model + price for bulk analysis.
 
+    WHEN TO USE: When you need a large dataset of eBay listings for price analysis or comparison.
+    WHEN NOT TO USE: When you only need a quick search (use ebay_search instead).
+
     Scrapes multiple pages with rate-limiting delays, extracts GPU model names,
     parses shipping costs, deduplicates by URL, and returns compact listings
     sorted by model then total cost.
 
     Args:
-        query: Search terms (e.g. 'RTX 3060', 'used GPU').
-        condition: Filter (new, used, refurbished, parts). Empty to skip.
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        sort: Sort order (best_match, ending_soonest, newly_listed, price_low, price_high).
-        pages: Number of result pages to scrape (1-10).
-        max_results: Maximum total listings to return.
+        query: Search terms (e.g. "RTX 3060", "used GPU"). Must be non-empty.
+        condition: Filter. One of: "new", "used", "refurbished", "parts", or "" to skip.
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        sort: Sort order. One of: "best_match", "ending_soonest", "newly_listed", "price_low", "price_high".
+        pages: Number of result pages to scrape. Range: 1-10.
+        max_results: Maximum total listings to return. Range: 1-500.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "pages_scraped": N, "count": N, "listings": [...]}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     pages = max(1, min(pages, 10))
 
     encoded = urllib.parse.quote_plus(query)
     base_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}"
     base_url += EBAY_SORT_OPTIONS.get(sort, "")
-    if min_price >= 0:
+    if min_price is not None:
         base_url += f"&_udlo={min_price}"
-    if max_price >= 0:
+    if max_price is not None:
         base_url += f"&_udhi={max_price}"
     condition_map = {
         "new": "&LH_ItemCondition=1000",
@@ -321,7 +333,6 @@ def ebay_deep_scan(
             with urllib.request.urlopen(req, timeout=15) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
         except Exception:
-            # Skip failed pages and keep going
             if page_num < pages:
                 time.sleep(random.uniform(3.0, 6.0))
             continue
@@ -347,33 +358,30 @@ def ebay_deep_scan(
                 "url": item_url,
             })
 
-        # Rate-limit delay between pages (skip after last page)
         if page_num < pages:
             time.sleep(random.uniform(3.0, 6.0))
 
-    # Sort by model name, then total cost
     all_listings.sort(key=lambda x: (x["model"], x["total_cost"]))
 
-    return json.dumps(all_listings[:max_results], indent=2)
+    return tool_result(data={
+        "query": query,
+        "pages_scraped": pages,
+        "count": len(all_listings[:max_results]),
+        "listings": all_listings[:max_results],
+    })
 
 
 # ── Amazon Operations ─────────────────────────────────────────────────────────
 
 def _parse_amazon_listings(html: str) -> list[dict]:
-    """Extract listing data from Amazon search results HTML (internal helper).
-
-    Parses the search result cards from Amazon's HTML, extracting title, URL,
-    price, rating, and Prime eligibility.
-    """
+    """Extract listing data from Amazon search results HTML (internal helper)."""
     listings = []
 
-    # Find search result items by data-component-type="s-search-result"
     blocks = re.findall(
         r'data-component-type="s-search-result"[^>]*data-asin="([^"]+)"(.*?)(?=data-component-type="s-search-result"|<div class="s-main-slot s-result-list-col-0-footer">|$)',
         html, re.DOTALL,
     )
     if not blocks:
-        # Fallback: split by data-asin
         blocks = re.findall(
             r'data-asin="([A-Z0-9]{10})"(.*?)(?=data-asin="[A-Z0-9]{10}"|$)',
             html, re.DOTALL,
@@ -384,7 +392,6 @@ def _parse_amazon_listings(html: str) -> list[dict]:
             continue
         listing: dict = {"asin": asin}
 
-        # Title: usually in <span class="a-text-normal"> or <h2>
         title_match = re.search(
             r'<span class="a-(?:size-medium a-color-base a-text-normal|text-normal)"[^>]*>(.*?)</span>',
             block, re.DOTALL,
@@ -399,14 +406,12 @@ def _parse_amazon_listings(html: str) -> list[dict]:
         else:
             continue
 
-        # URL
         url_match = re.search(r'href="(/[^"]*?/dp/[A-Z0-9]{10}[^"]*)"', block)
         if url_match:
             listing["url"] = "https://www.amazon.com" + url_match.group(1).split("/ref=")[0]
         else:
             listing["url"] = f"https://www.amazon.com/dp/{asin}"
 
-        # Price: look for <span class="a-price"> containing whole and fraction
         price_whole = re.search(r'<span class="a-price-whole">(\d[\d,]*)', block)
         price_frac = re.search(r'<span class="a-price-fraction">(\d+)', block)
         if price_whole:
@@ -415,16 +420,13 @@ def _parse_amazon_listings(html: str) -> list[dict]:
             listing["price"] = float(f"{price_str}.{frac}")
             listing["price_text"] = f"${listing['price']:.2f}"
 
-        # Rating
         rating_match = re.search(r'(\d\.?\d?) out of 5 stars', block)
         if rating_match:
             listing["rating"] = float(rating_match.group(1))
 
-        # Prime
         if "a-icon-prime" in block or "Prime" in block:
             listing["prime"] = True
 
-        # Shipping - free shipping detection
         if "FREE delivery" in block or "free shipping" in block.lower() or listing.get("prime"):
             listing["shipping"] = "Free"
             listing["shipping_cost"] = 0.0
@@ -444,22 +446,32 @@ def _parse_amazon_listings(html: str) -> list[dict]:
 
 
 @tool
+@retry()
 def amazon_search(
     query: str,
-    min_price: float = -1,
-    max_price: float = -1,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
     sort: str = "relevance",
     max_results: int = 20,
 ) -> str:
     """Search Amazon and return parsed product listings.
 
+    WHEN TO USE: When searching for products on Amazon specifically.
+    WHEN NOT TO USE: When you want to search multiple platforms at once (use cross_platform_search).
+
     Args:
-        query: Search terms (e.g. 'RTX 3060', 'mechanical keyboard').
-        min_price: Minimum price filter in dollars. -1 to skip.
-        max_price: Maximum price filter in dollars. -1 to skip.
-        sort: Sort order (relevance, price_low, price_high, avg_review, newest).
-        max_results: Max listings to return.
+        query: Search terms (e.g. "RTX 3060", "mechanical keyboard"). Must be non-empty.
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        sort: Sort order. One of: "relevance", "price_low", "price_high", "avg_review", "newest".
+        max_results: Maximum listings to return. Range: 1-100.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "count": N, "listings": [...]}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     encoded = urllib.parse.quote_plus(query)
     url = f"https://www.amazon.com/s?k={encoded}"
 
@@ -472,11 +484,9 @@ def amazon_search(
     }
     url += sort_map.get(sort, "")
 
-    # Price filters (Amazon uses cents in low/high params on some pages,
-    # but the rh= filter works more reliably)
-    if min_price >= 0 or max_price >= 0:
-        lo = int(min_price * 100) if min_price >= 0 else ""
-        hi = int(max_price * 100) if max_price >= 0 else ""
+    if min_price is not None or max_price is not None:
+        lo = int(min_price * 100) if min_price is not None else ""
+        hi = int(max_price * 100) if max_price is not None else ""
         url += f"&rh=p_36%3A{lo}-{hi}"
 
     try:
@@ -488,22 +498,20 @@ def amazon_search(
         with urllib.request.urlopen(req, timeout=15) as resp:
             html = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
-        return json.dumps([{"error": str(e)}])
+        return tool_result(error=str(e))
 
     listings = _parse_amazon_listings(html)[:max_results]
 
-    # Enrich with GPU model if applicable
     for listing in listings:
         model = _extract_gpu_model(listing.get("title", ""))
         if model:
             listing["gpu_model"] = model
 
-    return json.dumps(listings, indent=2)
+    return tool_result(data={"query": query, "count": len(listings), "listings": listings})
 
 
 # ── Craigslist Operations ─────────────────────────────────────────────────────
 
-# Cities within ~100mi of Denver (pickup OK)
 CRAIGSLIST_DENVER_AREA = {
     "denver":           "https://denver.craigslist.org",
     "boulder":          "https://boulder.craigslist.org",
@@ -512,7 +520,6 @@ CRAIGSLIST_DENVER_AREA = {
     "pueblo":           "https://pueblo.craigslist.org",
 }
 
-# Major cities outside 100mi (shipping required)
 CRAIGSLIST_SHIPPING_CITIES = {
     "los angeles":  "https://losangeles.craigslist.org",
     "san francisco":"https://sfbay.craigslist.org",
@@ -538,17 +545,9 @@ CRAIGSLIST_SHIPPING_CITIES = {
 
 
 def _parse_craigslist_listings(html: str, city: str, is_local: bool) -> list[dict]:
-    """Extract listing data from Craigslist search results HTML.
-
-    Args:
-        html: Raw HTML from Craigslist search.
-        city: City name for labeling.
-        is_local: True if within 100mi of Denver (pickup available).
-    """
+    """Extract listing data from Craigslist search results HTML."""
     listings = []
 
-    # Craigslist uses <li class="cl-static-search-result"> or <li class="result-row">
-    # New layout (2024+): <li class="cl-static-search-result">
     new_items = re.findall(
         r'<li class="cl-static-search-result"[^>]*>(.*?)</li>',
         html, re.DOTALL,
@@ -559,17 +558,11 @@ def _parse_craigslist_listings(html: str, city: str, is_local: bool) -> list[dic
             listing: dict = {"city": city}
             listing["fulfillment"] = "pickup" if is_local else "shipping_required"
 
-            # Title and URL
             link = re.search(r'href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
             if link:
-                url = link.group(1)
-                if not url.startswith("http"):
-                    # relative URL — shouldn't happen but handle it
-                    pass
-                listing["url"] = url
+                listing["url"] = link.group(1)
                 listing["title"] = re.sub(r"<[^>]+>", "", link.group(2)).strip()
 
-            # Price
             price_match = re.search(r'<div class="price">\s*\$?([\d,]+)', block)
             if price_match:
                 listing["price"] = float(price_match.group(1).replace(",", ""))
@@ -578,7 +571,6 @@ def _parse_craigslist_listings(html: str, city: str, is_local: bool) -> list[dic
             if listing.get("title") and listing.get("url"):
                 listings.append(listing)
     else:
-        # Legacy layout: <li class="result-row">
         legacy_items = re.findall(
             r'<li class="result-row"[^>]*>(.*?)</li>',
             html, re.DOTALL,
@@ -609,18 +601,17 @@ def _craigslist_search_city(
     city: str,
     is_local: bool,
     category: str = "sss",
-    min_price: int = -1,
-    max_price: int = -1,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
     max_results: int = 25,
 ) -> list[dict]:
     """Search a single Craigslist city and return parsed listings."""
     encoded = urllib.parse.quote_plus(query)
     url = f"{base_url}/search/{category}?query={encoded}"
-    if min_price >= 0:
+    if min_price is not None:
         url += f"&min_price={min_price}"
-    if max_price >= 0:
+    if max_price is not None:
         url += f"&max_price={max_price}"
-    # For non-local cities, filter to shipping available
     if not is_local:
         url += "&shipping=1"
 
@@ -638,15 +629,19 @@ def _craigslist_search_city(
 
 
 @tool
+@retry()
 def craigslist_search(
     query: str,
     city: str = "denver",
     category: str = "sss",
-    min_price: int = -1,
-    max_price: int = -1,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
     max_results: int = 25,
 ) -> str:
     """Search Craigslist in a specific city.
+
+    WHEN TO USE: When you need Craigslist results from one specific city.
+    WHEN NOT TO USE: When you need results from multiple cities (use craigslist_multi_search).
 
     Cities within ~100mi of Denver (pickup available): denver, boulder,
     colorado springs, fort collins, pueblo.
@@ -657,14 +652,20 @@ def craigslist_search(
     philadelphia, washington dc, las vegas, salt lake city.
 
     Args:
-        query: Search terms.
+        query: Search terms. Must be non-empty.
         city: City name (see above). Defaults to denver.
-        category: Craigslist category code. 'sss' = for sale, 'cta' = cars+trucks,
-                  'sys' = computers, 'ele' = electronics.
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        max_results: Max listings to return.
+        category: Craigslist category code. "sss" = for sale, "cta" = cars+trucks,
+                  "sys" = computers, "ele" = electronics.
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        max_results: Maximum listings to return. Range: 1-100.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "city": "...", "count": N, "listings": [...]}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     city_lower = city.lower().strip()
 
     if city_lower in CRAIGSLIST_DENVER_AREA:
@@ -674,7 +675,8 @@ def craigslist_search(
         base_url = CRAIGSLIST_SHIPPING_CITIES[city_lower]
         is_local = False
     else:
-        return json.dumps({"error": f"Unknown city '{city}'. Use one of: {', '.join(sorted(list(CRAIGSLIST_DENVER_AREA.keys()) + list(CRAIGSLIST_SHIPPING_CITIES.keys())))}"})
+        all_cities = sorted(list(CRAIGSLIST_DENVER_AREA.keys()) + list(CRAIGSLIST_SHIPPING_CITIES.keys()))
+        return tool_result(error=f"Unknown city '{city}'. Use one of: {', '.join(all_cities)}")
 
     listings = _craigslist_search_city(
         base_url, query, city_lower, is_local,
@@ -682,44 +684,56 @@ def craigslist_search(
         max_results=max_results,
     )
 
-    # Enrich with GPU model if applicable
     for listing in listings:
         model = _extract_gpu_model(listing.get("title", ""))
         if model:
             listing["gpu_model"] = model
 
-    return json.dumps(listings, indent=2)
+    return tool_result(data={"query": query, "city": city_lower, "count": len(listings), "listings": listings})
 
 
 @tool
+@retry()
 def craigslist_multi_search(
     query: str,
     scope: str = "local",
     category: str = "sss",
-    min_price: int = -1,
-    max_price: int = -1,
+    min_price: Optional[int] = None,
+    max_price: Optional[int] = None,
     max_results_per_city: int = 10,
 ) -> str:
-    """Search Craigslist across multiple cities simultaneously.
+    """Search Craigslist across multiple cities with rate-limiting.
 
-    This is a LOOPING tool — it iterates through cities one by one with
-    rate-limiting delays between requests. Results accumulate across all cities.
+    WHEN TO USE: When you need Craigslist results from multiple cities at once.
+    WHEN NOT TO USE: When you only need results from one city (use craigslist_search).
 
-    Scope controls which cities to search:
-    - 'local': Denver-area cities only (within 100mi — pickup available)
-    - 'shipping': Major US cities outside Denver area (shipping required)
-    - 'all': Both local and shipping cities
+    PIPELINE STEPS (executed internally — you call this tool ONCE):
+        1. Build city list based on scope ("local", "shipping", or "all")
+        2. For each city: fetch search results page, parse listings
+        3. Rate-limit delay (1.5-3 seconds) between city requests
+        4. Enrich listings with GPU model extraction
+        5. Sort by price ascending, aggregate with per-city counts
+
+    CONSTRAINTS:
+        - "local" scope: 5 cities (Denver area), ~10-15 seconds
+        - "shipping" scope: 20 cities, ~40-60 seconds
+        - "all" scope: 25 cities, ~50-75 seconds
 
     Args:
-        query: Search terms.
-        scope: Which cities to search: 'local', 'shipping', or 'all'.
-        category: Craigslist category code. 'sss' = for sale, 'sys' = computers,
-                  'ele' = electronics, 'cta' = cars+trucks.
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        max_results_per_city: Max listings per city.
+        query: Search terms. Must be non-empty.
+        scope: Which cities to search. One of: "local", "shipping", "all".
+        category: Craigslist category code. "sss" = for sale, "sys" = computers, "ele" = electronics, "cta" = cars+trucks.
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        max_results_per_city: Maximum listings per city. Range: 1-50.
+
+    Output format:
+        {"status": "success", "data": {"total_listings": N, "cities_searched": [...], "listings": [...]}, "error": ""}
     """
-    cities_to_search: list[tuple[str, str, bool]] = []  # (city, url, is_local)
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
+    cities_to_search: list[tuple[str, str, bool]] = []
 
     if scope in ("local", "all"):
         for city_name, base_url in CRAIGSLIST_DENVER_AREA.items():
@@ -729,7 +743,7 @@ def craigslist_multi_search(
             cities_to_search.append((city_name, base_url, False))
 
     if not cities_to_search:
-        return json.dumps({"error": f"Invalid scope '{scope}'. Use 'local', 'shipping', or 'all'."})
+        return tool_result(error=f"Invalid scope '{scope}'. Use 'local', 'shipping', or 'all'.")
 
     all_listings = []
     cities_searched = []
@@ -743,7 +757,6 @@ def craigslist_multi_search(
         )
 
         if results:
-            # Enrich with GPU model
             for listing in results:
                 model = _extract_gpu_model(listing.get("title", ""))
                 if model:
@@ -753,54 +766,62 @@ def craigslist_multi_search(
         else:
             cities_failed.append(city_name)
 
-        # Rate limit between cities (skip after last)
         if i < len(cities_to_search) - 1:
             time.sleep(random.uniform(1.5, 3.0))
 
-    # Sort by price (cheapest first), listings without price at end
     all_listings.sort(key=lambda x: (x.get("price") is None, x.get("price", 999999)))
 
-    summary = {
+    return tool_result(data={
         "total_listings": len(all_listings),
         "cities_searched": cities_searched,
         "cities_with_no_results": cities_failed,
         "listings": all_listings,
-    }
-    return json.dumps(summary, indent=2)
+    })
 
 
 # ── Cross-Platform Flow Tools ─────────────────────────────────────────────────
-# These tools implement LOOPING agent call patterns — they iterate across
-# multiple data sources (platforms, cities) to aggregate and compare results.
-# When the LLM calls these tools, it should understand that the tool is
-# performing an internal loop and will return aggregated results from all
-# sources in a single response.
 
 @tool
+@retry()
 def cross_platform_search(
     query: str,
     platforms: str = "all",
-    min_price: float = -1,
-    max_price: float = -1,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
     condition: str = "",
     max_results_per_platform: int = 15,
 ) -> str:
     """Search across eBay, Amazon, and Craigslist in a single call.
 
-    THIS IS A LOOPING FLOW TOOL. It internally loops through each requested
-    platform, collects results, and returns them aggregated. The loop includes
-    rate-limiting delays between platforms. You are calling ONE tool but getting
-    results from MULTIPLE sources.
+    WHEN TO USE: When you need to compare prices across multiple marketplaces.
+    WHEN NOT TO USE: When you only need results from one platform (use the specific platform tool).
+
+    PIPELINE STEPS (executed internally — you call this tool ONCE):
+        1. Parse platform list from 'platforms' arg
+        2. For each platform, call: ebay_search / amazon_search / craigslist_multi_search
+        3. Rate-limit delay (2-4 seconds) between each platform call
+        4. Aggregate all results, tag each with source platform
+        5. Return combined results
+
+    CONSTRAINTS:
+        - Total execution time: 10-30 seconds depending on platforms selected
+        - Rate-limited: 2-4 second delay between platform requests
+        - Craigslist sub-call searches multiple cities internally (additional delays)
 
     Args:
-        query: Search terms (e.g. 'RTX 3060', 'mechanical keyboard').
-        platforms: Comma-separated list or 'all'. Options: ebay, amazon, craigslist.
-                   Example: 'ebay,amazon' or 'all'.
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        condition: Condition filter for eBay (new, used, refurbished). Ignored by others.
-        max_results_per_platform: Max listings per platform.
+        query: Search terms. Must be non-empty.
+        platforms: Comma-separated list or "all". Options: "ebay", "amazon", "craigslist".
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        condition: Condition filter for eBay only. One of: "new", "used", "refurbished", "parts", or "" to skip.
+        max_results_per_platform: Maximum listings per platform. Range: 1-50.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "platforms_searched": [...], "total_listings": N, "results": {"ebay": [...], ...}}, "error": ""}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     platform_list = [p.strip().lower() for p in platforms.split(",")]
     if "all" in platform_list:
         platform_list = ["ebay", "amazon", "craigslist"]
@@ -822,7 +843,8 @@ def cross_platform_search(
                     "condition": condition,
                     "max_results": max_results_per_platform,
                 })
-                listings = json.loads(raw)
+                parsed = json.loads(raw)
+                listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
                 for listing in listings:
                     listing["platform"] = "ebay"
                     listing["fulfillment"] = "shipping"
@@ -843,7 +865,8 @@ def cross_platform_search(
                     "max_price": max_price,
                     "max_results": max_results_per_platform,
                 })
-                listings = json.loads(raw)
+                parsed = json.loads(raw)
+                listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
                 for listing in listings:
                     listing["platform"] = "amazon"
                     listing["fulfillment"] = "shipping"
@@ -858,11 +881,12 @@ def cross_platform_search(
                 raw = craigslist_multi_search.invoke({
                     "query": query,
                     "scope": "all",
-                    "min_price": int(min_price) if min_price >= 0 else -1,
-                    "max_price": int(max_price) if max_price >= 0 else -1,
+                    "min_price": int(min_price) if min_price is not None else None,
+                    "max_price": int(max_price) if max_price is not None else None,
                     "max_results_per_city": max(3, max_results_per_platform // 5),
                 })
-                cl_data = json.loads(raw)
+                parsed = json.loads(raw)
+                cl_data = parsed.get("data", {}) if parsed.get("status") == "success" else {}
                 listings = cl_data.get("listings", [])
                 for listing in listings:
                     listing["platform"] = "craigslist"
@@ -874,46 +898,58 @@ def cross_platform_search(
             except Exception as e:
                 aggregated["results"]["craigslist"] = [{"error": str(e)}]
 
-        # Rate limit between platforms
         if i < len(platform_list) - 1:
             time.sleep(random.uniform(2.0, 4.0))
 
-    return json.dumps(aggregated, indent=2)
+    return tool_result(data=aggregated)
 
 
 @tool
+@retry()
 def deal_finder(
     query: str,
     platforms: str = "all",
-    min_price: float = -1,
-    max_price: float = -1,
+    min_price: Optional[float] = None,
+    max_price: Optional[float] = None,
     condition: str = "used",
     threshold_pct: float = 20.0,
 ) -> str:
-    """Find deals by searching multiple platforms, grouping by product model,
-    computing median prices, and flagging listings priced significantly below median.
+    """Find deals by comparing prices across platforms against median market price.
 
-    THIS IS A LOOPING FLOW TOOL. It performs a multi-step pipeline:
-      1. LOOP through platforms (eBay deep scan, Amazon, Craigslist multi-city)
-      2. Aggregate all listings
-      3. Group by extracted product model
-      4. Compute per-group median price
-      5. Flag listings priced >= threshold_pct below their group median
-      6. Return deals sorted by savings percentage
+    WHEN TO USE: When you want to find underpriced listings across multiple marketplaces.
+    WHEN NOT TO USE: When you just need search results without price analysis (use cross_platform_search).
 
-    The entire pipeline runs in a single tool call. Results come back as a
-    structured deal report ready to present to the user.
+    PIPELINE STEPS (executed internally — you call this tool ONCE):
+        1. For each platform, collect listings:
+           - eBay: 3-page deep scan via ebay_deep_scan
+           - Amazon: standard search via amazon_search
+           - Craigslist: multi-city search via craigslist_multi_search
+        2. Rate-limit delay (2-4 seconds) between platform calls
+        3. Group all listings by extracted product model name
+        4. For each group with >=3 listings: compute median price
+        5. Flag listings priced >= threshold_pct below their group median
+        6. Sort deals by savings percentage (best first)
+
+    CONSTRAINTS:
+        - Total execution time: 30-90 seconds (deep scan + multi-city)
+        - Requires >=3 listings per model for reliable comparison
+        - Models with <3 listings are noted but not analyzed
 
     Args:
-        query: Search terms (e.g. 'RTX 3060 GPU', 'used ThinkPad').
-        platforms: Comma-separated list or 'all'. Options: ebay, amazon, craigslist.
-        min_price: Minimum price filter. -1 to skip.
-        max_price: Maximum price filter. -1 to skip.
-        condition: Condition filter for eBay (new, used, refurbished).
-        threshold_pct: Minimum percentage below median to flag as a deal.
-                       Default 20 means listing must be >=20% below median.
+        query: Search terms. Must be non-empty.
+        platforms: Comma-separated list or "all". Options: "ebay", "amazon", "craigslist".
+        min_price: Minimum price in USD. None to skip filter.
+        max_price: Maximum price in USD. None to skip filter.
+        condition: Condition filter for eBay. One of: "new", "used", "refurbished", "parts".
+        threshold_pct: Minimum percentage below median to flag as a deal. Default: 20.0.
+
+    Output format:
+        {"status": "success", "data": {"query": "...", "total_listings_analyzed": N, "group_statistics": {...}, "deals_found": N, "deals": [...]}, "error": ""}
     """
     import statistics
+
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
 
     platform_list = [p.strip().lower() for p in platforms.split(",")]
     if "all" in platform_list:
@@ -922,7 +958,6 @@ def deal_finder(
     all_listings: list[dict] = []
     platforms_searched = []
 
-    # ── Step 1: Loop through platforms and collect listings ──
     for i, platform in enumerate(platform_list):
         if platform == "ebay":
             try:
@@ -934,7 +969,8 @@ def deal_finder(
                     "pages": 3,
                     "max_results": 100,
                 })
-                listings = json.loads(raw)
+                parsed = json.loads(raw)
+                listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
                 for lst in listings:
                     lst["platform"] = "ebay"
                     lst["fulfillment"] = "shipping"
@@ -953,7 +989,8 @@ def deal_finder(
                     "max_price": max_price,
                     "max_results": 30,
                 })
-                listings = json.loads(raw)
+                parsed = json.loads(raw)
+                listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
                 for lst in listings:
                     lst["platform"] = "amazon"
                     lst["fulfillment"] = "shipping"
@@ -973,11 +1010,12 @@ def deal_finder(
                 raw = craigslist_multi_search.invoke({
                     "query": query,
                     "scope": "all",
-                    "min_price": int(min_price) if min_price >= 0 else -1,
-                    "max_price": int(max_price) if max_price >= 0 else -1,
+                    "min_price": int(min_price) if min_price is not None else None,
+                    "max_price": int(max_price) if max_price is not None else None,
                     "max_results_per_city": 5,
                 })
-                cl_data = json.loads(raw)
+                parsed = json.loads(raw)
+                cl_data = parsed.get("data", {}) if parsed.get("status") == "success" else {}
                 listings = cl_data.get("listings", [])
                 for lst in listings:
                     lst["platform"] = "craigslist"
@@ -993,11 +1031,10 @@ def deal_finder(
             except Exception as e:
                 platforms_searched.append(f"craigslist (error: {e})")
 
-        # Rate limit between platforms
         if i < len(platform_list) - 1:
             time.sleep(random.uniform(2.0, 4.0))
 
-    # ── Step 2: Group by model ──
+    # Group by model
     groups: dict[str, list[dict]] = {}
     ungrouped = []
     for lst in all_listings:
@@ -1007,7 +1044,7 @@ def deal_finder(
         else:
             ungrouped.append(lst)
 
-    # ── Step 3: Compute medians and find deals ──
+    # Compute medians and find deals
     deals = []
     group_stats = {}
 
@@ -1046,10 +1083,9 @@ def deal_finder(
                     "url": item.get("url", ""),
                 })
 
-    # Sort deals by savings percentage (best deals first)
     deals.sort(key=lambda x: x["pct_below_median"], reverse=True)
 
-    report = {
+    return tool_result(data={
         "query": query,
         "platforms_searched": platforms_searched,
         "total_listings_analyzed": len(all_listings),
@@ -1059,42 +1095,51 @@ def deal_finder(
         "deals_found": len(deals),
         "threshold": f">={threshold_pct}% below median",
         "deals": deals,
-    }
-
-    return json.dumps(report, indent=2)
+    })
 
 
 # ── Enrichment Pipeline ──────────────────────────────────────────────────────
 
 @tool
+@retry()
 def enrichment_pipeline(
     data: str,
     goal: str,
     max_iterations: int = 5,
     eval_model: str = "qwen3:4b",
 ) -> str:
-    """Iteratively enrich data by adding new dimensions/considerations using an LLM eval loop.
+    """Iteratively enrich data by adding new analysis dimensions using an LLM eval loop.
 
-    THIS IS A LOOPING FLOW TOOL. It runs an internal LLM-evaluated loop:
-      1. Send current data + goal to a small eval model
-      2. Eval model adds a new enrichment dimension OR signals done
-      3. Repeat until done or max_iterations reached
+    WHEN TO USE: When you have raw data that needs multi-pass enrichment (scoring, categorizing, flagging).
+    WHEN NOT TO USE: When you need a simple one-shot analysis (just ask the main LLM directly).
 
-    Use this for multi-step enrichment pipelines where each pass adds a new
-    consideration (pricing context, quality scores, comparisons, categories, etc.)
+    PIPELINE STEPS (executed internally — you call this tool ONCE):
+        1. Initialize small eval model (default: qwen3:4b via Ollama)
+        2. Send current data + goal to eval model
+        3. Eval model responds with: {"action": "enrich", "dimension": "...", "enriched_data": {...}}
+           OR: {"action": "done", "reasoning": "..."}
+        4. If "enrich": merge enriched_data, repeat from step 2
+        5. If "done" OR max_iterations reached OR 2 consecutive failures: stop
+        6. Return iteration log + final enriched data
+
+    CONSTRAINTS:
+        - Requires Ollama running locally at http://localhost:11434
+        - Data is truncated to 4000 chars for eval model context
+        - Max 5 iterations by default (configurable)
+        - Stops on 2 consecutive eval model failures
 
     Args:
-        data: Input data to enrich. JSON string from a prior tool call, or raw text.
-        goal: Natural language description of what enrichment dimensions to add.
-              Example: 'Add price-to-performance ratings, flag vague descriptions,
-              categorize by seller type'
-        max_iterations: Maximum loop iterations (hard cap). Default 5.
-        eval_model: Ollama model for loop evaluation. Default 'qwen3:4b'.
+        data: Input data to enrich. JSON string from a prior tool call, or raw text. Must be non-empty.
+        goal: Natural language description of enrichment dimensions to add.
+        max_iterations: Maximum loop iterations. Range: 1-10. Default: 5.
+        eval_model: Ollama model name for evaluation. Default: "qwen3:4b".
+
+    Output format:
+        {"status": "success", "data": {"iterations_used": N, "exit_reason": "llm_done"|"max_iterations"|"consecutive_failures", "iteration_log": [...], "enriched_data": {...}}, "error": ""}
     """
     if not data or not data.strip():
-        return json.dumps({"status": "error", "message": "Empty data input. Provide data to enrich."})
+        return tool_result(error="Empty data input. Provide data to enrich.")
 
-    # Check eval model availability
     try:
         eval_llm = ChatOllama(
             model=eval_model,
@@ -1102,10 +1147,7 @@ def enrichment_pipeline(
             base_url="http://localhost:11434",
         )
     except Exception as e:
-        return json.dumps({
-            "status": "error",
-            "message": f"Failed to initialize eval model '{eval_model}': {e}. Run: ollama pull {eval_model}",
-        })
+        return tool_result(error=f"Failed to initialize eval model '{eval_model}': {e}. Run: ollama pull {eval_model}")
 
     system_prompt = """You are a data enrichment engine. Your job is to iteratively add new dimensions/considerations to data until the goal is fully satisfied.
 
@@ -1122,7 +1164,6 @@ If the goal is fully satisfied, respond with:
     consecutive_failures = 0
 
     for iteration in range(1, max_iterations + 1):
-        # Truncate if too large for small model context
         display_data = current_data
         if len(current_data) > 4000:
             display_data = current_data[:4000]
@@ -1145,6 +1186,7 @@ PREVIOUS ITERATIONS:
 
 Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or signal done."""
 
+        response_text = ""
         try:
             result = eval_llm.invoke([
                 SystemMessage(content=system_prompt),
@@ -1152,7 +1194,6 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
             ])
             response_text = result.content.strip()
 
-            # Strip markdown fences if present
             fence_match = re.match(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", response_text, re.DOTALL)
             if fence_match:
                 response_text = fence_match.group(1).strip()
@@ -1163,7 +1204,7 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
             iteration_log.append({
                 "iteration": iteration,
                 "error": "Malformed JSON from eval model",
-                "raw_response": response_text[:200] if 'response_text' in dir() else "no response",
+                "raw_response": response_text[:200],
             })
             if consecutive_failures >= 2:
                 break
@@ -1178,9 +1219,7 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
                 break
             continue
 
-        # Reset failure counter on success
         consecutive_failures = 0
-
         action = parsed.get("action", "")
 
         if action == "done":
@@ -1211,7 +1250,6 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
             if consecutive_failures >= 2:
                 break
 
-    # Determine exit reason
     if consecutive_failures >= 2:
         exit_reason = "consecutive_failures"
     elif iteration_log and iteration_log[-1].get("action") == "done":
@@ -1219,22 +1257,18 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
     else:
         exit_reason = "max_iterations"
 
-    # Parse final data for clean output
     try:
         final_data = json.loads(current_data)
     except (json.JSONDecodeError, TypeError):
         final_data = current_data
 
-    report = {
-        "status": "completed",
+    return tool_result(data={
         "iterations_used": len([e for e in iteration_log if e.get("action") in ("enrich", "done") or "error" in e]),
         "max_iterations": max_iterations,
         "exit_reason": exit_reason,
         "iteration_log": iteration_log,
         "enriched_data": final_data,
-    }
-
-    return json.dumps(report, indent=2)
+    })
 
 
 # ── Registry ─────────────────────────────────────────────────────────────────

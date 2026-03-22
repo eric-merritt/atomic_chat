@@ -3,14 +3,15 @@
 import os
 import re
 import glob as glob_mod
-import difflib
 
 from langchain.tools import tool
+from tools._output import tool_result, retry
 
 
 # ── Search Operations ────────────────────────────────────────────────────────
 
 @tool
+@retry()
 def grep(
     pattern: str,
     path: str = ".",
@@ -21,17 +22,30 @@ def grep(
 ) -> str:
     """Search file contents with regex, returning matches with context.
 
+    WHEN TO USE: When you need to search file contents for a pattern or string.
+    WHEN NOT TO USE: When you need to find files by name (use find instead).
+
     Args:
-        pattern: Regex pattern to search for.
-        path: File or directory to search in.
+        pattern: Regex pattern to search for. Must be non-empty.
+        path: File or directory to search in. Defaults to current directory.
         file_pattern: Glob to filter which files to search (e.g. '*.py').
         ignore_case: Case-insensitive matching.
         context: Number of lines before/after each match to include.
-        max_results: Maximum number of matches to return.
+        max_results: Maximum number of matches to return. Range: 1-500.
+
+    Output format:
+        {"status": "success", "data": {"pattern": "...", "count": N, "matches": [{"file": "...", "line": N, "snippet": "..."}]}, "error": ""}
     """
+    if not pattern or not pattern.strip():
+        return tool_result(error="pattern must be a non-empty string")
+
     path = os.path.expanduser(path)
     flags = re.IGNORECASE if ignore_case else 0
-    regex = re.compile(pattern, flags)
+    try:
+        regex = re.compile(pattern, flags)
+    except re.error as e:
+        return tool_result(error=f"Invalid regex pattern: {e}")
+
     results = []
 
     if os.path.isfile(path):
@@ -55,38 +69,54 @@ def grep(
                 for j in range(start, end):
                     marker = ">" if j == i else " "
                     snippet.append(f"  {marker} {j + 1:>5}  {lines[j].rstrip()}")
-                results.append(f"{filepath}:{i + 1}\n" + "\n".join(snippet))
+                results.append({
+                    "file": filepath,
+                    "line": i + 1,
+                    "snippet": "\n".join(snippet),
+                })
                 if len(results) >= max_results:
-                    return "\n\n".join(results) + f"\n... (truncated at {max_results} results)"
+                    return tool_result(data={
+                        "pattern": pattern,
+                        "count": len(results),
+                        "truncated": True,
+                        "matches": results,
+                    })
 
     if not results:
-        return f"No matches for /{pattern}/ in {path}"
-    return "\n\n".join(results)
+        return tool_result(data={"pattern": pattern, "count": 0, "matches": []})
+
+    return tool_result(data={
+        "pattern": pattern,
+        "count": len(results),
+        "truncated": False,
+        "matches": results,
+    })
 
 
 @tool
+@retry()
 def find(
     path: str = ".",
     name: str = "",
-    pattern: str = "",
     extension: str = "",
     contains: str = "",
     max_results: int = 50,
 ) -> str:
     """Find files by name pattern, extension, or content.
 
-    Args:
-        path: Directory to search.
-        name: Glob pattern for filename (e.g. 'test_*').
-        pattern: Alias for name — glob pattern for filename (e.g. '*.py').
-        extension: File extension filter (e.g. '.py').
-        contains: Only return files containing this string.
-        max_results: Maximum files to return.
-    """
-    # Allow 'pattern' as an alias for 'name'
-    if pattern and not name:
-        name = pattern
+    WHEN TO USE: When you need to locate files by name, extension, or content.
+    WHEN NOT TO USE: When you need to search file CONTENTS with regex (use grep instead).
 
+    Args:
+        path: Directory to search. Defaults to current directory.
+        name: Glob pattern for filename (e.g. "test_*", "*.py"). If empty, matches all files.
+        extension: File extension filter (e.g. ".py", "py"). Do not combine with name.
+        contains: Only return files containing this exact string.
+        max_results: Maximum files to return. Range: 1-500.
+
+    Output format:
+        {"status": "success", "data": {"path": "...", "count": N, "files": [...]}, "error": ""}
+    """
     path = os.path.expanduser(path)
     pat = name if name else "*"
     if extension:
@@ -111,18 +141,33 @@ def find(
                 continue
         matches = filtered
 
-    return "\n".join(matches[:max_results])
+    files = matches[:max_results]
+    return tool_result(data={
+        "path": path,
+        "count": len(files),
+        "files": files,
+    })
 
 
 @tool
+@retry()
 def definition(symbol: str, path: str = ".", file_pattern: str = "*.py") -> str:
     """Find where a function, class, or variable is defined.
 
+    WHEN TO USE: When you need to find the source definition of a specific symbol.
+    WHEN NOT TO USE: When you need to find all usages of a symbol (use grep instead).
+
     Args:
-        symbol: Name of the symbol to find.
-        path: Directory to search.
-        file_pattern: Glob pattern for files to search.
+        symbol: Name of the symbol to find. Must be non-empty.
+        path: Directory to search. Defaults to current directory.
+        file_pattern: Glob pattern for files to search (e.g. "*.py", "*.js").
+
+    Output format:
+        {"status": "success", "data": {"symbol": "...", "pattern": "...", "count": N, "matches": [...]}, "error": ""}
     """
+    if not symbol or not symbol.strip():
+        return tool_result(error="symbol must be a non-empty string")
+
     patterns = [
         rf"^\s*(def|class)\s+{re.escape(symbol)}\b",
         rf"^\s*(export\s+)?(function|const|let|var|class)\s+{re.escape(symbol)}\b",
