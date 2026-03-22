@@ -1,20 +1,6 @@
 """Test that config module exists and has required constants."""
 
-
-def test_config_ports():
-    from config import AGENT_PORTS
-    assert isinstance(AGENT_PORTS, dict)
-    assert "filesystem" in AGENT_PORTS
-    assert "codesearch" in AGENT_PORTS
-    assert "web" in AGENT_PORTS
-    assert "ecommerce" in AGENT_PORTS
-    assert "dispatcher" in AGENT_PORTS
-
-
-def test_config_models():
-    from config import AGENT_MODELS, AGENT_PORTS
-    assert isinstance(AGENT_MODELS, dict)
-    assert set(AGENT_MODELS.keys()) == set(AGENT_PORTS.keys())
+import os
 
 
 def test_config_rate_limits():
@@ -25,3 +11,27 @@ def test_config_rate_limits():
     assert "craigslist" in RATE_LIMITS
     assert "default" in RATE_LIMITS
     assert all(isinstance(v, (int, float)) for v in RATE_LIMITS.values())
+
+
+def test_config_max_retries():
+    from config import MAX_RETRIES
+    assert isinstance(MAX_RETRIES, int)
+    assert MAX_RETRIES >= 0
+
+
+def test_config_prepass_model_default():
+    from config import PREPASS_MODEL
+    assert isinstance(PREPASS_MODEL, str)
+    assert len(PREPASS_MODEL) > 0
+
+
+def test_config_prepass_model_env_override(monkeypatch):
+    monkeypatch.setenv("PREPASS_MODEL", "test-model:latest")
+    # Re-import to pick up env var
+    import importlib
+    import config
+    importlib.reload(config)
+    assert config.PREPASS_MODEL == "test-model:latest"
+    # Restore
+    monkeypatch.delenv("PREPASS_MODEL")
+    importlib.reload(config)

@@ -16,7 +16,6 @@ from langchain_core.messages import (
     ToolMessage,
 )
 import httpx
-from config import AGENT_PORTS, agent_url
 from tools import ALL_TOOLS
 
 
