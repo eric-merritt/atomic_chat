@@ -182,7 +182,7 @@ def serve_frontend(path):
 _TOOL_BY_NAME = {t.name: t for t in ALL_TOOLS}
 
 # Per-conversation cache: conversation_id → last tool names used
-_last_tool_selection: dict[str, list[str]] = {}
+_last_tool_selection: dict[str, tuple[str, list[str]]] = {}  # conv_id → (model, tool_names)
 _last_agent_cache: dict[str, object] = {}
 
 
@@ -198,7 +198,8 @@ def _build_agent(model_name: str, tool_names: list[str], conversation_id: str | 
         conversation_id: Optional conversation ID for caching.
     """
     if conversation_id and conversation_id in _last_tool_selection:
-        if sorted(_last_tool_selection[conversation_id]) == sorted(tool_names):
+        prev_model, prev_tools = _last_tool_selection[conversation_id]
+        if prev_model == model_name and sorted(prev_tools) == sorted(tool_names):
             cached = _last_agent_cache.get(conversation_id)
             if cached is not None:
                 return cached
@@ -219,7 +220,7 @@ def _build_agent(model_name: str, tool_names: list[str], conversation_id: str | 
     )
 
     if conversation_id:
-        _last_tool_selection[conversation_id] = tool_names
+        _last_tool_selection[conversation_id] = (model_name, tool_names)
         _last_agent_cache[conversation_id] = agent
 
     return agent
