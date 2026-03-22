@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from datetime import datetime, timezone
 from uuid import uuid4
 import os as _os
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
@@ -17,6 +19,9 @@ from langchain_core.messages import (
 )
 import httpx
 from tools import ALL_TOOLS
+from prepass import load_tool_index, select_tools
+from context import build_history, serialize_user_message, serialize_assistant_message, serialize_tool_result
+from auth.conversations import Conversation, ConversationMessage
 
 
 
@@ -119,8 +124,9 @@ def _tool_meta(t) -> dict:
     
 TOOL_REGISTRY = [_tool_meta(t) for t in ALL_TOOLS]
 
-DEFAULT_TOOL_NAMES = {"read", "info", "ls", "tree", "write", "append", "replace", "insert", "delete", "copy", "move", "mkdir", "grep", "find", "definition", "webscrape", "find_all", "find_download_link" }
-DEFAULT_TOOL_INDICES = [i for i, t in enumerate(TOOL_REGISTRY) if t["name"] in DEFAULT_TOOL_NAMES]
+DEFAULT_TOOL_NAMES = ["read", "info", "ls", "tree", "write", "append", "replace", "insert",
+                      "delete", "copy", "move", "mkdir", "grep", "find", "definition",
+                      "webscrape", "find_all", "find_download_link"]
 
 login_manager.init_app(app)
 init_oauth(app)
@@ -140,6 +146,13 @@ def shutdown_session(exception=None):
 # Create tables on first run (use Alembic migrations in production)
 with app.app_context():
     init_db()
+
+# Load compact tool index from tools server at startup
+with app.app_context():
+    try:
+        load_tool_index()
+    except Exception as e:
+        logging.getLogger(__name__).warning("Failed to load tool index at startup: %s", e)
 
 _FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
 
@@ -165,21 +178,51 @@ def serve_frontend(path):
 # AGENT BUILDER
 # ─────────────────────────────────────────────────────────────
 
-def _build_agent(model_name, selected_tools):
+# Build lookup dict for fetching tools by name
+_TOOL_BY_NAME = {t.name: t for t in ALL_TOOLS}
+
+# Per-conversation cache: conversation_id → last tool names used
+_last_tool_selection: dict[str, list[str]] = {}
+_last_agent_cache: dict[str, object] = {}
+
+
+def _build_agent(model_name: str, tool_names: list[str], conversation_id: str | None = None):
+    """Build a LangChain agent with only the specified tools bound.
+
+    Caches per conversation_id. If tool_names match the previous turn's
+    selection for this conversation, returns the cached agent.
+
+    Args:
+        model_name: Ollama model name.
+        tool_names: List of tool name strings to bind.
+        conversation_id: Optional conversation ID for caching.
+    """
+    if conversation_id and conversation_id in _last_tool_selection:
+        if sorted(_last_tool_selection[conversation_id]) == sorted(tool_names):
+            cached = _last_agent_cache.get(conversation_id)
+            if cached is not None:
+                return cached
+
     llm = ChatOllama(
         model=model_name,
         temperature=0,
         base_url="http://localhost:11434",
     ).bind(response_format=ResponseFormat.JSON)
 
-    tools = [t for i, t in enumerate(ALL_TOOLS) if i in selected_tools]
+    tools = [_TOOL_BY_NAME[name] for name in tool_names if name in _TOOL_BY_NAME]
 
-    return create_agent(
+    agent = create_agent(
         llm,
         tools,
         system_prompt=SYSTEM_PROMPT,
         response_format=ResponseFormat.JSON,
     )
+
+    if conversation_id:
+        _last_tool_selection[conversation_id] = tool_names
+        _last_agent_cache[conversation_id] = agent
+
+    return agent
 
 # ─────────────────────────────────────────────────────────────
 # STREAMING CHAT
@@ -259,13 +302,16 @@ def chat_stream():
     )
 
 
-def _get_user_selected_tools():
-    """Get selected tool indices for the current user, falling back to defaults."""
+def _get_user_selected_tools() -> list[str]:
+    """Get selected tool names for the current user, falling back to defaults."""
     if hasattr(current_user, 'preferences') and current_user.preferences:
         user_tools = current_user.preferences.get("selected_tools")
         if user_tools is not None:
+            # Convert indices to names if user still has old index-based prefs
+            if user_tools and isinstance(user_tools[0], int):
+                return [ALL_TOOLS[i].name for i in user_tools if i < len(ALL_TOOLS)]
             return user_tools
-    return list(DEFAULT_TOOL_INDICES)
+    return list(DEFAULT_TOOL_NAMES)
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
@@ -358,7 +404,7 @@ def cli_chat():
     print(f"\nChatting with: {model}")
     print("Type 'quit' to exit\n")
 
-    agent = _build_agent(model, list(range(len(ALL_TOOLS))))
+    agent = _build_agent(model, [t.name for t in ALL_TOOLS])
     history = []
 
     while True:
