@@ -71,8 +71,15 @@ Content replaces the old checkbox-based tool selector. Spatial dimensions unchan
 ### Data Source
 
 - Tool index fetched from `https://tools.eric-merritt.com` at startup (same endpoint the backend pre-pass uses).
+- **CORS:** The external endpoint must serve `Access-Control-Allow-Origin` for the frontend origin. If CORS headers are not present, proxy the request through the Flask backend at `GET /api/tools/index` to avoid browser restrictions.
 - Response cached in ToolProvider state. Search filtering happens client-side against the cached index.
 - Search input sends a query param to the server only if client-side filtering is insufficient (stretch goal — start with client-side).
+
+### Loading / Error / Empty States
+
+- **Loading:** Sidebar shows a small centered spinner or "Loading tools..." text while the index is being fetched.
+- **Error:** If the fetch fails, show a retry-able error message in the sidebar: "Failed to load tools" with a "Retry" link.
+- **Empty:** If the index returns no tools, show "No tools available" in muted text.
 
 ---
 
@@ -142,22 +149,41 @@ When reopened:
 
 ## 5. Bottom Bar
 
-The bottom bar is a single-row grid that mirrors the column template of the content area above.
+### DOM Structure
+
+The current ChatPage uses a single CSS grid with `grid-rows-[1fr_auto]` where InputBar spans all columns via `col-span-*`. This won't work for independently segmented bottom bar cells. Instead:
+
+**New structure:** A flex column (`flex flex-col h-screen`) containing two grids stacked vertically:
+
+1. **Content grid** (`flex-1`): Sidebar + Chat (2-col) or Sidebar + Workspace + Chat (3-col).
+2. **Bottom bar grid** (`flex-none`): Mirrors the content grid's column template.
+
+Both grids share the same `gridTemplateColumns` value via a CSS custom property or a shared variable in the component. This keeps columns aligned without subgrid (which has limited browser support).
+
+```tsx
+const cols = workspaceOpen
+  ? chatCollapsed
+    ? `${sidebarWidth} 1fr 3rem`
+    : `${sidebarWidth} 1fr 22rem`
+  : `${sidebarWidth} 1fr`;
+
+<div className="flex flex-col h-screen">
+  <TopBar />
+  <div className="flex-1 grid" style={{ gridTemplateColumns: cols }}>
+    {/* content cells */}
+  </div>
+  <div className="grid" style={{ gridTemplateColumns: cols }}>
+    {/* bottom bar cells */}
+  </div>
+</div>
+```
 
 ### 2-Column Mode
-
-```css
-grid-template-columns: <sidebar-width> 1fr;
-```
 
 - **Left cell:** Empty placeholder. Same background as sidebar. Reserved for future controls (thinking toggle, settings).
 - **Right cell:** InputBar component (unchanged from current).
 
 ### 3-Column Mode
-
-```css
-grid-template-columns: <sidebar-width> 1fr 22rem;
-```
 
 - **Left cell:** Same placeholder.
 - **Center cell:** Empty placeholder. Reserved for future workspace-specific actions.
@@ -165,16 +191,12 @@ grid-template-columns: <sidebar-width> 1fr 22rem;
 
 ### Chat Collapsed
 
-```css
-grid-template-columns: <sidebar-width> 1fr 3rem;
-```
-
-- **Right cell:** Reopen chat button only.
-- **Center cell:** Expands.
+- **Right cell:** ChatReopenButton only (in a `3rem`-wide cell).
+- **Center cell:** Expands to fill freed space.
 
 ### Transitions
 
-Bottom bar grid transitions match the content grid: `transition-[grid-template-columns] duration-300 ease-in-out`.
+Both grids animate together: `transition-[grid-template-columns] duration-300 ease-in-out`.
 
 ---
 
@@ -183,37 +205,40 @@ Bottom bar grid transitions match the content grid: `transition-[grid-template-c
 ### New State (ChatPage level)
 
 ```typescript
-// Whether the center workspace is open
-workspaceOpen: boolean
-
-// What the workspace is showing
+// What the workspace is showing — null means workspace is closed (2-column mode)
 workspaceView:
   | { type: 'category'; category: string }
   | { type: 'tool'; category: string; toolName: string }
   | null
 
-// Whether the chat column is collapsed
+// Derived: const workspaceOpen = workspaceView !== null
+
+// Whether the chat column is collapsed (only meaningful when workspace is open)
 chatCollapsed: boolean
 ```
+
+**Note:** `workspaceOpen` is derived from `workspaceView !== null` — not stored as separate state. This prevents impossible states like `workspaceOpen=true, workspaceView=null`.
 
 ### State Transitions
 
 | Action | State Change |
 |--------|-------------|
-| Click category in sidebar | `workspaceOpen=true`, `workspaceView={type:'category', category}`, `chatCollapsed=false` |
-| Click tool in search results | `workspaceOpen=true`, `workspaceView={type:'tool', category, toolName}`, `chatCollapsed=false` |
+| Click category in sidebar | `workspaceView={type:'category', category}`, `chatCollapsed=false` |
+| Click tool in search results | `workspaceView={type:'tool', category, toolName}`, `chatCollapsed=false` |
 | Click "See more" on card | `workspaceView={type:'tool', category, toolName}` |
 | Click category in breadcrumb | `workspaceView={type:'category', category}` |
 | Click collapse chat | `chatCollapsed=true` |
 | Click reopen chat button | `chatCollapsed=false` |
-| Close workspace | `workspaceOpen=false`, `workspaceView=null`, `chatCollapsed=false` |
+| Close workspace | `workspaceView=null`, `chatCollapsed=false` |
+| Escape key | `workspaceView=null`, `chatCollapsed=false` (returns to 2-column) |
 
 ### ToolProvider Changes
 
 - Add `toolIndex: ToolIndexEntry[]` state — the full list fetched from `tools.eric-merritt.com`.
 - Add `searchTools(query: string, searchDescription: boolean): ToolIndexEntry[]` — client-side filter.
-- Remove old `toggleTool` / `toggleCategory` methods (selection logic no longer needed).
-- `ToolIndexEntry`: `{ name: string; description: string; category: string; params: Record<string, ToolParam> }`.
+- Remove old `toggleTool` / `toggleCategory` methods and `selected` state. The backend pre-pass now handles dynamic tool selection per-turn — the frontend no longer needs to track or send tool selection state. The `POST /api/tools/select` and `POST /api/tools/deselect` endpoints are vestigial and unused.
+- `ToolIndexEntry` replaces the existing `Tool` type in `atoms/tool.ts`: `{ name: string; description: string; category: string; params: Record<string, ToolParam> }`. The `selected` boolean is dropped. `ToolCategory` type is kept but its `allSelected`/`someSelected`/`selectedCount` computed fields are removed — it becomes `{ name: string; tools: ToolIndexEntry[]; count: number }`. The `buildCategory` factory is updated accordingly.
+- `CATEGORY_RULES` and category inference logic remain in `api/tools.ts` and are reused to assign `category` to each `ToolIndexEntry`.
 
 ---
 
@@ -236,12 +261,13 @@ chatCollapsed: boolean
 
 | Component | Changes |
 |-----------|---------|
-| `ChatPage.tsx` | Grid template supports 2 or 3 columns. New state: `workspaceOpen`, `workspaceView`, `chatCollapsed`. Workspace column + bottom bar segmentation. |
-| `Sidebar.tsx` | Replace checkbox tool list with ToolSearch + category list. Click handlers open workspace instead of toggling selection. |
-| `InputBar.tsx` | Accept a `compact` prop for narrow rendering (smaller text, smaller buttons). |
-| `ToolProvider.tsx` | Fetch tool index from `tools.eric-merritt.com`. Expose `toolIndex` and `searchTools`. Remove toggle methods. |
-| `useTools.ts` | Update hook to match new provider interface. |
-| `api/tools.ts` | Add `fetchToolIndex()` function that hits `tools.eric-merritt.com`. Keep category inference logic. |
+| `ChatPage.tsx` | Restructure from single grid to flex column with two grids (content + bottom bar). New state: `workspaceView`, `chatCollapsed`. Shared `gridTemplateColumns` variable. Workspace column rendering. |
+| `Sidebar.tsx` | Full content rewrite: remove ToolCategory/ToolRow imports and all checkbox/toggle logic. Replace with ToolSearch + navigational category list. Click handlers call workspace state setters (passed as props or via context). |
+| `InputBar.tsx` | Accept a `compact` prop for narrow rendering (smaller text, smaller buttons). Remove `ToolChip` rendering and `selected`/`toggleTool` usage from `useTools()` — tool selection is no longer a frontend concern. |
+| `ToolProvider.tsx` | Fetch tool index from `tools.eric-merritt.com`. Expose `toolIndex`, `searchTools`, `categories`, `loading`, `error`. Remove `toggleTool`, `toggleCategory`, `selected` state entirely. |
+| `useTools.ts` | Update hook to match new provider interface (drop `selected`, `toggleTool`, `toggleCategory`; add `toolIndex`, `searchTools`, `categories`, `loading`, `error`). |
+| `api/tools.ts` | Add `fetchToolIndex()` function that hits `tools.eric-merritt.com` (or `/api/tools/index` proxy). Keep `CATEGORY_RULES` and `inferCategory()`. Remove `selectTool()`/`deselectTool()` fetch wrappers. |
+| `atoms/tool.ts` | Replace `Tool` type with `ToolIndexEntry` (drop `selected` field). Simplify `ToolCategory` to `{ name: string; tools: ToolIndexEntry[]; count: number }`. Update `buildCategory` factory. |
 
 ### Removed Components
 
@@ -249,6 +275,7 @@ chatCollapsed: boolean
 |-----------|--------|
 | `ToolRow.tsx` | No longer needed — no checkbox rows |
 | `ToolCategory.tsx` (molecule) | Replaced by sidebar category list + card grid |
+| `ToolChip.tsx` (molecule) | Tool selection badges no longer rendered in InputBar |
 
 ---
 
@@ -271,7 +298,14 @@ Response format (based on what the backend pre-pass already uses): a JSON object
 
 ---
 
-## 9. Out of Scope (Future Iterations)
+## 9. Keyboard & Viewport
+
+- **Escape** closes the workspace and returns to 2-column layout (state transition in table above).
+- **Minimum viewport:** The 3-column layout requires ~1280px to be usable (22rem sidebar + workspace + 22rem chat). On viewports narrower than 1280px, the workspace should not open — tool clicks navigate to the tool detail as a full-width overlay instead. Implementation of the narrow-viewport fallback is a stretch goal for this iteration.
+
+---
+
+## 10. Out of Scope (Future Iterations)
 
 - Form submission and agent tool execution from workspace
 - Response listener (HTTP server for structured tool results in workspace)
@@ -280,3 +314,5 @@ Response format (based on what the backend pre-pass already uses): a JSON object
 - Bottom bar center cell content (workspace-specific actions)
 - Drag-to-resize column widths
 - Tool favoriting or pinning
+- Full keyboard navigation (arrow keys in search results, tab order)
+- WorkspaceContext/provider (if prop drilling becomes unwieldy during implementation)
