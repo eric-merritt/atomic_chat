@@ -8,6 +8,9 @@ export type StreamEvent =
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
+  if ('conversation_id' in raw) {
+    return { type: 'meta', conversationId: raw.conversation_id ?? null };
+  }
   if ('type' in raw && raw.type === 'meta') {
     return { type: 'meta', conversationId: raw.conversation_id ?? null };
   }
