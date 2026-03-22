@@ -4,6 +4,9 @@ import re
 from datetime import datetime, timezone
 from uuid import uuid4
 import os as _os
+from dotenv import load_dotenv
+
+load_dotenv()
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_login import login_required, current_user
 import ollama as ollama_client
@@ -102,6 +105,7 @@ def parse_tool_calls(response_content):
 
 
 app = Flask(__name__)
+app.secret_key = _os.environ.get("FLASK_SECRET_KEY", "dev-fallback-key-change-in-production")
 def _tool_meta(t) -> dict:
     """Extract name, description, and parameter info from a LangChain tool."""
     schema = t.args_schema.schema() if t.args_schema else {}
