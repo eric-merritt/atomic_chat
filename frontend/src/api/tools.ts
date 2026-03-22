@@ -33,6 +33,7 @@ const CATEGORY_RULES: [RegExp, string][] = [
   [/^(amazon_search)$/, 'Ecommerce'],
   [/^craigslist_/, 'Ecommerce'],
   [/^(cross_platform_search|deal_finder|enrichment_pipeline)$/, 'Ecommerce'],
+  [/^(create_ledger|create_account|list_accounts|get_account_balance|update_account|journalize_transaction|search_journal|void_transaction|account_ledger|register_inventory_item|receive_inventory|list_inventory_items|deactivate_inventory_item|journalize_fifo_transaction|journalize_lifo_transaction|inventory_valuation|close_period|trial_balance|income_statement|balance_sheet|cash_flow_statement)$/, 'Accounting'],
 ];
 
 export function getSubcategory(name: string): string | undefined {
@@ -69,7 +70,7 @@ function groupIntoCategories(allTools: (RawTool & { selected: boolean })[]): Too
   }
 
   // Stable ordering
-  const order = ['Filesystem', 'Web', 'Ecommerce', 'Other'];
+  const order = ['Filesystem', 'Web', 'Ecommerce', 'Accounting', 'Other'];
   const sorted = [...groups.entries()].sort((a, b) => {
     const ai = order.indexOf(a[0]), bi = order.indexOf(b[0]);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);

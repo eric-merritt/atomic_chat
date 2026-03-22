@@ -1,4 +1,4 @@
-type Section = 'conversations' | 'profile' | 'keys' | 'connections';
+type Section = 'conversations' | 'profile' | 'keys' | 'connections' | 'accounting';
 
 interface DashboardNavProps {
   active: Section;
@@ -8,6 +8,7 @@ interface DashboardNavProps {
 const NAV_ITEMS: { id: Section; label: string }[] = [
   { id: 'profile', label: 'Profile' },
   { id: 'conversations', label: 'Conversations' },
+  { id: 'accounting', label: 'Journal Entry' },
   { id: 'keys', label: 'API Keys' },
   { id: 'connections', label: 'Connections' },
 ];

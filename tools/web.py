@@ -4,12 +4,13 @@ import re
 import json
 import urllib.request
 import urllib.parse
-import bs4 as beautifulsoup
-import typing
 
+import bs4 as beautifulsoup
 import requests
 
 from langchain.tools import tool
+from tools._output import tool_result
+
 
 # ── Web Operations ───────────────────────────────────────────────────────────
 
@@ -17,10 +18,20 @@ from langchain.tools import tool
 def web_search(query: str, num_results: int = 5) -> str:
     """Search the web using DuckDuckGo and return results.
 
+    WHEN TO USE: When you need to search the web for information, answers, or URLs.
+    WHEN NOT TO USE: When you already have a specific URL to fetch (use fetch_url instead).
+
     Args:
-        query: Search query string.
-        num_results: Max results to return.
+        query: Search query string. Must be non-empty.
+        num_results: Maximum number of results to return. Range: 1-20.
+
+    Output format:
+        {"status": "success", "data": {"abstract": "...", "results": [{"text": "...", "url": "..."}]}, "error": ""}
+        {"status": "error", "data": null, "error": "description of failure"}
     """
+    if not query or not query.strip():
+        return tool_result(error="query must be a non-empty string")
+
     encoded = urllib.parse.quote_plus(query)
     url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1&skip_disambig=1"
     try:
@@ -28,34 +39,46 @@ def web_search(query: str, num_results: int = 5) -> str:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except Exception as e:
-        return f"ERROR: DuckDuckGo search failed: {e}"
+        return tool_result(error=f"DuckDuckGo search failed: {e}")
 
     results = []
-    if data.get("AbstractText"):
-        results.append(f"[Answer] {data['AbstractText']}\n  Source: {data.get('AbstractURL', 'N/A')}")
+    abstract = data.get("AbstractText", "")
+    abstract_url = data.get("AbstractURL", "")
     for topic in data.get("RelatedTopics", [])[:num_results]:
         if isinstance(topic, dict) and "Text" in topic:
-            results.append(f"[Result] {topic['Text']}\n  URL: {topic.get('FirstURL', 'N/A')}")
-    if not results:
-        return f"No instant answer found for: {query}\nTry: https://duckduckgo.com/?q={encoded}"
-    return "\n\n".join(results)
+            results.append({"text": topic["Text"], "url": topic.get("FirstURL", "")})
+
+    return tool_result(data={
+        "abstract": abstract,
+        "abstract_url": abstract_url,
+        "results": results,
+    })
 
 
 @tool
 def fetch_url(url: str, max_chars: int = 5000) -> str:
-    """Fetch a URL and return its text content (HTML tags stripped).
+    """Fetch a URL and return its text content with HTML tags stripped.
+
+    WHEN TO USE: When you need to read the text content of a specific webpage.
+    WHEN NOT TO USE: When you need raw HTML (use webscrape instead).
 
     Args:
-        url: URL to fetch.
-        max_chars: Maximum characters to return.
+        url: Full URL to fetch. Must start with http:// or https://.
+        max_chars: Maximum characters to return. Range: 100-50000.
+
+    Output format:
+        {"status": "success", "data": {"url": "...", "content": "...", "truncated": false}, "error": ""}
     """
+    if not url or not url.startswith(("http://", "https://")):
+        return tool_result(error="url must start with http:// or https://")
+
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "AgentTooling/1.0"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             content_type = resp.headers.get("Content-Type", "")
             raw = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
-        return f"ERROR: Failed to fetch {url}: {e}"
+        return tool_result(error=f"Failed to fetch {url}: {e}")
 
     if "html" in content_type.lower() or raw.strip().startswith("<"):
         raw = re.sub(r"<script[^>]*>.*?</script>", "", raw, flags=re.DOTALL | re.IGNORECASE)
@@ -63,78 +86,152 @@ def fetch_url(url: str, max_chars: int = 5000) -> str:
         raw = re.sub(r"<[^>]+>", " ", raw)
         raw = re.sub(r"\s+", " ", raw).strip()
 
-    if len(raw) > max_chars:
-        raw = raw[:max_chars] + f"\n... (truncated at {max_chars} chars)"
-    return raw
+    truncated = len(raw) > max_chars
+    if truncated:
+        raw = raw[:max_chars]
 
+    return tool_result(data={"url": url, "content": raw, "truncated": truncated})
 
 
 @tool
-def webscrape(url):
-    """
-    A tool that goes to a webpage and copies its HTML content.
+def webscrape(url: str) -> str:
+    """Fetch a URL and return the raw HTML content.
 
+    WHEN TO USE: When you need the raw HTML of a webpage for parsing with find_all or find_download_link.
+    WHEN NOT TO USE: When you need readable text content (use fetch_url instead).
 
     Args:
-      url: The webpage to gather the HTML content from.agents
-    """
+        url: Full URL to fetch. Must start with http:// or https://.
 
-    r = requests.get(url)
-    return r
+    Output format:
+        {"status": "success", "data": {"url": "...", "html": "..."}, "error": ""}
+    """
+    if not url or not url.startswith(("http://", "https://")):
+        return tool_result(error="url must start with http:// or https://")
+
+    try:
+        r = requests.get(url, timeout=15, headers={"User-Agent": "AgentTooling/1.0"})
+        r.raise_for_status()
+    except Exception as e:
+        return tool_result(error=f"Failed to fetch {url}: {e}")
+
+    return tool_result(data={"url": url, "html": r.text})
+
 
 @tool
-def find_all(html: str, target: str):
+def find_all(html: str, target: str) -> str:
+    """Parse HTML and find all elements matching a tag name.
+
+    WHEN TO USE: When you have raw HTML and need to extract specific elements by tag name.
+    WHEN NOT TO USE: When you need download links specifically (use find_download_link instead).
+
+    Args:
+        html: Raw HTML string to parse.
+        target: HTML tag name to search for (e.g. "a", "img", "div", "video").
+
+    Output format:
+        {"status": "success", "data": {"target": "...", "count": N, "elements": ["<tag ...>...</tag>", ...]}, "error": ""}
     """
-    A tool that breaks up HTML code into individual pieces.
-    """
-    soup = beautifulsoup(html, 'html.parser')
-    return soup.find_all(target)
+    if not html or not html.strip():
+        return tool_result(error="html must be a non-empty string")
+    if not target or not target.strip():
+        return tool_result(error="target must be a non-empty HTML tag name")
+
+    try:
+        soup = beautifulsoup.BeautifulSoup(html, "html.parser")
+        elements = soup.find_all(target)
+        element_strings = [str(el) for el in elements]
+    except Exception as e:
+        return tool_result(error=f"HTML parsing failed: {e}")
+
+    return tool_result(data={
+        "target": target,
+        "count": len(element_strings),
+        "elements": element_strings,
+    })
+
 
 @tool
-def find_download_link(html = "", url = ""):
-    """
-    A tool that parses HTML for download links.
-    """
-    media_elements = ['video','source','img']
-    found = []
-    if html != "":
-        for el in media_elements:
-            soup = beautifulsoup(html, "html.parser")
-            found.push(soup.find_all(el))
+def find_download_link(html: str = "", url: str = "") -> str:
+    """Parse HTML for media download links (video, image, audio sources).
 
-    if url != "":
-        html = webscrape(url)
-        find_download_link(html = html, url = "")
+    WHEN TO USE: When you need to find downloadable media URLs in a webpage.
+    WHEN NOT TO USE: When you need general link extraction (use find_all with target="a" instead).
 
-    soup = beautifulsoup(found.join(), 'html.parser')
+    You must provide either html or url (not both empty).
+    If url is provided and html is empty, the page will be fetched first.
+
+    Args:
+        html: Raw HTML string to parse. If empty, url must be provided.
+        url: URL to fetch HTML from. Only used if html is empty.
+
+    Output format:
+        {"status": "success", "data": {"links": [{"tag": "video", "src": "..."}, ...]}, "error": ""}
+    """
+    if not html and not url:
+        return tool_result(error="Provide either html or url. Both cannot be empty.")
+
+    if not html and url:
+        if not url.startswith(("http://", "https://")):
+            return tool_result(error="url must start with http:// or https://")
+        try:
+            r = requests.get(url, timeout=15, headers={"User-Agent": "AgentTooling/1.0"})
+            r.raise_for_status()
+            html = r.text
+        except Exception as e:
+            return tool_result(error=f"Failed to fetch {url}: {e}")
+
+    try:
+        soup = beautifulsoup.BeautifulSoup(html, "html.parser")
+    except Exception as e:
+        return tool_result(error=f"HTML parsing failed: {e}")
+
+    media_tags = ["video", "source", "img", "audio"]
     links = []
-    for el in media_elements:
-        if el.startswith('<source'):
-            if el.src.endswith('mp4'):
-                links.push(el.src)
+    for tag_name in media_tags:
+        for el in soup.find_all(tag_name):
+            src = el.get("src") or el.get("data-src") or ""
+            if src:
+                links.append({"tag": tag_name, "src": src})
 
-    return links
+    return tool_result(data={"links": links})
+
 
 @tool
-def find_allowed_routes(url):
-    """
-    A tool that returns the allowed paths from a website's robot.txt file.
+def find_allowed_routes(url: str) -> str:
+    """Fetch a website's robots.txt and return the allowed crawl paths.
 
+    WHEN TO USE: When you need to check which paths a website allows crawling.
+    WHEN NOT TO USE: When you need the actual content of pages (use fetch_url or webscrape).
 
     Args:
-      url: The url of the website to scrape the allowed crawl paths from.
+        url: Base URL of the website (e.g. "https://example.com") or direct robots.txt URL.
+
+    Output format:
+        {"status": "success", "data": {"url": "...", "allowed": ["/path1", "/path2"]}, "error": ""}
     """
-    if not url.endswith('robots.txt'):
-        url = url + 'robots.txt'
+    if not url or not url.startswith(("http://", "https://")):
+        return tool_result(error="url must start with http:// or https://")
 
-    html = webscrape(url)
-    lines = html.split("\n")
+    if not url.endswith("robots.txt"):
+        url = url.rstrip("/") + "/robots.txt"
+
+    try:
+        r = requests.get(url, timeout=10, headers={"User-Agent": "AgentTooling/1.0"})
+        r.raise_for_status()
+        text = r.text
+    except Exception as e:
+        return tool_result(error=f"Failed to fetch robots.txt: {e}")
+
     allowed = []
-    for line in lines:
-        if line.startswith('Allow: '):
-            allowed.push(line)
-    return allowed
+    for line in text.split("\n"):
+        line = line.strip()
+        if line.startswith("Allow:"):
+            path = line.split(":", 1)[1].strip()
+            if path:
+                allowed.append(path)
 
+    return tool_result(data={"url": url, "allowed": allowed})
 
 
 WEB_TOOLS = [web_search, fetch_url, webscrape, find_all, find_download_link, find_allowed_routes]
