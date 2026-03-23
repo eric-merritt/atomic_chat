@@ -19,19 +19,13 @@ def test_config_max_retries():
     assert MAX_RETRIES >= 0
 
 
-def test_config_prepass_model_default():
-    from config import PREPASS_MODEL
-    assert isinstance(PREPASS_MODEL, str)
-    assert len(PREPASS_MODEL) > 0
+def test_config_task_extractor_model_default():
+    from config import TASK_EXTRACTOR_MODEL
+    assert isinstance(TASK_EXTRACTOR_MODEL, str)
+    assert len(TASK_EXTRACTOR_MODEL) > 0
 
 
-def test_config_prepass_model_env_override(monkeypatch):
-    monkeypatch.setenv("PREPASS_MODEL", "test-model:latest")
-    # Re-import to pick up env var
-    import importlib
-    import config
-    importlib.reload(config)
-    assert config.PREPASS_MODEL == "test-model:latest"
-    # Restore
-    monkeypatch.delenv("PREPASS_MODEL")
-    importlib.reload(config)
+def test_config_tool_curator_model_default():
+    from config import TOOL_CURATOR_MODEL
+    assert isinstance(TOOL_CURATOR_MODEL, str)
+    assert len(TOOL_CURATOR_MODEL) > 0
