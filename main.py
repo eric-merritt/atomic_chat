@@ -30,6 +30,7 @@ from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
 from auth.db import init_db, SessionLocal, get_db
 import auth.conversations  # register conversation models with Base
+import auth.conversation_tasks  # register ConversationTask with Base
 
 
 
