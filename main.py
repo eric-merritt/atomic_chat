@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from uuid import uuid4
 import os as _os
@@ -19,7 +20,9 @@ from langchain_core.messages import (
 )
 import httpx
 from tools import ALL_TOOLS
-from prepass import load_tool_index, select_tools
+from task_extractor import extract_tasks
+from tool_curator import curate_tools
+from workflow_groups import WORKFLOW_GROUPS, tools_for_groups
 from context import build_history, serialize_user_message, serialize_assistant_message, serialize_tool_result
 from auth.conversations import Conversation, ConversationMessage
 
@@ -227,12 +230,9 @@ def shutdown_session(exception=None):
 with app.app_context():
     init_db()
 
-# Load compact tool index from tools server at startup
-with app.app_context():
-    try:
-        load_tool_index()
-    except Exception as e:
-        logging.getLogger(__name__).warning("Failed to load tool index at startup: %s", e)
+# Per-conversation recommendation responses (for accept/dismiss flow)
+_recommendation_events: dict[str, threading.Event] = {}
+_recommendation_responses: dict[str, list[str]] = {}
 
 _FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
 
@@ -240,6 +240,40 @@ _FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
 @app.route("/api/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+@app.route("/api/chat/recommend", methods=["POST"])
+@login_required
+def handle_recommendation():
+    """Handle user's accept/dismiss of a tool recommendation."""
+    data = request.get_json(force=True)
+    conversation_id = data.get("conversation_id")
+    accepted_groups = data.get("accepted_groups", [])
+
+    if not conversation_id:
+        return jsonify({"error": "conversation_id required"}), 400
+
+    _recommendation_responses[conversation_id] = accepted_groups
+    event = _recommendation_events.get(conversation_id)
+    if event:
+        event.set()
+
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/workflows", methods=["GET"])
+@login_required
+def list_workflows():
+    """List available workflow groups."""
+    groups = []
+    for name, group in WORKFLOW_GROUPS.items():
+        groups.append({
+            "name": name,
+            "tooltip": group.tooltip,
+            "tool_count": len(group.tools),
+            "tools": group.tools,
+        })
+    return jsonify({"groups": groups})
 
 
 @app.route("/", defaults={"path": ""})
@@ -344,18 +378,22 @@ def chat_stream():
     ]
     history = build_history(history_rows)
 
-    # --- Tool pre-pass ---
-    print(f"[PREPASS_START]", flush=True)
-    fallback_names = _get_user_selected_tools()
-    tool_names = select_tools(user_msg, fallback_names)
+    # --- Task Extractor + Tool Curator pipeline ---
+    user_tool_names = _get_user_selected_tools()
+    has_new_tasks = extract_tasks(user_msg, conversation_id, db)
+    curation = curate_tools(conversation_id, user_tool_names, has_new_tasks, db)
 
-    print(f"[CHAT] model={model_name}, prepass_selected={len(tool_names)} tools: {tool_names}, conv={conversation_id}", flush=True)
+    print(f"[CURATION] new_tasks={has_new_tasks}, action={curation.action}, groups={curation.groups}", flush=True)
 
-    llm = _get_llm(model_name, tool_names, conversation_id)
+    # tool_names will be finalized inside generate() after recommendation flow
+    _initial_tool_names = user_tool_names
+
+    llm = _get_llm(model_name, _initial_tool_names, conversation_id)
 
     # --- Build tool schema block for system prompt ---
+    # (will be rebuilt inside generate() if recommendation is accepted)
     tool_schemas = []
-    for name in tool_names:
+    for name in _initial_tool_names:
         t = _TOOL_BY_NAME.get(name)
         if t:
             schema = t.args_schema.model_json_schema() if t.args_schema else {}
@@ -384,12 +422,65 @@ If you do not need to call a tool, respond with plain text."""
     ]
 
     def generate():
-        nonlocal messages
+        nonlocal messages, system_with_tools
         full_response = ""
         ordered_messages = []
         prev_call_sig = None  # detect repeated identical tool calls
 
         yield json.dumps({"conversation_id": conversation_id}) + "\n"
+
+        # --- Recommendation flow ---
+        accepted_groups: list[str] = []
+        if curation.action == "recommend":
+            yield json.dumps({"recommendation": {
+                "groups": curation.groups,
+                "reason": curation.reason,
+            }}) + "\n"
+
+            # Wait for user response (accept/dismiss)
+            event = threading.Event()
+            _recommendation_events[conversation_id] = event
+            try:
+                event.wait(timeout=120)  # 2 min timeout = dismiss
+                accepted_groups = _recommendation_responses.pop(conversation_id, [])
+            finally:
+                _recommendation_events.pop(conversation_id, None)
+
+            print(f"[CURATION] User accepted groups: {accepted_groups}", flush=True)
+
+        # Resolve final tool set
+        if accepted_groups:
+            extra_tools = tools_for_groups(accepted_groups)
+            final_tool_names = list(set(_initial_tool_names + extra_tools))
+
+            # Rebuild system prompt with expanded tools
+            tool_schemas_final = []
+            for tname in final_tool_names:
+                t = _TOOL_BY_NAME.get(tname)
+                if t:
+                    schema = t.args_schema.model_json_schema() if t.args_schema else {}
+                    props = schema.get("properties", {})
+                    params_desc = ", ".join(f'{k}: {v.get("type", "str")}' for k, v in props.items())
+                    desc = (t.description.split("\n")[0] if t.description else "")
+                    tool_schemas_final.append(f'- {tname}({params_desc}): {desc}')
+
+            tools_block_final = "\n".join(tool_schemas_final)
+            system_with_tools = f"""{SYSTEM_PROMPT}
+
+AVAILABLE TOOLS:
+{tools_block_final}
+
+To call a tool, respond with ONLY a JSON array like:
+[{{"name": "tool_name", "arguments": {{"param": "value"}}}}]
+
+If you do not need to call a tool, respond with plain text."""
+
+            messages = [
+                SystemMessage(content=system_with_tools),
+            ] + history + [
+                HumanMessage(content=user_msg),
+            ]
+            print(f"[CHAT] final tool set: {len(final_tool_names)} tools", flush=True)
 
         try:
             for _round in range(MAX_TOOL_ROUNDS):
