@@ -281,6 +281,7 @@ def _get_llm(model_name: str, tool_names: list[str], conversation_id: str | None
         model=model_name,
         temperature=0,
         base_url="http://localhost:11434",
+        timeout=120,  # seconds — prevents hanging if Ollama stalls
     )
 
     if conversation_id:

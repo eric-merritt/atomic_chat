@@ -258,7 +258,7 @@ def replace(path: str, old: str, new: str, count: int = 1) -> str:
 
 @tool
 @retry()
-def insert(path: str, line_number: int, content: str) -> str:
+def insert_at_line(path: str, line_number: int, content: str) -> str:
     """Insert content at a specific line number (1-indexed).
 
     WHEN TO USE: When you need to add content at a specific line in a file.
@@ -400,7 +400,7 @@ def move(src: str, dst: str) -> str:
 
 @tool
 @retry()
-def mkdir(path: str) -> str:
+def create_directory(path: str) -> str:
     """Create a directory and any missing parents.
 
     WHEN TO USE: When you need to create a new directory.
@@ -429,9 +429,9 @@ FILESYSTEM_TOOLS = [
     write,
     append,
     replace,
-    insert,
+    insert_at_line,
     delete,
     copy,
     move,
-    mkdir,
+    create_directory,
 ]

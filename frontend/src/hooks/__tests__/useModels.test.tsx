@@ -5,7 +5,7 @@ import { useModels } from '../useModels';
 import type { ReactNode } from 'react';
 
 const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
+globalThis.fetch = mockFetch as unknown as typeof fetch;
 
 const wrapper = ({ children }: { children: ReactNode }) => (
   <ModelProvider>{children}</ModelProvider>

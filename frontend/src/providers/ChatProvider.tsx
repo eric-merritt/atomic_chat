@@ -29,6 +29,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const streamingRef = useRef(false);
+  const lastEventRef = useRef(0);
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { start, stop } = useStream();
   const { current: currentModel } = useModels();
   const prevModelRef = useRef(currentModel);
@@ -77,9 +79,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     streamingRef.current = true;
 
     let assistantCreated = false;
+    lastEventRef.current = Date.now();
+
+    // Watchdog: if no stream events arrive for 90s, auto-reset
+    if (watchdogRef.current) clearInterval(watchdogRef.current);
+    watchdogRef.current = setInterval(() => {
+      if (streamingRef.current && Date.now() - lastEventRef.current > 90_000) {
+        console.warn('[ChatProvider] Stream stale for 90s, auto-resetting');
+        stop();
+        cancelChat();
+        setStreaming(false);
+        streamingRef.current = false;
+        if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+      }
+    }, 10_000);
 
     start(text, {
       onEvent: (ev) => {
+        lastEventRef.current = Date.now();
         switch (ev.type) {
           case 'meta':
             if (ev.conversationId) setConversationId(ev.conversationId);
@@ -124,11 +141,16 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             break;
         }
       },
-      onDone: () => { setStreaming(false); streamingRef.current = false; },
+      onDone: () => {
+        setStreaming(false);
+        streamingRef.current = false;
+        if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+      },
       onError: (error) => {
         setMessages((prev) => [...prev, createMessage('error', error)]);
         setStreaming(false);
         streamingRef.current = false;
+        if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
       },
     }, conversationId);
   }, [start, currentModel, conversationId]);

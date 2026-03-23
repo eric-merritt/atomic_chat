@@ -4,7 +4,7 @@ import { ModelSelect } from '../ModelSelect';
 import { ModelProvider } from '../../../providers/ModelProvider';
 
 const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
+globalThis.fetch = mockFetch as unknown as typeof fetch;
 
 beforeEach(() => { mockFetch.mockReset(); });
 

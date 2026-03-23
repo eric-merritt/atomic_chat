@@ -1,39 +1,60 @@
 """Tool pre-pass: lightweight LLM selects relevant tools per-turn.
 
 Flow:
-  1. At startup, fetch full tool list from tools.eric-merritt.com
-  2. Build compact index (name → first-line description)
-  3. Each turn, ask PREPASS_MODEL which tools are needed
-  4. Return list of tool names; caller fetches full schemas and binds them
+  1. At startup, connect to MCP server at tools.eric-merritt.com via MCP client
+  2. Call tools/list to get available tools with schemas
+  3. Build compact index (name -> first-line description)
+  4. Each turn, ask PREPASS_MODEL which tools are needed
+  5. Return list of tool names; caller fetches full schemas and binds them
 """
 
+import asyncio
 import json
 import logging
 import re
 
-import httpx
 from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
 
 from config import PREPASS_MODEL
 
 logger = logging.getLogger(__name__)
 
-TOOLS_SERVER_URL = "https://tools.eric-merritt.com"
+TOOLS_SERVER_URL = "https://tools.eric-merritt.com/"
 
 # Module-level cache
 _compact_index: dict[str, str] | None = None
 _known_tool_names: set[str] | None = None
 
 
-def _build_compact_index(full_tools: list[dict]) -> dict[str, str]:
-    """Strip full tool list down to {name: first_line_of_description}."""
+def _build_compact_index(tools) -> dict[str, str]:
+    """Build compact index from tool objects or dicts.
+
+    Accepts both MCP Tool objects (with .name/.description attributes)
+    and plain dicts (with "name"/"description" keys).
+    """
     index = {}
-    for t in full_tools:
-        desc = t.get("description", "")
+    for t in tools:
+        if isinstance(t, dict):
+            name = t.get("name", "")
+            desc = t.get("description", "")
+        else:
+            name = t.name
+            desc = t.description or ""
         first_line = desc.split("\n")[0].strip() if desc else ""
-        index[t["name"]] = first_line
+        index[name] = first_line
     return index
+
+
+async def _fetch_tool_index_async() -> dict[str, str]:
+    """Connect to MCP server and fetch tool list."""
+    async with streamable_http_client(TOOLS_SERVER_URL) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream) as session:
+            await session.initialize()
+            result = await session.list_tools()
+            return _build_compact_index(result.tools)
 
 
 def _build_prepass_prompt(user_message: str, index: dict[str, str]) -> str:
@@ -77,22 +98,17 @@ def _parse_prepass_response(raw: str, known_names: set[str]) -> list[str] | None
 
 
 def load_tool_index() -> dict[str, str]:
-    """Fetch tool list from tools server and cache compact index.
+    """Fetch tool list from MCP server and cache compact index.
 
     Call once at startup. Returns the compact index {name: first_line_description}.
-    Raises on network failure — caller should handle gracefully.
+    Raises on connection failure — caller should handle gracefully.
     """
     global _compact_index, _known_tool_names
 
-    resp = httpx.get(f"{TOOLS_SERVER_URL}/", timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    full_tools = data.get("tools", [])
-
-    _compact_index = _build_compact_index(full_tools)
+    _compact_index = asyncio.run(_fetch_tool_index_async())
     _known_tool_names = set(_compact_index.keys())
 
-    logger.info("Tool index loaded: %d tools", len(_compact_index))
+    logger.info("Tool index loaded via MCP: %d tools", len(_compact_index))
     return _compact_index
 
 

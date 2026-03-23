@@ -9,7 +9,7 @@ import { ChatProvider } from '../../providers/ChatProvider';
 import { WebSocketProvider } from '../../providers/WebSocketProvider';
 
 const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
+globalThis.fetch = mockFetch as unknown as typeof fetch;
 
 // Mock canvas for ParticleCanvas
 HTMLCanvasElement.prototype.getContext = vi.fn(() => ({

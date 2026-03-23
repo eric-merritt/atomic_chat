@@ -1,101 +1,124 @@
-"""MCP Tool Server — serves all tools via HTTP for remote agent consumption.
+"""MCP Tool Server — serves all tools via Model Context Protocol.
 
 Hosted at https://tools.eric-merritt.com via nginx proxy to localhost:5100.
 
-GET  /                   — list all tools with full schemas
-GET  /<name>             — get one tool's schema
-POST /<name>             — execute a tool with JSON params, returns tool_result
+Uses Streamable HTTP transport (stateless, JSON responses) so any
+MCP-compatible client (Claude Desktop, Claude Code, etc.) can connect.
 """
 
+import inspect
 import json
-from flask import Flask, request, jsonify
-from tools import ALL_TOOLS
-from tools._output import tool_result
+import logging
+import typing
+from mcp.server.fastmcp import FastMCP
 
-tools_app = Flask(__name__)
+from tools import ALL_TOOLS
+
+logger = logging.getLogger(__name__)
+
 PORT = 5100
 
-# Build lookup dict once at startup
-_TOOL_MAP = {t.name: t for t in ALL_TOOLS}
+# Create MCP server — stateless HTTP with JSON responses, served at /
+mcp = FastMCP(
+    "ToolServer",
+    host="0.0.0.0",
+    port=PORT,
+    stateless_http=True,
+    json_response=True,
+    streamable_http_path="/",
+)
+
+# Type mapping from JSON Schema types to Python types
+_TYPE_MAP = {
+    "string": str,
+    "integer": int,
+    "number": float,
+    "boolean": bool,
+}
 
 
-def _tool_schema(t) -> dict:
-    """Extract full schema from a LangChain tool for agent consumption."""
-    schema = t.args_schema.schema() if t.args_schema else {}
-    props = schema.get("properties", {})
-    required = schema.get("required", [])
+def _register_langchain_tool(lc_tool):
+    """Register a LangChain BaseTool as an MCP tool.
 
-    params = {}
-    for pname, pinfo in props.items():
-        param = {
-            "type": pinfo.get("type", "string"),
-            "description": pinfo.get("description", ""),
-            "required": pname in required,
-        }
-        if "default" in pinfo:
-            param["default"] = pinfo["default"]
-        if "enum" in pinfo:
-            param["enum"] = pinfo["enum"]
-        params[pname] = param
+    Dynamically creates a function with the correct parameter signature
+    so FastMCP can introspect it properly, then registers it as an MCP tool.
+    """
+    name = lc_tool.name
+    description = lc_tool.description or ""
 
-    return {
-        "name": t.name,
-        "description": t.description or "",
-        "params": params,
-    }
+    # Extract parameter schema from LangChain tool
+    if lc_tool.args_schema:
+        schema = lc_tool.args_schema.model_json_schema()
+        properties = schema.get("properties", {})
+        required_set = set(schema.get("required", []))
+    else:
+        properties = {}
+        required_set = set()
+
+    # Build inspect.Parameter list for the function signature
+    params = []
+    for pname, pinfo in properties.items():
+        py_type = _TYPE_MAP.get(pinfo.get("type", "string"), str)
+        is_required = pname in required_set
+        default = inspect.Parameter.empty
+
+        if not is_required:
+            default = pinfo.get("default")
+            if default is None:
+                default = None  # explicit None default for optional params
+            py_type = typing.Optional[py_type]
+
+        params.append(inspect.Parameter(
+            pname,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=default,
+            annotation=py_type,
+        ))
+
+    sig = inspect.Signature(params, return_annotation=str)
+
+    # Build the wrapper function that delegates to lc_tool.invoke()
+    # We capture lc_tool in the closure via default arg to avoid late-binding issues
+    async def _wrapper(*args, _tool=lc_tool, _sig=sig, **kwargs):
+        # Bind positional+keyword args to parameter names
+        bound = _sig.bind(*args, **kwargs)
+        bound.apply_defaults()
+        call_args = dict(bound.arguments)
+        # Remove None values for optional params not provided
+        call_args = {k: v for k, v in call_args.items() if v is not None}
+        try:
+            result = _tool.invoke(call_args)
+            return str(result)
+        except Exception as e:
+            return json.dumps({"status": "error", "data": None, "error": str(e)})
+
+    # Set function metadata so FastMCP introspects correctly
+    _wrapper.__name__ = name
+    _wrapper.__qualname__ = name
+    _wrapper.__doc__ = description
+    _wrapper.__signature__ = sig
+    _wrapper.__annotations__ = {p.name: p.annotation for p in params}
+    _wrapper.__annotations__["return"] = str
+
+    # Register with MCP server
+    mcp.tool(name=name, description=description)(_wrapper)
 
 
-@tools_app.route("/", methods=["GET"])
-def list_tools():
-    """List all available tools with full schemas."""
-    tools = [_tool_schema(t) for t in ALL_TOOLS]
-    return jsonify({"count": len(tools), "tools": tools})
-
-
-@tools_app.route("/<name>", methods=["GET"])
-def get_tool(name):
-    """Get a single tool's schema by name."""
-    t = _TOOL_MAP.get(name)
-    if not t:
-        return jsonify({"error": f"Unknown tool: {name}"}), 404
-    return jsonify(_tool_schema(t))
-
-
-@tools_app.route("/<name>", methods=["POST"])
-def call_tool(name):
-    """Execute a tool. Body: JSON object of params. Returns tool_result JSON."""
-    t = _TOOL_MAP.get(name)
-    if not t:
-        return jsonify({"status": "error", "data": None, "error": f"Unknown tool: {name}"}), 404
-
-    params = request.get_json(force=True, silent=True) or {}
-
+# Register all LangChain tools as MCP tools
+for _lc_tool in ALL_TOOLS:
     try:
-        result = t.invoke(params)
-        if isinstance(result, str):
-            try:
-                parsed = json.loads(result)
-                if "status" in parsed and "data" in parsed:
-                    return tools_app.response_class(
-                        response=result,
-                        mimetype="application/json",
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass
-            return jsonify({"status": "success", "data": result, "error": ""})
-        else:
-            return jsonify({"status": "success", "data": result, "error": ""})
+        _register_langchain_tool(_lc_tool)
+        logger.info("Registered MCP tool: %s", _lc_tool.name)
     except Exception as e:
-        return jsonify({"status": "error", "data": None, "error": str(e)}), 500
+        logger.error("Failed to register tool %s: %s", _lc_tool.name, e)
 
 
 def main():
-    print(f"Starting MCP server on http://localhost:{PORT}")
-    print(f"  {len(ALL_TOOLS)} tools loaded")
-    print(f"  GET  /              — list all tools")
-    print(f"  GET  /<name>        — get tool schema")
-    print(f"  POST /<name>        — execute tool")
-    tools_app.run(host="0.0.0.0", port=PORT, debug=True)
+    print(f"Starting MCP Tool Server on http://0.0.0.0:{PORT}")
+    print(f"  {len(ALL_TOOLS)} tools registered")
+    print(f"  Transport: Streamable HTTP (stateless, JSON responses)")
+    print(f"  Connect with any MCP client to https://tools.eric-merritt.com/")
+    mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":

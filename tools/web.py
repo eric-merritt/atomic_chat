@@ -19,6 +19,30 @@ _web_session = requests.Session()
 _web_session.headers.update({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"})
 
 
+def _apply_cookies(url: str, cookies: list[str] | None, domain: str | None = None):
+    """Set cookies on the shared session with proper domain scoping.
+
+    If domain is not provided, it is derived from the URL (e.g.
+    "https://www.example.com/page" → ".example.com").  The leading dot
+    is added automatically so cookies match the root domain and all
+    subdomains, which is how browsers handle domain cookies.
+    """
+    if not cookies:
+        return
+    if not domain:
+        from urllib.parse import urlparse
+        host = urlparse(url).hostname or ""
+        parts = host.split(".")
+        # strip www / subdomain: keep last two segments (or all if already bare)
+        domain = "." + ".".join(parts[-2:]) if len(parts) > 2 else "." + host
+    elif not domain.startswith("."):
+        domain = "." + domain
+    for c in cookies:
+        if "=" in c:
+            name, _, value = c.partition("=")
+            _web_session.cookies.set(name.strip(), value.strip(), domain=domain)
+
+
 # ── Web Operations ───────────────────────────────────────────────────────────
 
 @tool
@@ -63,7 +87,7 @@ def web_search(query: str, num_results: int = 5) -> str:
 
 
 @tool
-def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None) -> str:
+def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None, domain: str | None = None) -> str:
     """Fetch a URL and return its text content with HTML tags stripped.
 
     WHEN TO USE: When you need to read the text content of a specific webpage.
@@ -73,6 +97,7 @@ def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None)
         url: Full URL to fetch. Must start with http:// or https://.
         max_chars: Maximum characters to return. Range: 100-50000.
         cookies: Optional list of cookie strings in "name=value" format (e.g. ["age_verified=1", "consent=yes"]).
+        domain: Optional cookie domain (e.g. ".example.com"). Auto-derived from url if omitted.
 
     Output format:
         {"status": "success", "data": {"url": "...", "content": "...", "truncated": false}, "error": ""}
@@ -81,11 +106,7 @@ def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None)
         return tool_result(error="url must start with http:// or https://")
 
     try:
-        if cookies:
-            for c in cookies:
-                if "=" in c:
-                    name, _, value = c.partition("=")
-                    _web_session.cookies.set(name.strip(), value.strip())
+        _apply_cookies(url, cookies, domain)
         resp = _web_session.get(url, timeout=15)
         resp.raise_for_status()
         content_type = resp.headers.get("Content-Type", "")
@@ -107,7 +128,7 @@ def fetch_url(url: str, max_chars: int = 5000, cookies: list[str] | None = None)
 
 
 @tool
-def webscrape(url: str, cookies: list[str] | None = None) -> str:
+def webscrape(url: str, cookies: list[str] | None = None, domain: str | None = None) -> str:
     """Fetch a URL and return the raw HTML content.
 
     WHEN TO USE: When you need the raw HTML of a webpage for parsing with find_all or find_download_link.
@@ -116,6 +137,7 @@ def webscrape(url: str, cookies: list[str] | None = None) -> str:
     Args:
         url: Full URL to fetch. Must start with http:// or https://.
         cookies: Optional list of cookie strings in "name=value" format (e.g. ["age_verified=1", "consent=yes"]).
+        domain: Optional cookie domain (e.g. ".example.com"). Auto-derived from url if omitted.
 
     Output format:
         {"status": "success", "data": {"url": "...", "html": "..."}, "error": ""}
@@ -124,11 +146,7 @@ def webscrape(url: str, cookies: list[str] | None = None) -> str:
         return tool_result(error="url must start with http:// or https://")
 
     try:
-        if cookies:
-            for c in cookies:
-                if "=" in c:
-                    name, _, value = c.partition("=")
-                    _web_session.cookies.set(name.strip(), value.strip())
+        _apply_cookies(url, cookies, domain)
         r = _web_session.get(url, timeout=15)
         r.raise_for_status()
     except Exception as e:

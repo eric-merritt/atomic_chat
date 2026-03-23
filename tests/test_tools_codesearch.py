@@ -25,7 +25,7 @@ def test_find_works():
     with tempfile.TemporaryDirectory() as d:
         for name in ["a.py", "b.py", "c.txt"]:
             open(os.path.join(d, name), "w").close()
-        result = find.invoke({"pattern": "*.py", "path": d})
+        result = find.invoke({"name": "*.py", "path": d})
         assert "a.py" in result
         assert "b.py" in result
         assert "c.txt" not in result

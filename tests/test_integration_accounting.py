@@ -16,11 +16,12 @@ def test_accounting_tool_count():
     assert len(ACCOUNTING_TOOLS) == 21
 
 
-def test_tools_server_lists_accounting():
-    """tools_server.py Flask app should list accounting tools."""
-    from tools_server import tools_app
-    client = tools_app.test_client()
-    resp = client.get("/")
-    data = resp.get_json()
-    assert "create_ledger" in data
-    assert "journalize_transaction" in data
+def test_mcp_server_registers_accounting():
+    """MCP server should register accounting tools."""
+    from tools_server import mcp
+    # FastMCP exposes registered tools via _tool_manager
+    tool_names = set()
+    for tool in mcp._tool_manager._tools.values():
+        tool_names.add(tool.name)
+    assert "create_ledger" in tool_names
+    assert "journalize_transaction" in tool_names

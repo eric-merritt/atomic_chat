@@ -65,18 +65,15 @@ export function MessageList({ onImageClick }: MessageListProps) {
       </div>
       <div className="mt-auto" />
       {(() => {
-        // Find the index of the last assistant message to attach tool panel to
-        const lastAsstIdx = toolActivities.length > 0
-          ? messages.reduce((acc, m, i) => m.role === 'assistant' ? i : acc, -1)
+        // Find the last user message index so we can render ToolCallPanel right after it
+        const lastUserIdx = toolActivities.length > 0
+          ? messages.reduce((acc, m, i) => m.role === 'user' ? i : acc, -1)
           : -1;
 
         return messages.map((msg, idx) => {
           const align = msg.role === 'user' ? 'right' : 'left';
           return (
             <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); }} className="flex flex-col">
-              {idx === lastAsstIdx && (
-                <ToolCallPanel activities={toolActivities} />
-              )}
               <MessageBubble message={msg} />
               {msg.images.map((img, i) => (
                 <ImageThumbnail
@@ -88,13 +85,13 @@ export function MessageList({ onImageClick }: MessageListProps) {
                 />
               ))}
               <Timestamp timestamp={msg.timestamp} align={align} />
+              {idx === lastUserIdx && (
+                <ToolCallPanel activities={toolActivities} />
+              )}
             </div>
           );
         });
       })()}
-      {toolActivities.length > 0 && !messages.some((m) => m.role === 'assistant') && (
-        <ToolCallPanel activities={toolActivities} />
-      )}
       {streaming && (
         <ThinkingIndicator label="Working..." elapsed={elapsed} preview="" />
       )}

@@ -31,6 +31,6 @@ def test_write_works():
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, "test.txt")
         result = write.invoke({"path": path, "content": "hello"})
-        assert "Wrote" in result
+        assert '"status": "success"' in result
         with open(path) as f:
             assert f.read() == "hello"
