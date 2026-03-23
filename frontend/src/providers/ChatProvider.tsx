@@ -1,12 +1,17 @@
 import { createContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import type { Message } from '../atoms/message';
 import { createMessage } from '../atoms/message';
-import { cancelChat } from '../api/chat';
+import { cancelChat, respondToRecommendation } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
 import type { ToolActivity } from '../components/atoms/ToolCallPanel';
+
+interface Recommendation {
+  groups: string[];
+  reason: string;
+}
 
 interface ChatContextValue {
   messages: Message[];
@@ -19,6 +24,9 @@ interface ChatContextValue {
   loadConversation: (id: string) => Promise<void>;
   newConversation: () => void;
   toolActivities: ToolActivity[];
+  recommendation: Recommendation | null;
+  acceptRecommendation: () => void;
+  dismissRecommendation: () => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -28,6 +36,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
+  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const streamingRef = useRef(false);
   const lastEventRef = useRef(0);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -136,6 +145,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               type: 'result', tool: ev.tool, content: ev.output, timestamp: Date.now(),
             }]);
             break;
+          case 'recommendation':
+            setRecommendation({ groups: ev.groups, reason: ev.reason });
+            break;
           case 'error':
             setMessages((prev) => [...prev, createMessage('error', ev.message)]);
             break;
@@ -168,11 +180,23 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     setConversationId(null);
   }, []);
 
+  const acceptRecommendation = useCallback(async () => {
+    if (!recommendation || !conversationId) return;
+    await respondToRecommendation(conversationId, recommendation.groups);
+    setRecommendation(null);
+  }, [recommendation, conversationId]);
+
+  const dismissRecommendation = useCallback(async () => {
+    if (!conversationId) return;
+    await respondToRecommendation(conversationId, []);
+    setRecommendation(null);
+  }, [conversationId]);
+
   return (
     <ChatContext.Provider value={{
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
-      toolActivities,
+      toolActivities, recommendation, acceptRecommendation, dismissRecommendation,
     }}>
       {children}
     </ChatContext.Provider>
