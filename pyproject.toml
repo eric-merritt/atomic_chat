@@ -1,7 +1,7 @@
 [project]
-name = "agentic-w-langchain-ollama"
+name = "atomic-chat"
 version = "0.2.0"
-description = "Multi-agent platform with LangChain + Ollama"
+description = "Atomic Chat — multi-agent platform with LangChain + Ollama"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

@@ -1,6 +1,6 @@
-# Agentic Chat — LangChain + Ollama
+# Atomic Chat
 
-An agentic chat application that pairs local Ollama models with 20 filesystem, search, and web tools via LangChain's tool-calling agent. Includes both an interactive CLI and a Flask REST API.
+A multi-agent chat application that pairs local Ollama models with filesystem, search, and web tools via LangChain's tool-calling agent. Includes both an interactive CLI and a Flask REST API.
 
 All tools are **always bound** to the agent regardless of selection state. The tool browser (with `>` / `<` controls) is for inspecting what parameters each tool requires from the user.
 
@@ -25,7 +25,7 @@ uv run python main.py
 You'll see the main menu:
 
 ```
-=== Agentic Chat (LangChain + Ollama) ===
+=== Atomic Chat ===
 
   1. Pick model
   2. Browse tools
