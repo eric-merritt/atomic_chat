@@ -15,7 +15,7 @@ Tests use Vitest with jsdom environment, globals enabled, and `@testing-library/
 
 ## Architecture
 
-React 18 + TypeScript frontend for an agentic chat application backed by a Flask/LangChain/Ollama Python backend.
+React 18 + TypeScript frontend for Atomic Chat, backed by a Flask/LangChain/Ollama Python backend.
 
 ### Provider hierarchy (App.tsx)
 
