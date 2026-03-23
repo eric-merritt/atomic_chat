@@ -20,3 +20,19 @@ export async function streamChatAsync(message: string, conversationId?: string |
 export async function cancelChat(): Promise<void> {
   await fetch('/api/chat/cancel', { method: 'POST', credentials: 'include' });
 }
+
+export async function respondToRecommendation(
+  conversationId: string,
+  acceptedGroups: string[],
+): Promise<void> {
+  const resp = await fetch('/api/chat/recommend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conversation_id: conversationId,
+      accepted_groups: acceptedGroups,
+    }),
+    credentials: 'include',
+  });
+  if (!resp.ok) throw new Error(`Recommendation response failed: ${resp.status}`);
+}
