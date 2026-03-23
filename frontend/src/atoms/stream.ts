@@ -4,7 +4,8 @@ export type StreamEvent =
   | { type: 'tool_result'; tool: string; output: string }
   | { type: 'image'; src: string; filename: string; sizeKb: number }
   | { type: 'error'; message: string }
-  | { type: 'meta'; conversationId: string | null };
+  | { type: 'meta'; conversationId: string | null }
+  | { type: 'recommendation'; groups: string[]; reason: string };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
@@ -32,6 +33,13 @@ export function parseStreamLine(raw: any): StreamEvent | null {
       src: raw.image.src,
       filename: raw.image.filename,
       sizeKb: raw.image.size_kb,
+    };
+  }
+  if ('recommendation' in raw) {
+    return {
+      type: 'recommendation',
+      groups: raw.recommendation.groups,
+      reason: raw.recommendation.reason,
     };
   }
   if ('error' in raw) {
