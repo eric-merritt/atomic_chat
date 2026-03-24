@@ -7,6 +7,7 @@ interface ToolContextValue {
   selected: string[];
   toggleTool: (name: string) => Promise<void>;
   toggleCategory: (name: string) => Promise<void>;
+  refreshTools: () => Promise<void>;
 }
 
 export const ToolContext = createContext<ToolContextValue | null>(null);
@@ -32,8 +33,13 @@ export function ToolProvider({ children }: { children: ReactNode }) {
     if (r.data) setCategories(r.data);
   }, []);
 
+  const refreshTools = useCallback(async () => {
+    const r = await apiFetchTools();
+    if (r.data) setCategories(r.data);
+  }, []);
+
   return (
-    <ToolContext.Provider value={{ categories, selected: getSelected(categories), toggleTool, toggleCategory }}>
+    <ToolContext.Provider value={{ categories, selected: getSelected(categories), toggleTool, toggleCategory, refreshTools }}>
       {children}
     </ToolContext.Provider>
   );
