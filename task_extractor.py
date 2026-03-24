@@ -7,6 +7,7 @@ were found so the Tool Curator can short-circuit.
 
 import json
 import logging
+import os
 import re
 
 from langchain_ollama import ChatOllama
@@ -14,7 +15,34 @@ from langchain_core.messages import HumanMessage
 
 from config import TASK_EXTRACTOR_MODEL
 
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "training_data", "logs")
+_EXTRACTOR_LOG = os.path.join(_LOG_DIR, "task_extractor.jsonl")
+
 logger = logging.getLogger(__name__)
+
+_SYSTEM_MSG = (
+    "You are a task extraction agent. Read the user's message and conversation "
+    "context, then extract new tasks. A task is a concrete action the agent must "
+    "perform. Follow-ups that modify existing tasks are NOT new tasks. Return ONLY "
+    "a JSON array of short task titles, or [] if none."
+)
+
+
+def _log_exchange(prompt: str, response: str):
+    """Append a training-format JSONL line for this exchange."""
+    try:
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        entry = {
+            "messages": [
+                {"role": "system", "content": _SYSTEM_MSG},
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": response},
+            ]
+        }
+        with open(_EXTRACTOR_LOG, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.debug("Failed to log extractor exchange: %s", e)
 
 
 def _build_extractor_prompt(
@@ -124,13 +152,17 @@ def extract_tasks(
     prompt = _build_extractor_prompt(user_message, existing_tasks, recent_messages)
 
     try:
+        from config import OLLAMA_CURATION_NUM_CTX
         llm = ChatOllama(
             model=TASK_EXTRACTOR_MODEL,
             temperature=0,
             base_url="http://localhost:11434",
+            num_ctx=OLLAMA_CURATION_NUM_CTX,
         )
         response = llm.invoke([HumanMessage(content=prompt)])
-        new_titles = _parse_extractor_response(response.content)
+        raw = response.content
+        new_titles = _parse_extractor_response(raw)
+        _log_exchange(prompt, raw)
     except Exception as e:
         logger.warning("Task Extractor failed (%s), assuming no new tasks", e)
         return False

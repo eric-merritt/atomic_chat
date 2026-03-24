@@ -7,6 +7,7 @@ Short-circuits entirely when no new tasks were extracted.
 
 import json
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 
@@ -17,6 +18,33 @@ from config import TOOL_CURATOR_MODEL
 from workflow_groups import WORKFLOW_GROUPS
 
 logger = logging.getLogger(__name__)
+
+_LOG_DIR = os.path.join(os.path.dirname(__file__), "training_data", "logs")
+_CURATOR_LOG = os.path.join(_LOG_DIR, "tool_curator.jsonl")
+
+_SYSTEM_MSG = (
+    "You are a tool curation agent. Given tasks and the user's active tools, "
+    "decide if additional workflow groups are needed. Never remove user-chosen "
+    "tools. Recommend the minimum groups needed. Return ONLY JSON: "
+    '{\"action\":\"pass\"} or {\"action\":\"recommend\",\"groups\":[...],\"reason\":\"...\"}'
+)
+
+
+def _log_exchange(prompt: str, response: str):
+    """Append a training-format JSONL line for this exchange."""
+    try:
+        os.makedirs(_LOG_DIR, exist_ok=True)
+        entry = {
+            "messages": [
+                {"role": "system", "content": _SYSTEM_MSG},
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": response},
+            ]
+        }
+        with open(_CURATOR_LOG, "a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.debug("Failed to log curator exchange: %s", e)
 
 # Per-conversation cache: conversation_id → last tool names
 _tool_cache: dict[str, list[str]] = {}
@@ -35,27 +63,43 @@ def _build_curator_prompt(
 ) -> str:
     """Build the prompt for the Tool Curator model."""
     task_lines = "\n".join(f"- [{t['status']}] {t['title']}" for t in tasks)
-    tool_list = ", ".join(user_tool_names) if user_tool_names else "(none)"
-    group_lines = "\n".join(
-        f"- {name}: {g.tooltip}" for name, g in WORKFLOW_GROUPS.items()
-    )
+    user_set = set(user_tool_names)
 
-    return f"""You are a tool curation agent. Given the user's tasks and their currently
-active tools, decide if additional workflow groups are needed.
+    # Categorize groups
+    active_groups = []
+    partial_groups = []
+    missing_groups = []
+    for name, g in WORKFLOW_GROUPS.items():
+        group_tools = set(g.tools)
+        if group_tools.issubset(user_set):
+            active_groups.append(f'- "{name}" — {g.tooltip}')
+        elif group_tools & user_set:
+            partial_groups.append(f'- "{name}" — {g.tooltip} (partially active)')
+        else:
+            missing_groups.append(f'- "{name}" — {g.tooltip}')
+
+    active_str = "\n".join(active_groups) if active_groups else "(none)"
+    available_str = "\n".join(missing_groups + partial_groups) if (missing_groups or partial_groups) else "(none — user has all groups)"
+
+    return f"""You are a tool curation agent. You recommend WORKFLOW GROUPS, never individual tools.
 
 Tasks:
 {task_lines}
 
-User's active tools: {tool_list}
+User's active groups:
+{active_str}
 
-Available workflow groups:
-{group_lines}
+Available workflow groups (NOT yet active):
+{available_str}
+
+IMPORTANT: You must recommend GROUPS by their exact name (e.g. "Web Tools", "Accounting"), NOT individual tool names.
 
 Rules:
 - Never remove tools the user has chosen.
-- If the user's tools are sufficient for all tasks, return: {{"action": "pass"}}
-- If additional groups would help, return:
-  {{"action": "recommend", "groups": ["Group Name"], "reason": "short reason"}}
+- If the active groups are sufficient for the tasks, return: {{"action": "pass"}}
+- If a task requires a missing group, return:
+  {{"action": "recommend", "groups": ["Exact Group Name"], "reason": "short reason"}}
+- The "groups" array MUST contain group names from the list above, NOT tool names.
 - Recommend the minimum set of groups needed.
 - Keep the reason under 15 words.
 
@@ -140,13 +184,17 @@ def curate_tools(
     prompt = _build_curator_prompt(task_dicts, user_tool_names)
 
     try:
+        from config import OLLAMA_CURATION_NUM_CTX
         llm = ChatOllama(
             model=TOOL_CURATOR_MODEL,
             temperature=0,
             base_url="http://localhost:11434",
+            num_ctx=OLLAMA_CURATION_NUM_CTX,
         )
         response = llm.invoke([HumanMessage(content=prompt)])
-        result = _parse_curator_response(response.content)
+        raw = response.content
+        result = _parse_curator_response(raw)
+        _log_exchange(prompt, raw)
 
         logger.info("Tool Curator: action=%s, groups=%s", result.action, result.groups)
         return result
