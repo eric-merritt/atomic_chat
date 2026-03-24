@@ -7,6 +7,7 @@ import { ModelProvider } from '../../providers/ModelProvider';
 import { ToolProvider } from '../../providers/ToolProvider';
 import { ChatProvider } from '../../providers/ChatProvider';
 import { WebSocketProvider } from '../../providers/WebSocketProvider';
+import { WorkspaceProvider } from '../../providers/WorkspaceProvider';
 
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch as unknown as typeof fetch;
@@ -25,9 +26,11 @@ function renderWithProviders() {
         <ModelProvider>
           <ToolProvider>
             <ChatProvider>
-              <WebSocketProvider enabled={false}>
-                <ChatPage />
-              </WebSocketProvider>
+              <WorkspaceProvider>
+                <WebSocketProvider enabled={false}>
+                  <ChatPage />
+                </WebSocketProvider>
+              </WorkspaceProvider>
             </ChatProvider>
           </ToolProvider>
         </ModelProvider>
