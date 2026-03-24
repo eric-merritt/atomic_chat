@@ -217,6 +217,8 @@ from routes.preferences import prefs_bp
 app.register_blueprint(prefs_bp)
 from routes.accounting import acct_bp
 app.register_blueprint(acct_bp)
+from routes.tools import tools_bp
+app.register_blueprint(tools_bp)
 app.before_request(auth_guard)
 
 @app.teardown_appcontext
