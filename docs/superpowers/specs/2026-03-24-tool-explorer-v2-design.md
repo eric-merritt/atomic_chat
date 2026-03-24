@@ -71,7 +71,7 @@ Replaces the current empty sidebar content entirely.
 Scrollable list below search.
 
 **Card states:**
-- **Collapsed (default):** Group name, tool count badge, active indicator (accent glow/dot when group's tools are activated for the agent)
+- **Collapsed (default):** Group name, tool count badge, tooltip as subtitle text, active indicator (accent glow/dot when group's tools are activated for the agent)
 - **Expanded:** Shows tool names as compact list below the card header
 
 **Dual click targets:**
@@ -186,7 +186,7 @@ Chat shrinks to `22rem` column (matching expanded sidebar width) on the right. M
 Chat hidden entirely. Input bar at bottom full-width:
 - **Input field:** Left side. Serves as chat input or agent instruction depending on mode.
 - **Mode toggle:** Small indicator showing "Chat" vs "Agent". In Chat mode, input sends a normal chat message. In Agent mode (Layer 2), input sends an instruction to execute the current chain. Deferred to Layer 2 — Layer 1 is always Chat mode.
-- **Chat popover trigger:** Click target on far right edge. Opens floating chat panel anchored bottom-right (messenger-style). Shows recent message history, scrollable, dismissible.
+- **Chat popover trigger:** Click target on far right edge. Opens floating chat panel anchored bottom-right (messenger-style). Renders a lightweight message list (text + tool call summaries, no image click handlers or complex panels). Scrollable, dismissible.
 
 ### Transitions
 
@@ -220,6 +220,7 @@ Chat hidden entirely. Input bar at bottom full-width:
 - `ToolCategory.tsx` — retired (group cards replace category headers)
 - `ToolRow.tsx` — retired (tool buttons in workspace replace checkbox rows)
 - `ToolChip.tsx` — may be repurposed for active group indicators
+- `tools.ts` — `CATEGORY_RULES`, `getSubcategory`, `groupIntoCategories` retired (replaced by workflow groups from API)
 
 ### Provider Hierarchy
 
@@ -234,8 +235,12 @@ App
 ```
 
 `WorkspaceProvider` sits below both `ToolProvider` and `ChatProvider` so it can:
-- Sync tool activations upward to `ToolProvider` via its `toggleTool`/`toggleCategory` callbacks
+- Sync tool activations upward to `ToolProvider` via per-tool `toggleTool` calls (not `toggleCategory`, since ToolProvider's categories don't match workflow group names)
 - Dispatch chain execution messages through `ChatProvider`'s stream interface
+
+**Note:** The existing tool selection API is index-based (`/api/tools/select` with numeric index). Layer 1 implementation should add a batch-select-by-name endpoint (`POST /api/tools/select-group` accepting `{ group: "Filesystem" }`) to avoid N individual toggle calls per group activation.
+
+**InputBar grid placement:** Across all layout states, InputBar uses `grid-column: 1 / -1` to span the full bottom row regardless of column count.
 
 ---
 
