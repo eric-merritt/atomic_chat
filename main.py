@@ -261,14 +261,29 @@ def handle_recommendation():
 @app.route("/api/workflows", methods=["GET"])
 @login_required
 def list_workflows():
-    """List available workflow groups."""
+    """List available workflow groups with full tool metadata."""
+    meta_by_name = {t["name"]: t for t in TOOL_REGISTRY}
     groups = []
     for name, group in WORKFLOW_GROUPS.items():
+        tools = []
+        for tool_name in group.tools:
+            t = meta_by_name.get(tool_name)
+            if t:
+                tools.append({
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "params": t.get("params", {}),
+                })
+            else:
+                tools.append({
+                    "name": tool_name,
+                    "description": "",
+                    "params": {},
+                })
         groups.append({
             "name": name,
             "tooltip": group.tooltip,
-            "tool_count": len(group.tools),
-            "tools": group.tools,
+            "tools": tools,
         })
     return jsonify({"groups": groups})
 
