@@ -33,7 +33,7 @@ from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
 from auth.db import init_db, SessionLocal, get_db
 import auth.conversations  # register conversation models with Base
-import auth.conversation_tasks  # register ConversationTask with Base
+from auth.conversation_tasks import ConversationTask
 
 
 
@@ -45,16 +45,13 @@ import auth.conversation_tasks  # register ConversationTask with Base
 SYSTEM_PROMPT = """You are an execution agent with tool access.
 
 RULES:
-- If a tool can solve the task, you MUST call it.
-- Do NOT explain how to do things — just do them.
-- Do NOT give instructions — take action.
-- Do NOT fabricate data — use your tools.
-- Do NOT describe which tools you would use — call them directly.
-- When you need information, call the appropriate tool immediately.
-- Tool results are shown to you in the conversation. You can read and analyze them directly.
-- Do NOT pass placeholder strings like "{result of tool}" to other tools. Use the actual data from the tool result.
-- If a tool returns data you need to process, analyze it yourself from the conversation context rather than calling another tool with a placeholder.
-- If a tool call returns the same result twice, STOP retrying and work with what you have.
+- If tools can solve the task, call them. Chain multiple tools in series when needed — carry data forward from each result.
+- Follow instructions explicitly. Return data in the exact format requested.
+- When stuck on tool flow, ask the user — show your plan up to the sticking point.
+- Never explain, instruct, describe tools, or summarize unless asked. Act.
+- Never fabricate data. Never use placeholder strings in tool arguments — use actual values from the user message or prior tool results.
+- Tool results appear in conversation. Read and analyze them directly.
+- If a tool returns the same result twice, stop retrying and work with what you have.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -187,7 +184,7 @@ app = Flask(__name__)
 app.secret_key = _os.environ.get("FLASK_SECRET_KEY", "dev-fallback-key-change-in-production")
 def _tool_meta(t) -> dict:
     """Extract name, description, and parameter info from a LangChain tool."""
-    schema = t.args_schema.schema() if t.args_schema else {}
+    schema = t.args_schema.model_json_schema() if t.args_schema else {}
     props = schema.get("properties", {})
     required = schema.get("required", [])
     params = {}
@@ -312,11 +309,13 @@ def _get_llm(model_name: str, tool_names: list[str], conversation_id: str | None
         if prev_model == model_name and sorted(prev_tools) == sorted(tool_names):
             return cached_llm
 
+    from config import OLLAMA_NUM_CTX
     llm = ChatOllama(
         model=model_name,
         temperature=0,
         base_url="http://localhost:11434",
         timeout=120,  # seconds — prevents hanging if Ollama stalls
+        num_ctx=OLLAMA_NUM_CTX,
     )
 
     if conversation_id:
@@ -414,11 +413,25 @@ To call a tool, respond with ONLY a JSON array like:
 
 If you do not need to call a tool, respond with plain text."""
 
+    # --- Append conversation tasks to user message ---
+    conv_tasks = (
+        db.query(ConversationTask)
+        .filter_by(conversation_id=conversation_id)
+        .order_by(ConversationTask.created_at.asc())
+        .all()
+    )
+    augmented_msg = user_msg
+    if conv_tasks:
+        task_lines = []
+        for i, ct in enumerate(conv_tasks, 1):
+            task_lines.append(f"  {i}. [{ct.status}] {ct.title}")
+        augmented_msg += "\n\n[TASK LIST]\n" + "\n".join(task_lines)
+
     # --- Assemble messages ---
     messages = [
         SystemMessage(content=system_with_tools),
     ] + history + [
-        HumanMessage(content=user_msg),
+        HumanMessage(content=augmented_msg),
     ]
 
     def generate():
@@ -478,7 +491,7 @@ If you do not need to call a tool, respond with plain text."""
             messages = [
                 SystemMessage(content=system_with_tools),
             ] + history + [
-                HumanMessage(content=user_msg),
+                HumanMessage(content=augmented_msg),
             ]
             print(f"[CHAT] final tool set: {len(final_tool_names)} tools", flush=True)
 

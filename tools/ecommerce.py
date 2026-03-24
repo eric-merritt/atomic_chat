@@ -1141,10 +1141,12 @@ def enrichment_pipeline(
         return tool_result(error="Empty data input. Provide data to enrich.")
 
     try:
+        from config import OLLAMA_NUM_CTX
         eval_llm = ChatOllama(
             model=eval_model,
             temperature=0,
             base_url="http://localhost:11434",
+            num_ctx=OLLAMA_NUM_CTX,
         )
     except Exception as e:
         return tool_result(error=f"Failed to initialize eval model '{eval_model}': {e}. Run: ollama pull {eval_model}")
