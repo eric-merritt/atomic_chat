@@ -10,6 +10,6 @@ describe('cancelChat', () => {
   it('posts to cancel endpoint', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
     await cancelChat();
-    expect(mockFetch).toHaveBeenCalledWith('/api/chat/cancel', { method: 'POST' });
+    expect(mockFetch).toHaveBeenCalledWith('/api/chat/cancel', { method: 'POST', credentials: 'include' });
   });
 });

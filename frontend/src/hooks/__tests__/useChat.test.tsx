@@ -34,7 +34,7 @@ describe('useChat', () => {
       .mockResolvedValueOnce({ ok: true, json: async () => ({ cleared: true }) });
     const { result } = renderHook(() => useChat(), { wrapper });
     await act(async () => { await result.current.clearHistory(); });
-    expect(mockFetch).toHaveBeenCalledWith('/api/history', { method: 'DELETE' });
+    expect(mockFetch).toHaveBeenCalledWith('/api/history', { method: 'DELETE', credentials: 'include' });
     expect(result.current.messages).toEqual([]);
   });
 });

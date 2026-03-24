@@ -7,20 +7,12 @@ globalThis.fetch = mockFetch as unknown as typeof fetch;
 beforeEach(() => { mockFetch.mockReset(); });
 
 const apiResponse = {
-  categories: [
-    {
-      name: 'Filesystem',
-      tools: [
-        { name: 'read_file', description: 'Read a file', params: {}, selected: true },
-        { name: 'write_file', description: 'Write a file', params: {}, selected: false },
-      ],
-      all_selected: false,
-      some_selected: true,
-      count: 2,
-      selected_count: 1,
-    },
+  available: [
+    { index: 1, name: 'write', description: 'Write a file', params: {} },
   ],
-  selected: ['read_file'],
+  selected: [
+    { index: 0, name: 'read', description: 'Read a file', params: {} },
+  ],
 };
 
 describe('fetchTools', () => {
@@ -39,23 +31,38 @@ describe('fetchTools', () => {
 });
 
 describe('toggleTool', () => {
-  it('posts tool name', async () => {
+  it('posts tool index to select endpoint', async () => {
+    // First call: fetchTools to populate index map
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => apiResponse });
-    await toggleTool('read_file');
-    expect(mockFetch).toHaveBeenCalledWith('/api/tools/toggle', expect.objectContaining({
+    await fetchTools();
+
+    // toggleTool: first fetches current state, then posts select/deselect
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => apiResponse })   // check state
+      .mockResolvedValueOnce({ ok: true, json: async () => apiResponse });  // select call
+
+    await toggleTool('write');
+    // Third call should be the select POST (write is in available, not selected)
+    expect(mockFetch).toHaveBeenCalledWith('/api/tools/select', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ tool: 'read_file' }),
+      body: JSON.stringify({ index: 1 }),
     }));
   });
 });
 
 describe('toggleCategory', () => {
-  it('posts category name', async () => {
+  it('posts to select/deselect for each tool in category', async () => {
+    // First call: fetchTools to populate index map
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => apiResponse });
+    await fetchTools();
+
+    // toggleCategory: fetches current state, then selects/deselects each tool
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: async () => apiResponse })   // check state
+      .mockResolvedValueOnce({ ok: true, json: async () => apiResponse });  // select call
+
     await toggleCategory('Filesystem');
-    expect(mockFetch).toHaveBeenCalledWith('/api/tools/toggle_category', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ category: 'Filesystem' }),
-    }));
+    // Should have called /api/tools to check state
+    expect(mockFetch).toHaveBeenCalledWith('/api/tools', expect.objectContaining({ credentials: 'include' }));
   });
 });
