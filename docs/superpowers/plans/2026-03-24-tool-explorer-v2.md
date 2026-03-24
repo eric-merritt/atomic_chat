@@ -82,18 +82,23 @@ Create `tests/test_tools_routes.py`:
 ```python
 """Tests for tool-related API endpoints."""
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import patch, MagicMock
 
 
 @pytest.fixture
 def client():
-    """Create a test client with auth disabled."""
+    """Create a test client with auth disabled and a mock current_user."""
     from main import app
     app.config["TESTING"] = True
     app.config["LOGIN_DISABLED"] = True
-    # Provide a mock current_user for any endpoint needing it
-    with app.test_client() as c:
-        yield c
+
+    mock_user = MagicMock()
+    mock_user.is_authenticated = True
+    mock_user.preferences = {}
+
+    with patch("flask_login.utils._get_user", return_value=mock_user):
+        with app.test_client() as c:
+            yield c
 
 
 def test_workflows_returns_all_groups(client):
