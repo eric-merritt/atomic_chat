@@ -50,8 +50,10 @@ RULES:
 - When stuck on tool flow, ask the user — show your plan up to the sticking point.
 - Never explain, instruct, describe tools, or summarize unless asked. Act.
 - Never fabricate data. Never use placeholder strings in tool arguments — use actual values from the user message or prior tool results.
+- Copy strings from the user message EXACTLY as written into tool arguments. Preserve hyphens, dots, spaces, and special characters. If the user writes "img.lazy-loaded", the tool argument must be exactly "img.lazy-loaded".
 - Tool results appear in conversation. Read and analyze them directly.
 - If a tool returns the same result twice, stop retrying and work with what you have.
+- When a [TASK LIST] is present and you complete a task, call mark_task_done with the task number to mark it done. Do this immediately after completing each task, before moving to the next.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -135,30 +137,57 @@ def _is_tool_failure(result_str: str) -> bool:
 # TOOL CALL PARSER
 # ─────────────────────────────────────────────────────────────
 
+def _fix_json(s: str) -> str:
+    """Fix common JSON issues from small model output.
+
+    - Adds quotes around unquoted string values
+    - Adds quotes around unquoted keys
+    """
+    # Quote unquoted keys: {name: -> {"name":
+    s = re.sub(r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', s)
+    # Quote unquoted string values (word chars with dots/hyphens, not already quoted, not numbers/booleans/null)
+    s = re.sub(
+        r':\s*(?!")(?!true|false|null|-?\d)([a-zA-Z_][\w.\-]*)\s*([,}\]])',
+        r': "\1"\2',
+        s,
+    )
+    return s
+
+
 def parse_tool_calls(response_content):
     """Parse tool calls from model text output.
 
     Handles both {name, params} and {name, arguments} formats,
     and strips <tools>...</tools> wrappers from abliterated models.
+    Falls back to regex fixup for malformed JSON from small models.
     """
+    import re as _re
+
     text = response_content.strip()
     # Strip <tools>...</tools> wrapper
-    import re as _re
     match = _re.search(r"<tools>(.*?)</tools>", text, flags=_re.DOTALL)
     if match:
         text = match.group(1).strip()
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+    def _try_parse(s):
+        """Try json, then json with fixup for common model quirks."""
+        try:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        try:
+            return json.loads(_fix_json(s))
+        except (json.JSONDecodeError, ValueError):
+            pass
+        return None
+
+    parsed = _try_parse(text)
+    if parsed is None:
         # Try to extract JSON from mixed text
         match = _re.search(r"[\[{].*[\]}]", text, flags=_re.DOTALL)
         if match:
-            try:
-                parsed = json.loads(match.group())
-            except json.JSONDecodeError:
-                return []
-        else:
+            parsed = _try_parse(match.group())
+        if parsed is None:
             return []
 
     def _normalize(call):
@@ -418,6 +447,9 @@ def chat_stream():
             desc = (t.description.split("\n")[0] if t.description else "")
             tool_schemas.append(f'- {name}({params_desc}): {desc}')
 
+    # Always include internal mark_task_done tool
+    tool_schemas.append("- mark_task_done(task_number: integer): Mark a task as done by its number from the [TASK LIST]")
+    tool_schemas.append("- unmark_task_done(task_number: integer): Revert a done task back to pending by its number from the [TASK LIST]")
     tools_block = "\n".join(tool_schemas)
 
     system_with_tools = f"""{SYSTEM_PROMPT}
@@ -439,10 +471,20 @@ If you do not need to call a tool, respond with plain text."""
     )
     augmented_msg = user_msg
     if conv_tasks:
+        # Build task→tool mapping from curator plan
+        tool_hints = {}
+        if curation.task_plan:
+            for m in curation.task_plan:
+                tool_hints[m.task_title] = m.tool
+
         task_lines = []
         for i, ct in enumerate(conv_tasks, 1):
-            task_lines.append(f"  {i}. [{ct.status}] {ct.title}")
+            hint = tool_hints.get(ct.title, "")
+            suffix = f" → use {hint}" if hint and hint != "mcp" else ""
+            task_lines.append(f"  {i}. [{ct.status}] {ct.title}{suffix}")
         augmented_msg += "\n\n[TASK LIST]\n" + "\n".join(task_lines)
+        if any(m.tool == "mcp" for m in curation.task_plan):
+            augmented_msg += "\n\nNote: Tasks without a tool hint may require external MCP tools. Use connect_to_mcp if needed."
 
     # --- Assemble messages ---
     messages = [
@@ -494,6 +536,7 @@ If you do not need to call a tool, respond with plain text."""
                     desc = (t.description.split("\n")[0] if t.description else "")
                     tool_schemas_final.append(f'- {tname}({params_desc}): {desc}')
 
+            tool_schemas_final.append("- mark_task_done(task_number: integer): Mark a task as done by its number from the [TASK LIST]")
             tools_block_final = "\n".join(tool_schemas_final)
             system_with_tools = f"""{SYSTEM_PROMPT}
 
@@ -572,6 +615,41 @@ If you do not need to call a tool, respond with plain text."""
                         }
                     }) + "\n"
 
+                    # ── Internal tools: mark_task_done / unmark_task_done ──
+                    if tool_name in ("mark_task_done", "unmark_task_done"):
+                        new_status = "done" if tool_name == "mark_task_done" else "pending"
+                        verb = "marked done" if new_status == "done" else "unmarked (pending)"
+                        try:
+                            task_number = int(tool_params.get("task_number", 0))
+                            ordered_tasks = (
+                                db.query(ConversationTask)
+                                .filter_by(conversation_id=conversation_id)
+                                .order_by(ConversationTask.created_at.asc())
+                                .all()
+                            )
+                            if 1 <= task_number <= len(ordered_tasks):
+                                task = ordered_tasks[task_number - 1]
+                                task.status = new_status
+                                db.commit()
+                                result_str = f"Task {task_number} {verb}: {task.title}"
+                            else:
+                                result_str = f"Invalid task number {task_number}. Valid range: 1-{len(ordered_tasks)}"
+                        except Exception as e:
+                            result_str = f"Error updating task: {e}"
+
+                        # Stream result and add to messages
+                        yield json.dumps({
+                            "tool_result": {
+                                "tool": tool_name,
+                                "result": result_str,
+                            }
+                        }) + "\n"
+                        messages.append(ToolMessage(
+                            content=result_str,
+                            tool_call_id=tool_name,
+                        ))
+                        continue
+
                     # Execute the tool with self-correcting retry
                     tool_obj = _TOOL_BY_NAME.get(tool_name)
                     if not tool_obj:
@@ -584,7 +662,7 @@ If you do not need to call a tool, respond with plain text."""
                         for attempt in range(max_retries):
                             try:
                                 result = tool_obj.invoke(tool_params)
-                                result_str = str(result)
+                                result_str = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
                             except Exception as tool_err:
                                 result_str = f"Error: {tool_err}"
 
@@ -877,7 +955,8 @@ def cli_chat():
                     tool_obj = _TOOL_BY_NAME.get(tool_name)
                     if tool_obj:
                         try:
-                            result = str(tool_obj.invoke(tool_params))
+                            r = tool_obj.invoke(tool_params)
+                            result = json.dumps(r) if isinstance(r, (dict, list)) else str(r)
                         except Exception as te:
                             result = f"Error: {te}"
                     else:

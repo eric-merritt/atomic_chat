@@ -5,21 +5,22 @@ import time
 import functools
 
 
-def tool_result(data=None, error: str = "") -> str:
-    """Return a standardized JSON response string.
+def tool_result(data=None, error: str = "") -> dict:
+    """Return a standardized result dict.
 
     All tools MUST return the output of this function.
+    qwen-agent converts dict returns to string automatically.
 
     Args:
         data: The tool's result payload. Any JSON-serializable value.
         error: Error message. If non-empty, status is "error".
 
     Returns:
-        JSON string: {"status": "success"|"error", "data": ..., "error": ""}
+        Dict: {"status": "success"|"error", "data": ..., "error": ""}
     """
     if error:
-        return json.dumps({"status": "error", "data": None, "error": error})
-    return json.dumps({"status": "success", "data": data, "error": ""})
+        return {"status": "error", "data": None, "error": error}
+    return {"status": "success", "data": data, "error": ""}
 
 
 # Status codes that should NOT be retried (client errors — the request itself is wrong)
