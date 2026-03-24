@@ -49,7 +49,9 @@ Chat collapses entirely. Chain view takes the right column. Input bar at bottom 
 
 Chain view collapses to sidebar-width strip showing step count and small tool icons. Expand button restores full panel.
 
-Closing all workspace groups reverts to Default layout.
+Closing all workspace groups reverts to Default layout. Chain state is preserved — reopening the workspace restores the chain. Chain is cleared on conversation change or explicit user action (clear button in chain view).
+
+**Responsive:** Below 1200px viewport width, the slim chat column layout is unavailable — workspace always produces the Input Bar Only layout. Below 768px, the Tool Explorer is out of scope (mobile not supported in v2).
 
 ---
 
@@ -61,7 +63,8 @@ Replaces the current empty sidebar content entirely.
 
 - Top of sidebar, always visible
 - Debounced instant filter — filters group cards and tools within expanded groups by name
-- No API call; group/tool registry is static data from `workflow_groups.py`
+- Group/tool registry is fetched once from `GET /api/workflow-groups` (see Section 7) and cached client-side
+- When filter matches zero groups: show muted "No matching tools" text with a clear (×) button
 
 ### Group Cards
 
@@ -105,7 +108,16 @@ Displays for the highlighted tool:
 - Columns: Name, Type, Required, Description
 - Read-only by default
 
-**Interactive toggle:** Switches parameter table to editable inputs matching types (text fields, number inputs, boolean toggles). Pre-fills params for when the tool is pushed to the chain.
+**Interactive toggle:** Switches parameter table to editable inputs. Type-to-widget mapping:
+
+| Param type | Widget |
+|------------|--------|
+| `string` | Text input |
+| `integer` / `number` | Number input |
+| `boolean` | Toggle switch |
+| `array` / `object` / other | JSON text input (fallback) |
+
+Pre-fills params for when the tool is pushed to the chain.
 
 ### Push to Chain
 
@@ -167,13 +179,13 @@ Standard chat experience. Full width center, normal input bar.
 
 ### Slim Column
 
-Chat shrinks to sidebar-width column on the right. Messages wrap tightly or truncate. Scrollable. Input bar stays at bottom full-width.
+Chat shrinks to `22rem` column (matching expanded sidebar width) on the right. Messages wrap tightly or truncate. Scrollable. Input bar stays at bottom spanning all grid columns full-width.
 
 ### Input Bar Only
 
 Chat hidden entirely. Input bar at bottom full-width:
 - **Input field:** Left side. Serves as chat input or agent instruction depending on mode.
-- **Mode toggle:** Small indicator showing "Chat" vs "Agent"
+- **Mode toggle:** Small indicator showing "Chat" vs "Agent". In Chat mode, input sends a normal chat message. In Agent mode (Layer 2), input sends an instruction to execute the current chain. Deferred to Layer 2 — Layer 1 is always Chat mode.
 - **Chat popover trigger:** Click target on far right edge. Opens floating chat panel anchored bottom-right (messenger-style). Shows recent message history, scrollable, dismissible.
 
 ### Transitions
@@ -216,12 +228,14 @@ App
   └─ AuthProvider
       └─ ThemeProvider
           └─ ToolProvider (existing — still manages tool activation state)
-              └─ WorkspaceProvider (new — layout, groups, chain)
-                  └─ ChatProvider
+              └─ ChatProvider
+                  └─ WorkspaceProvider (new — layout, groups, chain)
                       └─ Routes/Pages
 ```
 
-`WorkspaceProvider` syncs tool activations back to `ToolProvider` so the chat agent knows which tools are available.
+`WorkspaceProvider` sits below both `ToolProvider` and `ChatProvider` so it can:
+- Sync tool activations upward to `ToolProvider` via its `toggleTool`/`toggleCategory` callbacks
+- Dispatch chain execution messages through `ChatProvider`'s stream interface
 
 ---
 
@@ -229,7 +243,31 @@ App
 
 ### Tool Registry
 
-Static data from `workflow_groups.py` exposed via existing `/api/tools` endpoint. Groups, tool names, descriptions, and parameter schemas all available client-side.
+**New endpoint: `GET /api/workflow-groups`**
+
+Returns the workflow group registry with full tool metadata. Response shape:
+
+```json
+{
+  "groups": [
+    {
+      "name": "Filesystem",
+      "tooltip": "File reading/writing/directory operations",
+      "tools": [
+        {
+          "name": "read_file",
+          "description": "Read contents of a file",
+          "params": {
+            "path": { "type": "string", "required": true, "description": "File path" }
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Backend implementation: new route in `routes/preferences.py` (or a new `routes/tools.py`) that iterates `WORKFLOW_GROUPS`, cross-references `TOOL_REGISTRY` from `main.py` for tool metadata (description, params), and returns the combined structure. Fetched once on app load and cached client-side in `WorkspaceProvider`.
 
 ### Tool Activation
 
