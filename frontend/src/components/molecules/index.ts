@@ -8,3 +8,4 @@ export { ImageThumbnail } from './ImageThumbnail';
 export { ThinkingIndicator } from './ThinkingIndicator';
 export { ApiKeyRow } from './ApiKeyRow';
 export { CreateKeyModal } from './CreateKeyModal';
+export { ChatPopover } from './ChatPopover';
