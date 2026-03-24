@@ -11,6 +11,7 @@ beforeEach(() => {
     fill: vi.fn(),
     closePath: vi.fn(),
     fillStyle: '',
+    createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
   })) as any;
 });
 

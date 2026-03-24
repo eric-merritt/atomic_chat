@@ -31,6 +31,6 @@ describe('clearHistory', () => {
   it('sends DELETE request', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({ cleared: true }) });
     await clearHistory();
-    expect(mockFetch).toHaveBeenCalledWith('/api/history', { method: 'DELETE' });
+    expect(mockFetch).toHaveBeenCalledWith('/api/history', { method: 'DELETE', credentials: 'include' });
   });
 });

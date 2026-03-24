@@ -12,21 +12,19 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 );
 
 const toolsResponse = {
-  categories: [{
-    name: 'Web',
-    tools: [
-      { name: 'web_search', description: 'Search', params: {}, selected: true },
-      { name: 'fetch_url', description: 'Fetch', params: {}, selected: false },
-    ],
-  }],
-  selected: ['web_search'],
+  available: [
+    { index: 1, name: 'fetch_url', description: 'Fetch', params: {} },
+  ],
+  selected: [
+    { index: 0, name: 'web_search', description: 'Search', params: {} },
+  ],
 };
 
 beforeEach(() => { mockFetch.mockReset(); });
 
 describe('useTools', () => {
   it('fetches categories on mount', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => toolsResponse });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => toolsResponse });
     const { result } = renderHook(() => useTools(), { wrapper });
     await waitFor(() => { expect(result.current.categories).toHaveLength(1); });
     expect(result.current.selected).toEqual(['web_search']);
@@ -34,20 +32,17 @@ describe('useTools', () => {
 
   it('toggles a tool', async () => {
     const toggledResponse = {
-      ...toolsResponse,
-      categories: [{
-        ...toolsResponse.categories[0],
-        tools: toolsResponse.categories[0].tools.map((t) =>
-          t.name === 'fetch_url' ? { ...t, selected: true } : t
-        ),
-      }],
-      selected: ['web_search', 'fetch_url'],
+      available: [],
+      selected: [
+        { index: 0, name: 'web_search', description: 'Search', params: {} },
+        { index: 1, name: 'fetch_url', description: 'Fetch', params: {} },
+      ],
     };
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, json: async () => toolsResponse })
-      .mockResolvedValueOnce({ ok: true, json: async () => toggledResponse });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => toolsResponse });
     const { result } = renderHook(() => useTools(), { wrapper });
     await waitFor(() => { expect(result.current.categories).toHaveLength(1); });
+
+    mockFetch.mockResolvedValue({ ok: true, json: async () => toggledResponse });
     await act(async () => { await result.current.toggleTool('fetch_url'); });
     expect(result.current.selected).toEqual(['web_search', 'fetch_url']);
   });

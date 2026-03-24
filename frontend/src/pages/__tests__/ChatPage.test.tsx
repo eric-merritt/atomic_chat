@@ -16,6 +16,7 @@ globalThis.fetch = mockFetch as unknown as typeof fetch;
 HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
   clearRect: vi.fn(), beginPath: vi.fn(), arc: vi.fn(),
   fill: vi.fn(), closePath: vi.fn(), fillStyle: '',
+  createRadialGradient: vi.fn(() => ({ addColorStop: vi.fn() })),
 })) as any;
 
 function renderWithProviders() {

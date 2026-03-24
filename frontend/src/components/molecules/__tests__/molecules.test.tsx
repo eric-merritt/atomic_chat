@@ -23,7 +23,7 @@ describe('ChatInput', () => {
 describe('ToolChip', () => {
   it('shows count', () => {
     render(<ToolChip selected={['a', 'b']} onRemove={() => {}} />);
-    expect(screen.getByText('2 tools')).toBeInTheDocument();
+    expect(screen.getByText(/2.*Tools Selected/i)).toBeInTheDocument();
   });
 
   it('hides when no tools selected', () => {
