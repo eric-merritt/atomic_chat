@@ -1,21 +1,27 @@
-"""Tool registry — grouped by agent domain."""
+"""Tool registry — grouped by agent domain.
 
-import tools.filesystem  # noqa: F401 — registers filesystem tools via @register_tool
-from tools.codesearch import CODESEARCH_TOOLS
-from tools.web import WEB_TOOLS
-from tools.ecommerce import ECOMMERCE_TOOLS, FLOW_TOOLS
-from tools.onlyfans import ONLYFANS_TOOLS
-from tools.torrent import TORRENT_TOOLS
-from tools.mcp import MCP_TOOLS
-from tools.accounting import ACCOUNTING_TOOLS
+All tool modules use qwen-agent's @register_tool decorator.
+Importing each module triggers registration in TOOL_REGISTRY.
+ALL_TOOLS is built from the registry after all modules are loaded.
+"""
 
-ALL_TOOLS = (
-    CODESEARCH_TOOLS
-    + WEB_TOOLS
-    + ECOMMERCE_TOOLS
-    + FLOW_TOOLS
-    + ONLYFANS_TOOLS
-    + TORRENT_TOOLS
-    + MCP_TOOLS
-    + ACCOUNTING_TOOLS
-)
+from qwen_agent.tools.base import TOOL_REGISTRY
+
+# Snapshot built-in tool names before our imports
+_BUILTIN_TOOLS = set(TOOL_REGISTRY.keys())
+
+# Import each module to trigger @register_tool side effects
+import tools.filesystem  # noqa: F401
+import tools.codesearch  # noqa: F401
+import tools.web  # noqa: F401
+import tools.ecommerce  # noqa: F401
+import tools.onlyfans  # noqa: F401
+import tools.torrent  # noqa: F401
+import tools.mcp  # noqa: F401
+import tools.accounting  # noqa: F401
+
+# Build ALL_TOOLS as instantiated tool objects (only our custom tools)
+ALL_TOOLS = []
+for name, cls in TOOL_REGISTRY.items():
+    if name not in _BUILTIN_TOOLS:
+        ALL_TOOLS.append(cls())
