@@ -9,7 +9,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-from langchain.tools import tool
+import json5
+from qwen_agent.tools.base import BaseTool, register_tool
 from sqlalchemy.orm import Session
 
 from auth.accounting_models import (
@@ -19,7 +20,7 @@ from auth.accounting_models import (
     NORMAL_BALANCE_MAP,
 )
 from auth.db import SessionLocal
-from tools._output import tool_result
+from tools._output import tool_result, retry
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -214,34 +215,32 @@ def _create_ledger_impl(db: Session, user_id: str, name: str = "My Ledger") -> s
     })
 
 
-@tool
-def create_ledger(name: str = "My Ledger") -> str:
-    """Initialize a new accounting ledger for the current user.
+@register_tool('create_ledger')
+class CreateLedgerTool(BaseTool):
+    description = 'Initialize a new accounting ledger for the current user with 12 default accounts.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string', 'description': 'Name for the ledger (e.g. "My Business"). Default: "My Ledger".'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: When a user wants to start using accounting tools for the first time.
-    WHEN NOT TO USE: When the user already has a ledger (will return an error).
-
-    Creates a ledger with 12 default accounts: Cash, Accounts Receivable, Inventory,
-    Accounts Payable, Owner's Capital, Income Summary, Revenue, Cost of Goods Sold,
-    Rent Expense, Utilities Expense, Supplies Expense, Wages Expense.
-
-    Args:
-        name: Name for the ledger (e.g. "My Business", "Personal"). Default: "My Ledger".
-
-    Output format:
-        {"status": "success", "data": {"ledger_id": N, "name": "...", "accounts_created": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _create_ledger_impl(db, current_user.id, name)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        name = p.get('name', 'My Ledger')
+        db = _get_db()
+        try:
+            result = _create_ledger_impl(db, current_user.id, name)
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _create_account_impl(
@@ -286,33 +285,38 @@ def _create_account_impl(
     })
 
 
-@tool
-def create_account(name: str, account_type: str, account_number: str = None, parent_id: int = None) -> str:
-    """Add a new account to the user's chart of accounts.
+@register_tool('create_account')
+class CreateAccountTool(BaseTool):
+    description = 'Add a new account to the user\'s chart of accounts.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'name': {'type': 'string', 'description': 'Account name. Must be unique within the ledger.'},
+            'account_type': {'type': 'string', 'description': 'One of: "asset", "liability", "equity", "revenue", "expense".'},
+            'account_number': {'type': 'string', 'description': 'Optional user-assigned number (e.g. "1500").'},
+            'parent_id': {'type': 'integer', 'description': 'Optional parent account ID for sub-accounts.'},
+        },
+        'required': ['name', 'account_type'],
+    }
 
-    WHEN TO USE: When the user needs a new account not in the defaults.
-    WHEN NOT TO USE: When the account already exists (will return error).
-
-    Args:
-        name: Account name. Must be unique within the ledger.
-        account_type: One of: "asset", "liability", "equity", "revenue", "expense".
-        account_number: Optional user-assigned number (e.g. "1500"). Must be unique if provided.
-        parent_id: Optional parent account ID for sub-accounts.
-
-    Output format:
-        {"status": "success", "data": {"account_id": N, "name": "...", "account_type": "...", "normal_balance": "..."}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _create_account_impl(db, current_user.id, name, account_type, account_number, parent_id)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _create_account_impl(
+                db, current_user.id,
+                p['name'], p['account_type'],
+                p.get('account_number'), p.get('parent_id'),
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _list_accounts_impl(db: Session, user_id: str, account_type: str = None) -> str:
@@ -345,26 +349,26 @@ def _list_accounts_impl(db: Session, user_id: str, account_type: str = None) -> 
     })
 
 
-@tool
-def list_accounts(account_type: str = None) -> str:
-    """List all accounts in the user's chart of accounts.
+@register_tool('list_accounts')
+class ListAccountsTool(BaseTool):
+    description = 'List all accounts in the user\'s chart of accounts.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'account_type': {'type': 'string', 'description': 'Optional filter. One of: "asset", "liability", "equity", "revenue", "expense".'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: When you need to see available accounts before journalizing.
-    WHEN NOT TO USE: Never — this is always safe to call.
-
-    Args:
-        account_type: Optional filter. One of: "asset", "liability", "equity", "revenue", "expense".
-                      If omitted, returns all accounts.
-
-    Output format:
-        {"status": "success", "data": {"count": N, "accounts": [{"id": N, "name": "...", ...}]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _list_accounts_impl(db, current_user.id, account_type)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _list_accounts_impl(db, current_user.id, p.get('account_type'))
+        finally:
+            db.close()
 
 
 def _get_account_balance_impl(db: Session, user_id: str, account_name: str, as_of_date: str = None) -> str:
@@ -394,26 +398,27 @@ def _get_account_balance_impl(db: Session, user_id: str, account_name: str, as_o
     })
 
 
-@tool
-def get_account_balance(account_name: str, as_of_date: str = None) -> str:
-    """Get the current balance of a single account.
+@register_tool('get_account_balance')
+class GetAccountBalanceTool(BaseTool):
+    description = 'Get the current balance of a single account.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'account_name': {'type': 'string', 'description': 'Exact account name (e.g. "Cash", "Accounts Receivable").'},
+            'as_of_date': {'type': 'string', 'description': 'Optional date in YYYY-MM-DD format. Defaults to all time.'},
+        },
+        'required': ['account_name'],
+    }
 
-    WHEN TO USE: When you need to check one account's balance (e.g. "How much cash do I have?").
-    WHEN NOT TO USE: When you need all account balances (use trial_balance instead).
-
-    Args:
-        account_name: Exact account name (e.g. "Cash", "Accounts Receivable").
-        as_of_date: Optional date in YYYY-MM-DD format. Defaults to all time.
-
-    Output format:
-        {"status": "success", "data": {"account_name": "...", "balance": "123.45", ...}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _get_account_balance_impl(db, current_user.id, account_name, as_of_date)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _get_account_balance_impl(db, current_user.id, p['account_name'], p.get('as_of_date'))
+        finally:
+            db.close()
 
 
 def _update_account_impl(
@@ -455,35 +460,38 @@ def _update_account_impl(
     })
 
 
-@tool
-def update_account(account_name: str, new_name: str = None, new_account_number: str = None, is_active: bool = None) -> str:
-    """Update an account's name, number, or active status.
+@register_tool('update_account')
+class UpdateAccountTool(BaseTool):
+    description = "Update an account's name, number, or active status. Cannot deactivate an account with a non-zero balance."
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'account_name': {'type': 'string', 'description': 'Current name of the account to update.'},
+            'new_name': {'type': 'string', 'description': 'New name (optional). Must be unique within ledger.'},
+            'new_account_number': {'type': 'string', 'description': 'New account number (optional).'},
+            'is_active': {'type': 'boolean', 'description': 'Set to false to deactivate (optional). Requires zero balance.'},
+        },
+        'required': ['account_name'],
+    }
 
-    WHEN TO USE: When renaming an account or deactivating one no longer needed.
-    WHEN NOT TO USE: When creating a new account (use create_account).
-
-    Cannot deactivate an account with a non-zero balance.
-
-    Args:
-        account_name: Current name of the account to update.
-        new_name: New name (optional). Must be unique within ledger.
-        new_account_number: New account number (optional).
-        is_active: Set to false to deactivate (optional). Requires zero balance.
-
-    Output format:
-        {"status": "success", "data": {"account_id": N, "name": "...", "is_active": true/false, ...}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _update_account_impl(db, current_user.id, account_name, new_name, new_account_number, is_active)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _update_account_impl(
+                db, current_user.id,
+                p['account_name'],
+                p.get('new_name'), p.get('new_account_number'), p.get('is_active'),
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 # ── Journal Tools ─────────────────────────────────────────────────────────────
@@ -568,36 +576,37 @@ def _journalize_transaction_impl(db: Session, user_id: str, date_str: str, memo:
     })
 
 
-@tool
-def journalize_transaction(date: str, memo: str, lines: list) -> str:
-    """Record a double-entry journal transaction.
+@register_tool('journalize_transaction')
+class JournalizeTransactionTool(BaseTool):
+    description = 'Record a double-entry journal transaction. Every transaction MUST balance: total debits == total credits.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'date': {'type': 'string', 'description': 'Transaction date in YYYY-MM-DD format.'},
+            'memo': {'type': 'string', 'description': 'Description of the transaction.'},
+            'lines': {
+                'type': 'array',
+                'description': 'Array of line items. Each: {"account": "name", "debit": amount, "credit": amount}. One of debit/credit must be 0.',
+                'items': {'type': 'object'},
+            },
+        },
+        'required': ['date', 'memo', 'lines'],
+    }
 
-    WHEN TO USE: When recording any financial transaction (payments, sales, adjustments).
-    WHEN NOT TO USE: For inventory purchases (use receive_inventory) or FIFO/LIFO sales.
-
-    Every transaction MUST balance: total debits == total credits.
-    Each line must have either a debit OR credit, never both.
-
-    Args:
-        date: Transaction date in YYYY-MM-DD format.
-        memo: Description of the transaction.
-        lines: Array of line items. Each: {"account": "name", "debit": amount, "credit": amount}.
-               One of debit/credit must be 0.
-
-    Output format:
-        {"status": "success", "data": {"journal_entry_id": N, "lines": [...], ...}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _journalize_transaction_impl(db, current_user.id, date, memo, lines)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _journalize_transaction_impl(db, current_user.id, p['date'], p['memo'], p['lines'])
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _search_journal_impl(
@@ -652,33 +661,36 @@ def _search_journal_impl(
     return tool_result(data={"count": len(results), "entries": results})
 
 
-@tool
-def search_journal(
-    start_date: str = None, end_date: str = None,
-    memo_text: str = None, min_amount: float = None,
-    max_amount: float = None, account_name: str = None,
-) -> str:
-    """Search journal entries by date, memo text, amount, or account.
+@register_tool('search_journal')
+class SearchJournalTool(BaseTool):
+    description = 'Search journal entries by date, memo text, amount, or account.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'start_date': {'type': 'string', 'description': 'Optional start date (YYYY-MM-DD).'},
+            'end_date': {'type': 'string', 'description': 'Optional end date (YYYY-MM-DD).'},
+            'memo_text': {'type': 'string', 'description': 'Optional text to search in entry memos (case-insensitive).'},
+            'min_amount': {'type': 'number', 'description': 'Optional minimum line amount.'},
+            'max_amount': {'type': 'number', 'description': 'Optional maximum line amount.'},
+            'account_name': {'type': 'string', 'description': 'Optional account name filter.'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: When looking for specific transactions.
-
-    Args:
-        start_date: Optional start date (YYYY-MM-DD).
-        end_date: Optional end date (YYYY-MM-DD).
-        memo_text: Optional text to search in entry memos (case-insensitive).
-        min_amount: Optional minimum line amount.
-        max_amount: Optional maximum line amount.
-        account_name: Optional account name filter.
-
-    Output format:
-        {"status": "success", "data": {"count": N, "entries": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _search_journal_impl(db, current_user.id, start_date, end_date, memo_text, min_amount, max_amount, account_name)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _search_journal_impl(
+                db, current_user.id,
+                p.get('start_date'), p.get('end_date'),
+                p.get('memo_text'), p.get('min_amount'),
+                p.get('max_amount'), p.get('account_name'),
+            )
+        finally:
+            db.close()
 
 
 def _void_transaction_impl(db: Session, user_id: str, journal_entry_id: int, date_str: str, memo: str) -> str:
@@ -758,35 +770,33 @@ def _void_transaction_impl(db: Session, user_id: str, journal_entry_id: int, dat
     })
 
 
-@tool
-def void_transaction(journal_entry_id: int, date: str, memo: str) -> str:
-    """Void a journal entry by creating an equal and opposite reversing entry.
+@register_tool('void_transaction')
+class VoidTransactionTool(BaseTool):
+    description = 'Void a journal entry by creating an equal and opposite reversing entry. Never deletes — preserves full audit trail.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'journal_entry_id': {'type': 'integer', 'description': 'ID of the journal entry to void.'},
+            'date': {'type': 'string', 'description': 'Date for the reversing entry (YYYY-MM-DD).'},
+            'memo': {'type': 'string', 'description': 'Reason for voiding.'},
+        },
+        'required': ['journal_entry_id', 'date', 'memo'],
+    }
 
-    WHEN TO USE: When a transaction was recorded in error and needs to be reversed.
-    WHEN NOT TO USE: When you want to adjust an amount (make a new entry instead).
-
-    Cannot void an entry that is already voided or is itself a reversal.
-    Never deletes — preserves full audit trail.
-
-    Args:
-        journal_entry_id: ID of the journal entry to void.
-        date: Date for the reversing entry (YYYY-MM-DD).
-        memo: Reason for voiding.
-
-    Output format:
-        {"status": "success", "data": {"reversal_entry_id": N, "original_entry_id": N, ...}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _void_transaction_impl(db, current_user.id, journal_entry_id, date, memo)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _void_transaction_impl(db, current_user.id, p['journal_entry_id'], p['date'], p['memo'])
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _account_ledger_impl(db: Session, user_id: str, account_name: str, start_date: str = None, end_date: str = None) -> str:
@@ -833,26 +843,28 @@ def _account_ledger_impl(db: Session, user_id: str, account_name: str, start_dat
     })
 
 
-@tool
-def account_ledger(account_name: str, start_date: str = None, end_date: str = None) -> str:
-    """View all journal lines for a specific account with running balance.
+@register_tool('account_ledger')
+class AccountLedgerTool(BaseTool):
+    description = 'View all journal lines for a specific account with running balance.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'account_name': {'type': 'string', 'description': 'Exact account name.'},
+            'start_date': {'type': 'string', 'description': 'Optional start date filter (YYYY-MM-DD).'},
+            'end_date': {'type': 'string', 'description': 'Optional end date filter (YYYY-MM-DD).'},
+        },
+        'required': ['account_name'],
+    }
 
-    WHEN TO USE: When you want to see the full history of an account.
-
-    Args:
-        account_name: Exact account name.
-        start_date: Optional start date filter (YYYY-MM-DD).
-        end_date: Optional end date filter (YYYY-MM-DD).
-
-    Output format:
-        {"status": "success", "data": {"account_name": "...", "entries": [...], "running_balance": "..."}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _account_ledger_impl(db, current_user.id, account_name, start_date, end_date)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _account_ledger_impl(db, current_user.id, p['account_name'], p.get('start_date'), p.get('end_date'))
+        finally:
+            db.close()
 
 
 # ── Inventory Tools ───────────────────────────────────────────────────────────
@@ -893,32 +905,37 @@ def _register_inventory_item_impl(
     })
 
 
-@tool
-def register_inventory_item(sku: str, description: str, item_type: str, default_sale_price: float = None) -> str:
-    """Register a new inventory item (goods or service).
+@register_tool('register_inventory_item')
+class RegisterInventoryItemTool(BaseTool):
+    description = 'Register a new inventory item (goods or service) before receiving inventory or recording sales.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'sku': {'type': 'string', 'description': 'Unique stock-keeping unit code.'},
+            'description': {'type': 'string', 'description': 'Item description.'},
+            'item_type': {'type': 'string', 'description': '"goods" (physical, has cost layers) or "service" (no inventory tracking).'},
+            'default_sale_price': {'type': 'number', 'description': 'Optional default price per unit.'},
+        },
+        'required': ['sku', 'description', 'item_type'],
+    }
 
-    WHEN TO USE: Before receiving inventory or recording sales for a new product/service.
-
-    Args:
-        sku: Unique stock-keeping unit code.
-        description: Item description.
-        item_type: "goods" (physical, has cost layers) or "service" (no inventory tracking).
-        default_sale_price: Optional default price per unit.
-
-    Output format:
-        {"status": "success", "data": {"item_id": N, "sku": "...", ...}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _register_inventory_item_impl(db, current_user.id, sku, description, item_type, default_sale_price)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _register_inventory_item_impl(
+                db, current_user.id,
+                p['sku'], p['description'], p['item_type'], p.get('default_sale_price'),
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _receive_inventory_impl(
@@ -979,35 +996,38 @@ def _receive_inventory_impl(
     })
 
 
-@tool
-def receive_inventory(item_sku: str, quantity: float, unit_cost: float, date: str, payment_account: str) -> str:
-    """Receive inventory and auto-record the purchase journal entry.
+@register_tool('receive_inventory')
+class ReceiveInventoryTool(BaseTool):
+    description = 'Receive inventory and auto-record the purchase journal entry (debit Inventory, credit payment_account).'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'item_sku': {'type': 'string', 'description': 'SKU of the item being received.'},
+            'quantity': {'type': 'number', 'description': 'Number of units received.'},
+            'unit_cost': {'type': 'number', 'description': 'Cost per unit.'},
+            'date': {'type': 'string', 'description': 'Receipt date (YYYY-MM-DD).'},
+            'payment_account': {'type': 'string', 'description': 'Account to credit (e.g. "Cash", "Accounts Payable").'},
+        },
+        'required': ['item_sku', 'quantity', 'unit_cost', 'date', 'payment_account'],
+    }
 
-    WHEN TO USE: When goods arrive and need to be added to inventory.
-
-    Creates a cost layer and journals: debit Inventory, credit payment_account.
-
-    Args:
-        item_sku: SKU of the item being received.
-        quantity: Number of units received.
-        unit_cost: Cost per unit.
-        date: Receipt date (YYYY-MM-DD).
-        payment_account: Account to credit (e.g. "Cash", "Accounts Payable").
-
-    Output format:
-        {"status": "success", "data": {"journal_entry_id": N, "layer": {...}}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _receive_inventory_impl(db, current_user.id, item_sku, quantity, unit_cost, date, payment_account)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _receive_inventory_impl(
+                db, current_user.id,
+                p['item_sku'], p['quantity'], p['unit_cost'], p['date'], p['payment_account'],
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _list_inventory_items_impl(db: Session, user_id: str) -> str:
@@ -1034,21 +1054,23 @@ def _list_inventory_items_impl(db: Session, user_id: str) -> str:
     return tool_result(data={"count": len(result_items), "items": result_items})
 
 
-@tool
-def list_inventory_items() -> str:
-    """List all inventory items with quantity on hand.
+@register_tool('list_inventory_items')
+class ListInventoryItemsTool(BaseTool):
+    description = 'List all inventory items with quantity on hand.'
+    parameters = {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+    }
 
-    WHEN TO USE: When you need to see what's in stock.
-
-    Output format:
-        {"status": "success", "data": {"count": N, "items": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _list_inventory_items_impl(db, current_user.id)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        db = _get_db()
+        try:
+            return _list_inventory_items_impl(db, current_user.id)
+        finally:
+            db.close()
 
 
 def _deactivate_inventory_item_impl(db: Session, user_id: str, item_sku: str) -> str:
@@ -1076,31 +1098,31 @@ def _deactivate_inventory_item_impl(db: Session, user_id: str, item_sku: str) ->
     })
 
 
-@tool
-def deactivate_inventory_item(item_sku: str) -> str:
-    """Deactivate an inventory item.
+@register_tool('deactivate_inventory_item')
+class DeactivateInventoryItemTool(BaseTool):
+    description = 'Deactivate an inventory item. Rejects if any cost layers still have remaining quantity.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'item_sku': {'type': 'string', 'description': 'SKU of the item to deactivate.'},
+        },
+        'required': ['item_sku'],
+    }
 
-    WHEN TO USE: When an item is discontinued and fully depleted.
-
-    Rejects if any cost layers still have remaining quantity.
-
-    Args:
-        item_sku: SKU of the item to deactivate.
-
-    Output format:
-        {"status": "success", "data": {"item_id": N, "sku": "...", "is_active": false}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _deactivate_inventory_item_impl(db, current_user.id, item_sku)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _deactivate_inventory_item_impl(db, current_user.id, p['item_sku'])
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 # ── FIFO/LIFO Costing Tools ───────────────────────────────────────────────────
@@ -1202,44 +1224,43 @@ def _journalize_fifo_transaction_impl(
     )
 
 
-@tool
-def journalize_fifo_transaction(
-    date: str, memo: str, item_sku: str, quantity: float,
-    sale_price_per_unit: float = None, revenue_account: str = "Revenue",
-    receivable_account: str = "Cash",
-) -> str:
-    """Record a FIFO (first-in, first-out) inventory sale or consumption.
+@register_tool('journalize_fifo_transaction')
+class JournalizeFifoTransactionTool(BaseTool):
+    description = 'Record a FIFO (first-in, first-out) inventory sale or consumption. Pulls cost from oldest layers first.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'date': {'type': 'string', 'description': 'Sale date (YYYY-MM-DD).'},
+            'memo': {'type': 'string', 'description': 'Transaction description.'},
+            'item_sku': {'type': 'string', 'description': 'SKU of the item being sold.'},
+            'quantity': {'type': 'number', 'description': 'Units sold/consumed.'},
+            'sale_price_per_unit': {'type': 'number', 'description': 'Price per unit (omit for internal consumption).'},
+            'revenue_account': {'type': 'string', 'description': 'Revenue account name (default "Revenue").'},
+            'receivable_account': {'type': 'string', 'description': 'Account to debit for sale (default "Cash").'},
+        },
+        'required': ['date', 'memo', 'item_sku', 'quantity'],
+    }
 
-    WHEN TO USE: When selling goods using FIFO costing (oldest inventory used first).
-
-    Pulls cost from oldest layers first. Auto-generates COGS and revenue journal lines.
-
-    Args:
-        date: Sale date (YYYY-MM-DD).
-        memo: Transaction description.
-        item_sku: SKU of the item being sold.
-        quantity: Units sold/consumed.
-        sale_price_per_unit: Price per unit (null for internal consumption).
-        revenue_account: Revenue account name (default "Revenue").
-        receivable_account: Account to debit for sale (default "Cash").
-
-    Output format:
-        {"status": "success", "data": {"total_cogs": "...", "sale_total": "...", "layers_consumed": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _journalize_fifo_transaction_impl(
-            db, current_user.id, date, memo, item_sku, quantity,
-            sale_price_per_unit, revenue_account, receivable_account,
-        )
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _journalize_fifo_transaction_impl(
+                db, current_user.id,
+                p['date'], p['memo'], p['item_sku'], p['quantity'],
+                p.get('sale_price_per_unit'),
+                p.get('revenue_account', 'Revenue'),
+                p.get('receivable_account', 'Cash'),
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _journalize_lifo_transaction_impl(
@@ -1253,44 +1274,43 @@ def _journalize_lifo_transaction_impl(
     )
 
 
-@tool
-def journalize_lifo_transaction(
-    date: str, memo: str, item_sku: str, quantity: float,
-    sale_price_per_unit: float = None, revenue_account: str = "Revenue",
-    receivable_account: str = "Cash",
-) -> str:
-    """Record a LIFO (last-in, first-out) inventory sale or consumption.
+@register_tool('journalize_lifo_transaction')
+class JournalizeLifoTransactionTool(BaseTool):
+    description = 'Record a LIFO (last-in, first-out) inventory sale or consumption. Pulls cost from newest layers first.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'date': {'type': 'string', 'description': 'Sale date (YYYY-MM-DD).'},
+            'memo': {'type': 'string', 'description': 'Transaction description.'},
+            'item_sku': {'type': 'string', 'description': 'SKU of the item being sold.'},
+            'quantity': {'type': 'number', 'description': 'Units sold/consumed.'},
+            'sale_price_per_unit': {'type': 'number', 'description': 'Price per unit (omit for internal consumption).'},
+            'revenue_account': {'type': 'string', 'description': 'Revenue account name (default "Revenue").'},
+            'receivable_account': {'type': 'string', 'description': 'Account to debit for sale (default "Cash").'},
+        },
+        'required': ['date', 'memo', 'item_sku', 'quantity'],
+    }
 
-    WHEN TO USE: When selling goods using LIFO costing (newest inventory used first).
-
-    Pulls cost from newest layers first. Auto-generates COGS and revenue journal lines.
-
-    Args:
-        date: Sale date (YYYY-MM-DD).
-        memo: Transaction description.
-        item_sku: SKU of the item being sold.
-        quantity: Units sold/consumed.
-        sale_price_per_unit: Price per unit (null for internal consumption).
-        revenue_account: Revenue account name (default "Revenue").
-        receivable_account: Account to debit for sale (default "Cash").
-
-    Output format:
-        {"status": "success", "data": {"total_cogs": "...", "sale_total": "...", "layers_consumed": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _journalize_lifo_transaction_impl(
-            db, current_user.id, date, memo, item_sku, quantity,
-            sale_price_per_unit, revenue_account, receivable_account,
-        )
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _journalize_lifo_transaction_impl(
+                db, current_user.id,
+                p['date'], p['memo'], p['item_sku'], p['quantity'],
+                p.get('sale_price_per_unit'),
+                p.get('revenue_account', 'Revenue'),
+                p.get('receivable_account', 'Cash'),
+            )
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _inventory_valuation_impl(db: Session, user_id: str, method: str = "fifo") -> str:
@@ -1335,24 +1355,26 @@ def _inventory_valuation_impl(db: Session, user_id: str, method: str = "fifo") -
     return tool_result(data={"method": method, "items": result_items})
 
 
-@tool
-def inventory_valuation(method: str = "fifo") -> str:
-    """Get current inventory valuation with cost layer details.
+@register_tool('inventory_valuation')
+class InventoryValuationTool(BaseTool):
+    description = 'Get current inventory valuation with cost layer details.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'method': {'type': 'string', 'description': '"fifo" (default) or "lifo" — determines layer ordering in report.'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: When you need to know the value of inventory on hand.
-
-    Args:
-        method: "fifo" (default) or "lifo" — determines layer ordering in report.
-
-    Output format:
-        {"status": "success", "data": {"method": "fifo", "items": [{"sku": "...", "total_cost": "...", ...}]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _inventory_valuation_impl(db, current_user.id, method)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _inventory_valuation_impl(db, current_user.id, p.get('method', 'fifo'))
+        finally:
+            db.close()
 
 
 # ── Reporting & Period Close Tools ───────────────────────────────────────────
@@ -1397,24 +1419,26 @@ def _trial_balance_impl(db: Session, user_id: str, as_of_date: str = None) -> st
     })
 
 
-@tool
-def trial_balance(as_of_date: str = None) -> str:
-    """Generate a trial balance showing all accounts with debit/credit totals.
+@register_tool('trial_balance')
+class TrialBalanceTool(BaseTool):
+    description = 'Generate a trial balance showing all accounts with debit/credit totals to verify the books balance.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'as_of_date': {'type': 'string', 'description': 'Optional cutoff date (YYYY-MM-DD). Defaults to all time.'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: To verify the books balance (total debits == total credits).
-
-    Args:
-        as_of_date: Optional cutoff date (YYYY-MM-DD). Defaults to all time.
-
-    Output format:
-        {"status": "success", "data": {"accounts": [...], "total_debits": "...", "total_credits": "..."}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _trial_balance_impl(db, current_user.id, as_of_date)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _trial_balance_impl(db, current_user.id, p.get('as_of_date'))
+        finally:
+            db.close()
 
 
 def _income_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
@@ -1470,25 +1494,27 @@ def _income_statement_impl(db: Session, user_id: str, start_date: str, end_date:
     })
 
 
-@tool
-def income_statement(start_date: str, end_date: str) -> str:
-    """Generate an income statement (profit & loss) for a date range.
+@register_tool('income_statement')
+class IncomeStatementTool(BaseTool):
+    description = 'Generate an income statement (profit & loss) for a date range showing revenue, expenses, and net income.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'start_date': {'type': 'string', 'description': 'Period start (YYYY-MM-DD).'},
+            'end_date': {'type': 'string', 'description': 'Period end (YYYY-MM-DD).'},
+        },
+        'required': ['start_date', 'end_date'],
+    }
 
-    WHEN TO USE: To see revenue, expenses, and net income for a period.
-
-    Args:
-        start_date: Period start (YYYY-MM-DD).
-        end_date: Period end (YYYY-MM-DD).
-
-    Output format:
-        {"status": "success", "data": {"total_revenue": "...", "total_expenses": "...", "net_income": "..."}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _income_statement_impl(db, current_user.id, start_date, end_date)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _income_statement_impl(db, current_user.id, p['start_date'], p['end_date'])
+        finally:
+            db.close()
 
 
 def _balance_sheet_impl(db: Session, user_id: str, as_of_date: str = None) -> str:
@@ -1538,26 +1564,26 @@ def _balance_sheet_impl(db: Session, user_id: str, as_of_date: str = None) -> st
     })
 
 
-@tool
-def balance_sheet(as_of_date: str = None) -> str:
-    """Generate a balance sheet: Assets = Liabilities + Equity.
+@register_tool('balance_sheet')
+class BalanceSheetTool(BaseTool):
+    description = 'Generate a balance sheet showing Assets = Liabilities + Equity at a point in time.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'as_of_date': {'type': 'string', 'description': 'Optional date (YYYY-MM-DD). Defaults to all time.'},
+        },
+        'required': [],
+    }
 
-    WHEN TO USE: To see the financial position at a point in time.
-
-    Revenue/expense accounts are included in equity (as unclosed temporary accounts).
-
-    Args:
-        as_of_date: Optional date (YYYY-MM-DD). Defaults to all time.
-
-    Output format:
-        {"status": "success", "data": {"total_assets": "...", "total_liabilities": "...", "total_equity": "...", "balanced": "True"}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _balance_sheet_impl(db, current_user.id, as_of_date)
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _balance_sheet_impl(db, current_user.id, p.get('as_of_date'))
+        finally:
+            db.close()
 
 
 def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
@@ -1671,34 +1697,31 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
     })
 
 
-@tool
-def close_period(period_end_date: str) -> str:
-    """Close revenue and expense accounts for a period, transferring net income to Owner's Capital.
+@register_tool('close_period')
+class ClosePeriodTool(BaseTool):
+    description = "Close revenue and expense accounts for a period, transferring net income to Owner's Capital via 3 closing entries."
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'period_end_date': {'type': 'string', 'description': 'Last day of the period (YYYY-MM-DD).'},
+        },
+        'required': ['period_end_date'],
+    }
 
-    WHEN TO USE: At the end of an accounting period (month, quarter, year).
-
-    Executes 3 closing entries:
-    1. Close revenue accounts to Income Summary
-    2. Close expense accounts to Income Summary
-    3. Close Income Summary to Owner's Capital
-
-    Args:
-        period_end_date: Last day of the period (YYYY-MM-DD).
-
-    Output format:
-        {"status": "success", "data": {"net_income": "...", "journal_entry_ids": [...]}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        result = _close_period_impl(db, current_user.id, period_end_date)
-        db.commit()
-        return result
-    except Exception as e:
-        db.rollback()
-        return tool_result(error=str(e))
-    finally:
-        db.close()
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            result = _close_period_impl(db, current_user.id, p['period_end_date'])
+            db.commit()
+            return result
+        except Exception as e:
+            db.rollback()
+            return tool_result(error=str(e))
+        finally:
+            db.close()
 
 
 def _cash_flow_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
@@ -1799,49 +1822,24 @@ def _cash_flow_statement_impl(db: Session, user_id: str, start_date: str, end_da
     })
 
 
-@tool
-def cash_flow_statement(start_date: str, end_date: str) -> str:
-    """Generate a cash flow statement using the indirect method.
+@register_tool('cash_flow_statement')
+class CashFlowStatementTool(BaseTool):
+    description = 'Generate a cash flow statement using the indirect method for a date range.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'start_date': {'type': 'string', 'description': 'Period start (YYYY-MM-DD).'},
+            'end_date': {'type': 'string', 'description': 'Period end (YYYY-MM-DD).'},
+        },
+        'required': ['start_date', 'end_date'],
+    }
 
-    WHEN TO USE: To understand where cash came from and went during a period.
-
-    Args:
-        start_date: Period start (YYYY-MM-DD).
-        end_date: Period end (YYYY-MM-DD).
-
-    Output format:
-        {"status": "success", "data": {"operating_activities": {...}, "investing_activities": {...}, "financing_activities": {...}, "ending_cash": "..."}, "error": ""}
-    """
-    from flask_login import current_user
-    db = _get_db()
-    try:
-        return _cash_flow_statement_impl(db, current_user.id, start_date, end_date)
-    finally:
-        db.close()
-
-
-# ── Tool registry ─────────────────────────────────────────────────────────────
-
-ACCOUNTING_TOOLS = [
-    create_ledger,
-    create_account,
-    list_accounts,
-    get_account_balance,
-    update_account,
-    journalize_transaction,
-    search_journal,
-    void_transaction,
-    account_ledger,
-    register_inventory_item,
-    receive_inventory,
-    list_inventory_items,
-    deactivate_inventory_item,
-    journalize_fifo_transaction,
-    journalize_lifo_transaction,
-    inventory_valuation,
-    close_period,
-    trial_balance,
-    income_statement,
-    balance_sheet,
-    cash_flow_statement,
-]
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        from flask_login import current_user
+        p = json5.loads(params)
+        db = _get_db()
+        try:
+            return _cash_flow_statement_impl(db, current_user.id, p['start_date'], p['end_date'])
+        finally:
+            db.close()

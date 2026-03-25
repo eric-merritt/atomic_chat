@@ -7,7 +7,8 @@ import urllib.request
 import urllib.parse
 import http.cookiejar
 
-from langchain.tools import tool
+import json5
+from qwen_agent.tools.base import BaseTool, register_tool
 from tools._output import tool_result, retry
 
 # ── qBittorrent connection ────────────────────────────────────────────────────
@@ -77,268 +78,266 @@ def _qb_request(path: str, params: dict | None = None, method: str = "GET") -> d
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-@tool
-@retry()
-def torrent_search(query: str, plugins: str = "all", category: str = "all", max_results: int = 20) -> str:
-    """Search for torrents using qBittorrent's search plugins.
+@register_tool('torrent_search')
+class TorrentSearchTool(BaseTool):
+    description = "Search for torrents using qBittorrent's search plugins."
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
+            'plugins': {'type': 'string', 'description': 'Plugin to use. "all" for all enabled, or a specific plugin name.'},
+            'category': {'type': 'string', 'description': 'Category filter. "all", "movies", "tv", "music", "games", "software".'},
+            'max_results': {'type': 'integer', 'description': 'Maximum number of results to return. Range: 1-100.'},
+        },
+        'required': ['query'],
+    }
 
-    WHEN TO USE: When you need to find torrents by keyword.
-    WHEN NOT TO USE: When you already have a magnet link or torrent URL (use torrent_add instead).
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        query = p['query']
+        plugins = p.get('plugins', 'all')
+        category = p.get('category', 'all')
+        max_results = p.get('max_results', 20)
 
-    Starts a search, waits for completion, and returns results sorted by seeders.
-    Each result includes a download_url. Pass these to torrent_add to download.
+        if not query or not query.strip():
+            return tool_result(error="query must be a non-empty string")
 
-    Args:
-        query: Search terms. Must be non-empty.
-        plugins: Plugin to use. "all" for all enabled, or a specific plugin name.
-        category: Category filter. "all", "movies", "tv", "music", "games", "software".
-        max_results: Maximum number of results to return. Range: 1-100.
-
-    Output format:
-        {"status": "success", "data": {"query": "...", "count": N, "results": [
-            {"name": "...", "size": "...", "seeders": N, "leechers": N, "ratio": "...", "site": "...", "download_url": "..."},
-            ...
-        ]}, "error": ""}
-    """
-    if not query or not query.strip():
-        return tool_result(error="query must be a non-empty string")
-
-    try:
-        resp = _qb_request("/api/v2/search/start", {
-            "pattern": query,
-            "plugins": plugins,
-            "category": category,
-        }, method="POST")
-    except Exception as e:
-        return tool_result(error=f"Could not start search: {e}")
-
-    search_id = resp.get("id") if isinstance(resp, dict) else None
-    if search_id is None:
-        return tool_result(error=f"Unexpected response from search/start: {resp}")
-
-    # Poll for completion (max 60s)
-    for _ in range(60):
-        time.sleep(1)
         try:
-            status = _qb_request("/api/v2/search/status", {"id": search_id})
-        except Exception:
-            continue
-        if isinstance(status, list) and status:
-            st = status[0]
-        elif isinstance(status, dict):
-            st = status
-        else:
-            continue
-        if st.get("status") == "Stopped":
-            break
-        total = st.get("total", 0)
-        if total >= max_results * 2:
+            resp = _qb_request("/api/v2/search/start", {
+                "pattern": query,
+                "plugins": plugins,
+                "category": category,
+            }, method="POST")
+        except Exception as e:
+            return tool_result(error=f"Could not start search: {e}")
+
+        search_id = resp.get("id") if isinstance(resp, dict) else None
+        if search_id is None:
+            return tool_result(error=f"Unexpected response from search/start: {resp}")
+
+        # Poll for completion (max 60s)
+        for _ in range(60):
+            time.sleep(1)
             try:
-                _qb_request("/api/v2/search/stop", {"id": search_id}, method="POST")
+                status = _qb_request("/api/v2/search/status", {"id": search_id})
             except Exception:
-                pass
-            break
+                continue
+            if isinstance(status, list) and status:
+                st = status[0]
+            elif isinstance(status, dict):
+                st = status
+            else:
+                continue
+            if st.get("status") == "Stopped":
+                break
+            total = st.get("total", 0)
+            if total >= max_results * 2:
+                try:
+                    _qb_request("/api/v2/search/stop", {"id": search_id}, method="POST")
+                except Exception:
+                    pass
+                break
 
-    # Fetch results
-    try:
-        data = _qb_request("/api/v2/search/results", {
-            "id": search_id,
-            "limit": max_results * 3,
-            "offset": 0,
-        })
-    except Exception as e:
-        return tool_result(error=f"Could not fetch results: {e}")
+        # Fetch results
+        try:
+            data = _qb_request("/api/v2/search/results", {
+                "id": search_id,
+                "limit": max_results * 3,
+                "offset": 0,
+            })
+        except Exception as e:
+            return tool_result(error=f"Could not fetch results: {e}")
 
-    # Clean up
-    try:
-        _qb_request("/api/v2/search/delete", {"id": search_id}, method="POST")
-    except Exception:
-        pass
+        # Clean up
+        try:
+            _qb_request("/api/v2/search/delete", {"id": search_id}, method="POST")
+        except Exception:
+            pass
 
-    results = data.get("results", []) if isinstance(data, dict) else []
-    if not results:
-        return tool_result(data={"query": query, "count": 0, "results": []})
+        results = data.get("results", []) if isinstance(data, dict) else []
+        if not results:
+            return tool_result(data={"query": query, "count": 0, "results": []})
 
-    # Sort by seeders descending
-    results.sort(key=lambda r: r.get("nbSeeders", 0), reverse=True)
-    results = results[:max_results]
+        # Sort by seeders descending
+        results.sort(key=lambda r: r.get("nbSeeders", 0), reverse=True)
+        results = results[:max_results]
 
-    formatted = []
-    for r in results:
-        size_bytes = r.get("fileSize", 0)
-        size_mb = size_bytes / (1024 * 1024)
-        size_str = f"{size_mb:.0f} MB" if size_mb < 1024 else f"{size_mb / 1024:.2f} GB"
-        seeders = r.get("nbSeeders", 0)
-        leechers = r.get("nbLeechers", 0)
-        ratio = f"{seeders / leechers:.1f}" if leechers else "inf"
+        formatted = []
+        for r in results:
+            size_bytes = r.get("fileSize", 0)
+            size_mb = size_bytes / (1024 * 1024)
+            size_str = f"{size_mb:.0f} MB" if size_mb < 1024 else f"{size_mb / 1024:.2f} GB"
+            seeders = r.get("nbSeeders", 0)
+            leechers = r.get("nbLeechers", 0)
+            ratio = f"{seeders / leechers:.1f}" if leechers else "inf"
 
-        formatted.append({
-            "name": r.get("fileName", "Unknown"),
-            "size": size_str,
-            "seeders": seeders,
-            "leechers": leechers,
-            "ratio": ratio,
-            "site": r.get("siteUrl", "?"),
-            "download_url": r.get("fileUrl", ""),
-        })
+            formatted.append({
+                "name": r.get("fileName", "Unknown"),
+                "size": size_str,
+                "seeders": seeders,
+                "leechers": leechers,
+                "ratio": ratio,
+                "site": r.get("siteUrl", "?"),
+                "download_url": r.get("fileUrl", ""),
+            })
 
-    return tool_result(data={"query": query, "count": len(formatted), "results": formatted})
-
-
-@tool
-@retry()
-def torrent_list_plugins() -> str:
-    """List all installed qBittorrent search plugins and their status.
-
-    WHEN TO USE: When you need to see which search plugins are available.
-    WHEN NOT TO USE: When you already know which plugins to use.
-
-    Output format:
-        {"status": "success", "data": {"count": N, "plugins": [{"name": "...", "enabled": true, "categories": [...]}]}, "error": ""}
-    """
-    try:
-        plugins = _qb_request("/api/v2/search/plugins")
-    except Exception as e:
-        return tool_result(error=f"Could not list plugins: {e}")
-
-    if not isinstance(plugins, list) or not plugins:
-        return tool_result(data={"count": 0, "plugins": []})
-
-    formatted = []
-    for p in plugins:
-        formatted.append({
-            "name": p.get("fullName", p.get("name", "?")),
-            "enabled": p.get("enabled", False),
-            "categories": p.get("supportedCategories", []),
-            "url": p.get("url", ""),
-        })
-
-    return tool_result(data={"count": len(formatted), "plugins": formatted})
+        return tool_result(data={"query": query, "count": len(formatted), "results": formatted})
 
 
-@tool
-@retry()
-def torrent_enable_plugin(names: str, enable: bool = True) -> str:
-    """Enable or disable qBittorrent search plugins.
+@register_tool('torrent_list_plugins')
+class TorrentListPluginsTool(BaseTool):
+    description = 'List all installed qBittorrent search plugins and their status.'
+    parameters = {'type': 'object', 'properties': {}, 'required': []}
 
-    WHEN TO USE: When you need to toggle search plugins on or off.
-    WHEN NOT TO USE: When plugins are already in the desired state.
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        try:
+            plugins = _qb_request("/api/v2/search/plugins")
+        except Exception as e:
+            return tool_result(error=f"Could not list plugins: {e}")
 
-    Args:
-        names: Plugin names separated by | (e.g. "piratebay|limetorrents").
-        enable: True to enable, False to disable.
+        if not isinstance(plugins, list) or not plugins:
+            return tool_result(data={"count": 0, "plugins": []})
 
-    Output format:
-        {"status": "success", "data": {"names": "...", "action": "enabled"|"disabled"}, "error": ""}
-    """
-    if not names or not names.strip():
-        return tool_result(error="names must be a non-empty string")
+        formatted = []
+        for p in plugins:
+            formatted.append({
+                "name": p.get("fullName", p.get("name", "?")),
+                "enabled": p.get("enabled", False),
+                "categories": p.get("supportedCategories", []),
+                "url": p.get("url", ""),
+            })
 
-    try:
-        _qb_request("/api/v2/search/enablePlugin", {
-            "names": names,
-            "enable": str(enable).lower(),
-        }, method="POST")
-    except Exception as e:
-        return tool_result(error=f"Could not update plugins: {e}")
-
-    action = "enabled" if enable else "disabled"
-    return tool_result(data={"names": names, "action": action})
+        return tool_result(data={"count": len(formatted), "plugins": formatted})
 
 
-@tool
-@retry()
-def torrent_add(urls: str, category: str = "", paused: bool = False) -> str:
-    """Add torrents to qBittorrent for download.
+@register_tool('torrent_enable_plugin')
+class TorrentEnablePluginTool(BaseTool):
+    description = 'Enable or disable qBittorrent search plugins.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'names': {'type': 'string', 'description': 'Plugin names separated by | (e.g. "piratebay|limetorrents").'},
+            'enable': {'type': 'boolean', 'description': 'True to enable, False to disable.'},
+        },
+        'required': ['names'],
+    }
 
-    WHEN TO USE: After torrent_search, pass the download_url values from search results.
-    WHEN NOT TO USE: When you don't have specific URLs yet (use torrent_search first).
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        names = p['names']
+        enable = p.get('enable', True)
 
-    Args:
-        urls: Magnet links or torrent URLs, one per line or separated by |.
-        category: Optional category to assign (e.g. "movies", "linux-isos").
-        paused: If True, add in paused state instead of starting immediately.
+        if not names or not names.strip():
+            return tool_result(error="names must be a non-empty string")
 
-    Output format:
-        {"status": "success", "data": {"added": N, "urls": [...]}, "error": ""}
-    """
-    url_list = [u.strip() for u in urls.replace("|", "\n").split("\n") if u.strip()]
-    if not url_list:
-        return tool_result(error="No URLs provided.")
+        try:
+            _qb_request("/api/v2/search/enablePlugin", {
+                "names": names,
+                "enable": str(enable).lower(),
+            }, method="POST")
+        except Exception as e:
+            return tool_result(error=f"Could not update plugins: {e}")
 
-    params = {"urls": "\n".join(url_list)}
-    if category:
-        params["category"] = category
-    if paused:
-        params["paused"] = "true"
-
-    try:
-        resp = _qb_request("/api/v2/torrents/add", params, method="POST")
-    except Exception as e:
-        return tool_result(error=f"Could not add torrents: {e}")
-
-    if isinstance(resp, str) and "ok" in resp.lower():
-        return tool_result(data={"added": len(url_list), "urls": url_list})
-    return tool_result(data={"added": len(url_list), "urls": url_list, "response": str(resp)})
+        action = "enabled" if enable else "disabled"
+        return tool_result(data={"names": names, "action": action})
 
 
-@tool
-@retry()
-def torrent_list_active(limit: int = 10) -> str:
-    """List active/downloading torrents in qBittorrent.
+@register_tool('torrent_add')
+class TorrentAddTool(BaseTool):
+    description = 'Add torrents to qBittorrent for download by magnet link or URL.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'urls': {'type': 'string', 'description': 'Magnet links or torrent URLs, one per line or separated by |.'},
+            'category': {'type': 'string', 'description': 'Optional category to assign (e.g. "movies", "linux-isos").'},
+            'paused': {'type': 'boolean', 'description': 'If True, add in paused state instead of starting immediately.'},
+        },
+        'required': ['urls'],
+    }
 
-    WHEN TO USE: When you need to check the status of current downloads.
-    WHEN NOT TO USE: When you need to search for new torrents (use torrent_search instead).
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        urls = p['urls']
+        category = p.get('category', '')
+        paused = p.get('paused', False)
 
-    Args:
-        limit: Maximum number of torrents to show. Range: 1-100.
+        url_list = [u.strip() for u in urls.replace("|", "\n").split("\n") if u.strip()]
+        if not url_list:
+            return tool_result(error="No URLs provided.")
 
-    Output format:
-        {"status": "success", "data": {"count": N, "torrents": [{"name": "...", "state": "...", "progress": 0.95, ...}]}, "error": ""}
-    """
-    try:
-        torrents = _qb_request("/api/v2/torrents/info", {"filter": "all", "limit": str(limit)})
-    except Exception as e:
-        return tool_result(error=f"Could not list torrents: {e}")
+        req_params = {"urls": "\n".join(url_list)}
+        if category:
+            req_params["category"] = category
+        if paused:
+            req_params["paused"] = "true"
 
-    if not isinstance(torrents, list) or not torrents:
-        return tool_result(data={"count": 0, "torrents": []})
+        try:
+            resp = _qb_request("/api/v2/torrents/add", req_params, method="POST")
+        except Exception as e:
+            return tool_result(error=f"Could not add torrents: {e}")
 
-    formatted = []
-    for t in torrents:
-        size_gb = t.get("size", 0) / (1024 ** 3)
-        progress = t.get("progress", 0) * 100
-        dl_speed = t.get("dlspeed", 0) / (1024 * 1024)
-        formatted.append({
-            "name": t.get("name", "?"),
-            "state": t.get("state", "?"),
-            "progress": round(progress, 1),
-            "size_gb": round(size_gb, 1),
-            "dl_speed_mbps": round(dl_speed, 1),
-        })
-
-    return tool_result(data={"count": len(formatted), "torrents": formatted})
-
-
-@tool
-@retry()
-def torrent_download(urls: str, category: str = "", paused: bool = False) -> str:
-    """Download torrents by URL or magnet link.
-
-    WHEN TO USE: After torrent_search, pass the download_url values from search results.
-    WHEN NOT TO USE: When you don't have specific URLs yet (use torrent_search first).
-
-    This is an alias for torrent_add. Kept for backward compatibility.
-
-    Args:
-        urls: Magnet links or torrent URLs, one per line or separated by |.
-        category: Optional category to assign (e.g. "movies", "linux-isos").
-        paused: If true, add in paused state instead of starting immediately.
-
-    Output format:
-        {"status": "success", "data": {"added": N, "urls": [...]}, "error": ""}
-    """
-    return torrent_add.invoke({"urls": urls, "category": category, "paused": paused})
+        if isinstance(resp, str) and "ok" in resp.lower():
+            return tool_result(data={"added": len(url_list), "urls": url_list})
+        return tool_result(data={"added": len(url_list), "urls": url_list, "response": str(resp)})
 
 
-TORRENT_TOOLS = [torrent_search, torrent_download, torrent_list_plugins, torrent_enable_plugin, torrent_add, torrent_list_active]
+@register_tool('torrent_list_active')
+class TorrentListActiveTool(BaseTool):
+    description = 'List active/downloading torrents in qBittorrent.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'limit': {'type': 'integer', 'description': 'Maximum number of torrents to show. Range: 1-100.'},
+        },
+        'required': [],
+    }
+
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        limit = p.get('limit', 10)
+
+        try:
+            torrents = _qb_request("/api/v2/torrents/info", {"filter": "all", "limit": str(limit)})
+        except Exception as e:
+            return tool_result(error=f"Could not list torrents: {e}")
+
+        if not isinstance(torrents, list) or not torrents:
+            return tool_result(data={"count": 0, "torrents": []})
+
+        formatted = []
+        for t in torrents:
+            size_gb = t.get("size", 0) / (1024 ** 3)
+            progress = t.get("progress", 0) * 100
+            dl_speed = t.get("dlspeed", 0) / (1024 * 1024)
+            formatted.append({
+                "name": t.get("name", "?"),
+                "state": t.get("state", "?"),
+                "progress": round(progress, 1),
+                "size_gb": round(size_gb, 1),
+                "dl_speed_mbps": round(dl_speed, 1),
+            })
+
+        return tool_result(data={"count": len(formatted), "torrents": formatted})
+
+
+@register_tool('torrent_download')
+class TorrentDownloadTool(BaseTool):
+    description = 'Download torrents by URL or magnet link (alias for torrent_add).'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'urls': {'type': 'string', 'description': 'Magnet links or torrent URLs, one per line or separated by |.'},
+            'category': {'type': 'string', 'description': 'Optional category to assign (e.g. "movies", "linux-isos").'},
+            'paused': {'type': 'boolean', 'description': 'If true, add in paused state instead of starting immediately.'},
+        },
+        'required': ['urls'],
+    }
+
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        return TorrentAddTool().call(params, **kwargs)
