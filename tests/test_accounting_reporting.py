@@ -4,6 +4,10 @@ import json
 import pytest
 
 
+def _load(result):
+    return result if isinstance(result, dict) else json.loads(result)
+
+
 @pytest.fixture
 def active_ledger(db_session, ledger_with_defaults):
     """Ledger with several transactions for reporting."""
@@ -26,14 +30,14 @@ def active_ledger(db_session, ledger_with_defaults):
 
 def test_trial_balance(active_ledger):
     from tools.accounting import _trial_balance_impl
-    result = json.loads(_trial_balance_impl(active_ledger, "test-user-001"))
+    result = _load(_trial_balance_impl(active_ledger, "test-user-001"))
     assert result["status"] == "success"
     assert result["data"]["total_debits"] == result["data"]["total_credits"]
 
 
 def test_income_statement(active_ledger):
     from tools.accounting import _income_statement_impl
-    result = json.loads(_income_statement_impl(
+    result = _load(_income_statement_impl(
         active_ledger, "test-user-001", "2026-03-01", "2026-03-31"
     ))
     assert result["status"] == "success"
@@ -44,7 +48,7 @@ def test_income_statement(active_ledger):
 
 def test_balance_sheet(active_ledger):
     from tools.accounting import _balance_sheet_impl
-    result = json.loads(_balance_sheet_impl(active_ledger, "test-user-001"))
+    result = _load(_balance_sheet_impl(active_ledger, "test-user-001"))
     assert result["status"] == "success"
     # A = L + E should hold
     assets = float(result["data"]["total_assets"])
@@ -56,33 +60,33 @@ def test_balance_sheet(active_ledger):
 
 def test_close_period(active_ledger):
     from tools.accounting import _close_period_impl, _get_account_balance_impl
-    result = json.loads(_close_period_impl(active_ledger, "test-user-001", "2026-03-31"))
+    result = _load(_close_period_impl(active_ledger, "test-user-001", "2026-03-31"))
     active_ledger.flush()
     assert result["status"] == "success"
     assert float(result["data"]["net_income"]) == 2000.00
 
     # Revenue and expense should be zero after close
-    rev = json.loads(_get_account_balance_impl(active_ledger, "test-user-001", "Revenue"))
+    rev = _load(_get_account_balance_impl(active_ledger, "test-user-001", "Revenue"))
     assert float(rev["data"]["balance"]) == 0.0
-    exp = json.loads(_get_account_balance_impl(active_ledger, "test-user-001", "Rent Expense"))
+    exp = _load(_get_account_balance_impl(active_ledger, "test-user-001", "Rent Expense"))
     assert float(exp["data"]["balance"]) == 0.0
 
     # Capital should have increased by net income
-    cap = json.loads(_get_account_balance_impl(active_ledger, "test-user-001", "Owner's Capital"))
+    cap = _load(_get_account_balance_impl(active_ledger, "test-user-001", "Owner's Capital"))
     assert float(cap["data"]["balance"]) == 12000.00  # 10000 + 2000 net income
 
 
 def test_close_period_zero_balances(db_session, ledger_with_defaults):
     """No revenue or expense → nothing to close."""
     from tools.accounting import _close_period_impl
-    result = json.loads(_close_period_impl(db_session, "test-user-001", "2026-03-31"))
+    result = _load(_close_period_impl(db_session, "test-user-001", "2026-03-31"))
     assert result["status"] == "success"
     assert "nothing to close" in result["data"]["message"].lower()
 
 
 def test_cash_flow_statement(active_ledger):
     from tools.accounting import _cash_flow_statement_impl
-    result = json.loads(_cash_flow_statement_impl(
+    result = _load(_cash_flow_statement_impl(
         active_ledger, "test-user-001", "2026-03-01", "2026-03-31"
     ))
     assert result["status"] == "success"

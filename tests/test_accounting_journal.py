@@ -4,9 +4,13 @@ import json
 import pytest
 
 
+def _load(result):
+    return result if isinstance(result, dict) else json.loads(result)
+
+
 def test_journalize_basic(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl
-    result = json.loads(_journalize_transaction_impl(
+    result = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Owner investment",
         [
             {"account": "Cash", "debit": 10000.00, "credit": 0},
@@ -19,7 +23,7 @@ def test_journalize_basic(db_session, ledger_with_defaults):
 
 def test_journalize_unbalanced(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl
-    result = json.loads(_journalize_transaction_impl(
+    result = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Bad entry",
         [
             {"account": "Cash", "debit": 500.00, "credit": 0},
@@ -32,7 +36,7 @@ def test_journalize_unbalanced(db_session, ledger_with_defaults):
 
 def test_journalize_bad_account(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl
-    result = json.loads(_journalize_transaction_impl(
+    result = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Bad account",
         [
             {"account": "Cash", "debit": 100.00, "credit": 0},
@@ -45,7 +49,7 @@ def test_journalize_bad_account(db_session, ledger_with_defaults):
 
 def test_journalize_both_sides_on_one_line(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl
-    result = json.loads(_journalize_transaction_impl(
+    result = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Both sides",
         [
             {"account": "Cash", "debit": 100.00, "credit": 100.00},
@@ -64,7 +68,7 @@ def test_balance_after_journal(db_session, ledger_with_defaults):
         ]
     )
     db_session.flush()
-    result = json.loads(_get_account_balance_impl(db_session, "test-user-001", "Cash"))
+    result = _load(_get_account_balance_impl(db_session, "test-user-001", "Cash"))
     assert float(result["data"]["balance"]) == 5000.00
 
 
@@ -78,14 +82,14 @@ def test_search_journal(db_session, ledger_with_defaults):
         ]
     )
     db_session.flush()
-    result = json.loads(_search_journal_impl(db_session, "test-user-001", memo_text="supplies"))
+    result = _load(_search_journal_impl(db_session, "test-user-001", memo_text="supplies"))
     assert result["status"] == "success"
     assert len(result["data"]["entries"]) == 1
 
 
 def test_void_transaction(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl, _void_transaction_impl, _get_account_balance_impl
-    jr = json.loads(_journalize_transaction_impl(
+    jr = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Mistake",
         [
             {"account": "Cash", "debit": 200.00, "credit": 0},
@@ -95,19 +99,19 @@ def test_void_transaction(db_session, ledger_with_defaults):
     db_session.flush()
     entry_id = jr["data"]["journal_entry_id"]
 
-    void = json.loads(_void_transaction_impl(
+    void = _load(_void_transaction_impl(
         db_session, "test-user-001", entry_id, "2026-03-20", "Voiding mistake"
     ))
     db_session.flush()
     assert void["status"] == "success"
 
-    bal = json.loads(_get_account_balance_impl(db_session, "test-user-001", "Cash"))
+    bal = _load(_get_account_balance_impl(db_session, "test-user-001", "Cash"))
     assert float(bal["data"]["balance"]) == 0.0
 
 
 def test_void_already_voided(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl, _void_transaction_impl
-    jr = json.loads(_journalize_transaction_impl(
+    jr = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "To void",
         [
             {"account": "Cash", "debit": 100.00, "credit": 0},
@@ -119,14 +123,14 @@ def test_void_already_voided(db_session, ledger_with_defaults):
 
     _void_transaction_impl(db_session, "test-user-001", entry_id, "2026-03-20", "Void 1")
     db_session.flush()
-    result = json.loads(_void_transaction_impl(db_session, "test-user-001", entry_id, "2026-03-20", "Void 2"))
+    result = _load(_void_transaction_impl(db_session, "test-user-001", entry_id, "2026-03-20", "Void 2"))
     assert result["status"] == "error"
     assert "already voided" in result["error"].lower()
 
 
 def test_void_a_void(db_session, ledger_with_defaults):
     from tools.accounting import _journalize_transaction_impl, _void_transaction_impl
-    jr = json.loads(_journalize_transaction_impl(
+    jr = _load(_journalize_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Original",
         [
             {"account": "Cash", "debit": 100.00, "credit": 0},
@@ -134,11 +138,11 @@ def test_void_a_void(db_session, ledger_with_defaults):
         ]
     ))
     db_session.flush()
-    void = json.loads(_void_transaction_impl(
+    void = _load(_void_transaction_impl(
         db_session, "test-user-001", jr["data"]["journal_entry_id"], "2026-03-20", "Void"
     ))
     db_session.flush()
-    result = json.loads(_void_transaction_impl(
+    result = _load(_void_transaction_impl(
         db_session, "test-user-001", void["data"]["reversal_entry_id"], "2026-03-20", "Void the void"
     ))
     assert result["status"] == "error"
@@ -162,7 +166,7 @@ def test_account_ledger(db_session, ledger_with_defaults):
         ]
     )
     db_session.flush()
-    result = json.loads(_account_ledger_impl(db_session, "test-user-001", "Cash"))
+    result = _load(_account_ledger_impl(db_session, "test-user-001", "Cash"))
     assert result["status"] == "success"
     assert len(result["data"]["entries"]) == 2
     assert result["data"]["running_balance"] == "500.00"

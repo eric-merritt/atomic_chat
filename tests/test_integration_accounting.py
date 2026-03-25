@@ -12,8 +12,18 @@ def test_accounting_tools_in_registry():
 
 
 def test_accounting_tool_count():
-    from tools.accounting import ACCOUNTING_TOOLS
-    assert len(ACCOUNTING_TOOLS) == 21
+    from qwen_agent.tools.base import TOOL_REGISTRY
+    import tools.accounting  # noqa: F401
+    accounting_names = {
+        'create_ledger', 'create_account', 'list_accounts', 'get_account_balance',
+        'update_account', 'journalize_transaction', 'search_journal', 'void_transaction',
+        'account_ledger', 'register_inventory_item', 'receive_inventory',
+        'list_inventory_items', 'deactivate_inventory_item', 'journalize_fifo_transaction',
+        'journalize_lifo_transaction', 'inventory_valuation', 'close_period',
+        'trial_balance', 'income_statement', 'balance_sheet', 'cash_flow_statement',
+    }
+    registered = set(TOOL_REGISTRY.keys())
+    assert accounting_names.issubset(registered), f"Missing: {accounting_names - registered}"
 
 
 def test_mcp_server_registers_accounting():

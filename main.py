@@ -1,9 +1,7 @@
 import json
 import logging
-import re
 import threading
 from datetime import datetime, timezone
-from uuid import uuid4
 import os as _os
 from dotenv import load_dotenv
 
@@ -11,15 +9,11 @@ load_dotenv()
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file
 from flask_login import login_required, current_user
 import ollama as ollama_client
-from langchain_ollama import ChatOllama
-from langchain_core.messages import (
-    HumanMessage,
-    AIMessage,
-    SystemMessage,
-    ToolMessage,
-)
-import httpx
-from tools import ALL_TOOLS
+import json5
+from qwen_agent.agents import Assistant
+from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
+import tools  # triggers @register_tool side-effects for all tool modules
+from config import qwen_llm_cfg
 from task_extractor import extract_tasks
 from tool_curator import curate_tools
 from workflow_groups import WORKFLOW_GROUPS, tools_for_groups
@@ -104,134 +98,36 @@ def _clean_tool_result(result_str: str) -> str:
     return result_str
 
 
-# ─────────────────────────────────────────────────────────────
-# TOOL FAILURE DETECTION
-# ─────────────────────────────────────────────────────────────
-
-def _is_tool_failure(result_str: str) -> bool:
-    """Detect if a tool result is an error or empty/useless response."""
-    if result_str.startswith("Error:") or result_str.startswith("Unknown tool:"):
-        return True
-    try:
-        parsed = json.loads(result_str)
-        if isinstance(parsed, dict):
-            # Check for error status
-            if parsed.get("status") == "error" or parsed.get("error"):
-                return True
-            # Check for empty results
-            data = parsed.get("data", {})
-            if isinstance(data, dict):
-                count = data.get("count")
-                if count == 0:
-                    return True
-                for key in ("files", "elements", "matches", "entries", "results"):
-                    val = data.get(key)
-                    if isinstance(val, list) and len(val) == 0:
-                        return True
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return False
-
-
-# ─────────────────────────────────────────────────────────────
-# TOOL CALL PARSER
-# ─────────────────────────────────────────────────────────────
-
-def _fix_json(s: str) -> str:
-    """Fix common JSON issues from small model output.
-
-    - Adds quotes around unquoted string values
-    - Adds quotes around unquoted keys
-    """
-    # Quote unquoted keys: {name: -> {"name":
-    s = re.sub(r'(?<=[{,])\s*([a-zA-Z_]\w*)\s*:', r' "\1":', s)
-    # Quote unquoted string values (word chars with dots/hyphens, not already quoted, not numbers/booleans/null)
-    s = re.sub(
-        r':\s*(?!")(?!true|false|null|-?\d)([a-zA-Z_][\w.\-]*)\s*([,}\]])',
-        r': "\1"\2',
-        s,
-    )
-    return s
-
-
-def parse_tool_calls(response_content):
-    """Parse tool calls from model text output.
-
-    Handles both {name, params} and {name, arguments} formats,
-    and strips <tools>...</tools> wrappers from abliterated models.
-    Falls back to regex fixup for malformed JSON from small models.
-    """
-    import re as _re
-
-    text = response_content.strip()
-    # Strip <tools>...</tools> wrapper
-    match = _re.search(r"<tools>(.*?)</tools>", text, flags=_re.DOTALL)
-    if match:
-        text = match.group(1).strip()
-
-    def _try_parse(s):
-        """Try json, then json with fixup for common model quirks."""
-        try:
-            return json.loads(s)
-        except (json.JSONDecodeError, ValueError):
-            pass
-        try:
-            return json.loads(_fix_json(s))
-        except (json.JSONDecodeError, ValueError):
-            pass
-        return None
-
-    parsed = _try_parse(text)
-    if parsed is None:
-        # Try to extract JSON from mixed text
-        match = _re.search(r"[\[{].*[\]}]", text, flags=_re.DOTALL)
-        if match:
-            parsed = _try_parse(match.group())
-        if parsed is None:
-            return []
-
-    def _normalize(call):
-        """Normalize a tool call dict to {name, params}."""
-        if not isinstance(call, dict) or "name" not in call:
-            return None
-        params = call.get("params") or call.get("arguments") or {}
-        return {"name": call["name"], "params": params}
-
-    if isinstance(parsed, dict):
-        norm = _normalize(parsed)
-        return [norm] if norm else []
-    elif isinstance(parsed, list):
-        results = [_normalize(c) for c in parsed if isinstance(c, dict)]
-        return [r for r in results if r]
-    return []
-
-
 
 
 
 app = Flask(__name__)
 app.secret_key = _os.environ.get("FLASK_SECRET_KEY", "dev-fallback-key-change-in-production")
-def _tool_meta(t) -> dict:
-    """Extract name, description, and parameter info from a LangChain tool."""
-    schema = t.args_schema.model_json_schema() if t.args_schema else {}
-    props = schema.get("properties", {})
-    required = schema.get("required", [])
+
+
+def _tool_meta(cls) -> dict:
+    """Extract name, description, and parameter info from a qwen-agent tool class."""
+    schema = getattr(cls, 'parameters', {}) or {}
+    props = schema.get('properties', {})
+    required = schema.get('required', [])
     params = {}
     for pname, pinfo in props.items():
         params[pname] = {
-            "type": pinfo.get("type", "string"),
-            "description": pinfo.get("description", ""),
-            "required": pname in required,
+            'type': pinfo.get('type', 'string'),
+            'description': pinfo.get('description', ''),
+            'required': pname in required,
         }
-        if "default" in pinfo:
-            params[pname]["default"] = pinfo["default"]
-    return {
-        "name": t.name,
-        "description": t.description.split("\n")[0] if t.description else "",
-        "params": params,
-    }
-    
-TOOL_REGISTRY = [_tool_meta(t) for t in ALL_TOOLS]
+        if 'default' in pinfo:
+            params[pname]['default'] = pinfo['default']
+    name = cls.name if hasattr(cls, 'name') else ''
+    desc = (cls.description or '').split('\n')[0]
+    return {'name': name, 'description': desc, 'params': params}
+
+
+# Snapshot qwen-agent built-in tool names before our registrations
+_BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
+
+TOOL_REGISTRY: list[dict] = []  # populated below after internal tools are defined
 
 DEFAULT_TOOL_NAMES = ["read", "info", "ls", "tree", "write", "append", "replace", "insert",
                       "delete", "copy", "move", "mkdir", "grep", "find", "definition",
@@ -332,42 +228,77 @@ def serve_frontend(path):
     return "Frontend not built. Run: cd frontend && npm run build", 404
 
 # ─────────────────────────────────────────────────────────────
-# AGENT BUILDER
+# INTERNAL TOOLS (mark_task_done / unmark_task_done)
+# Registered as qwen-agent tools so Assistant handles them natively.
 # ─────────────────────────────────────────────────────────────
 
-# Build lookup dict for fetching tools by name
-_TOOL_BY_NAME = {t.name: t for t in ALL_TOOLS}
+@register_tool('mark_task_done')
+class MarkTaskDoneTool(BaseTool):
+    description = 'Mark a task as done by its 1-based number from the [TASK LIST].'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
+            'conversation_id': {'type': 'string', 'description': 'Active conversation ID.'},
+        },
+        'required': ['task_number', 'conversation_id'],
+    }
 
-# Per-conversation cache: conversation_id → (model, tool_names, llm)
-_llm_cache: dict[str, tuple[str, list[str], object]] = {}
-
-MAX_TOOL_ROUNDS = 30  # safety limit on tool-calling loop
+    def call(self, params: str, **kwargs) -> dict:
+        return _update_task_status(params, 'done')
 
 
-def _get_llm(model_name: str, tool_names: list[str], conversation_id: str | None = None):
-    """Get a ChatOllama instance with tools bound for schema awareness.
+@register_tool('unmark_task_done')
+class UnmarkTaskDoneTool(BaseTool):
+    description = 'Revert a done task back to pending by its 1-based number from the [TASK LIST].'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
+            'conversation_id': {'type': 'string', 'description': 'Active conversation ID.'},
+        },
+        'required': ['task_number', 'conversation_id'],
+    }
 
-    Caches per conversation_id to avoid rebuilding when tool selection
-    hasn't changed.
-    """
-    if conversation_id and conversation_id in _llm_cache:
-        prev_model, prev_tools, cached_llm = _llm_cache[conversation_id]
-        if prev_model == model_name and sorted(prev_tools) == sorted(tool_names):
-            return cached_llm
+    def call(self, params: str, **kwargs) -> dict:
+        return _update_task_status(params, 'pending')
 
-    from config import OLLAMA_NUM_CTX
-    llm = ChatOllama(
-        model=model_name,
-        temperature=0,
-        base_url="http://localhost:11434",
-        timeout=120,  # seconds — prevents hanging if Ollama stalls
-        num_ctx=OLLAMA_NUM_CTX,
-    )
 
-    if conversation_id:
-        _llm_cache[conversation_id] = (model_name, tool_names, llm)
+def _update_task_status(params_str: str, new_status: str) -> dict:
+    """Shared implementation for mark/unmark task tools."""
+    from auth.db import SessionLocal
+    from auth.conversation_tasks import ConversationTask
+    from tools._output import tool_result
+    try:
+        p = json5.loads(params_str)
+        task_number = int(p.get('task_number', 0))
+        conversation_id = p.get('conversation_id', '')
+        db = SessionLocal()
+        try:
+            ordered = (
+                db.query(ConversationTask)
+                .filter_by(conversation_id=conversation_id)
+                .order_by(ConversationTask.created_at.asc())
+                .all()
+            )
+            if 1 <= task_number <= len(ordered):
+                task = ordered[task_number - 1]
+                task.status = new_status
+                db.commit()
+                verb = 'marked done' if new_status == 'done' else 'reverted to pending'
+                return tool_result(data=f'Task {task_number} {verb}: {task.title}')
+            return tool_result(error=f'Invalid task number {task_number}. Valid range: 1-{len(ordered)}')
+        finally:
+            db.close()
+    except Exception as e:
+        from tools._output import tool_result as tr
+        return tr(error=str(e))
 
-    return llm
+
+# Populate TOOL_REGISTRY now that all tools (including internal) are registered
+TOOL_REGISTRY = [_tool_meta(cls) for cls in QW_TOOL_REGISTRY.values()
+                 if cls.name not in _BUILTIN_TOOL_NAMES]
+
 
 # ─────────────────────────────────────────────────────────────
 # STREAMING CHAT
@@ -433,35 +364,6 @@ def chat_stream():
     # tool_names will be finalized inside generate() after recommendation flow
     _initial_tool_names = user_tool_names
 
-    llm = _get_llm(model_name, _initial_tool_names, conversation_id)
-
-    # --- Build tool schema block for system prompt ---
-    # (will be rebuilt inside generate() if recommendation is accepted)
-    tool_schemas = []
-    for name in _initial_tool_names:
-        t = _TOOL_BY_NAME.get(name)
-        if t:
-            schema = t.args_schema.model_json_schema() if t.args_schema else {}
-            props = schema.get("properties", {})
-            params_desc = ", ".join(f'{k}: {v.get("type", "str")}' for k, v in props.items())
-            desc = (t.description.split("\n")[0] if t.description else "")
-            tool_schemas.append(f'- {name}({params_desc}): {desc}')
-
-    # Always include internal mark_task_done tool
-    tool_schemas.append("- mark_task_done(task_number: integer): Mark a task as done by its number from the [TASK LIST]")
-    tool_schemas.append("- unmark_task_done(task_number: integer): Revert a done task back to pending by its number from the [TASK LIST]")
-    tools_block = "\n".join(tool_schemas)
-
-    system_with_tools = f"""{SYSTEM_PROMPT}
-
-AVAILABLE TOOLS:
-{tools_block}
-
-To call a tool, respond with ONLY a JSON array like:
-[{{"name": "tool_name", "arguments": {{"param": "value"}}}}]
-
-If you do not need to call a tool, respond with plain text."""
-
     # --- Append conversation tasks to user message ---
     conv_tasks = (
         db.query(ConversationTask)
@@ -471,12 +373,7 @@ If you do not need to call a tool, respond with plain text."""
     )
     augmented_msg = user_msg
     if conv_tasks:
-        # Build task→tool mapping from curator plan
-        tool_hints = {}
-        if curation.task_plan:
-            for m in curation.task_plan:
-                tool_hints[m.task_title] = m.tool
-
+        tool_hints = {m.task_title: m.tool for m in curation.task_plan} if curation.task_plan else {}
         task_lines = []
         for i, ct in enumerate(conv_tasks, 1):
             hint = tool_hints.get(ct.title, "")
@@ -486,18 +383,9 @@ If you do not need to call a tool, respond with plain text."""
         if any(m.tool == "mcp" for m in curation.task_plan):
             augmented_msg += "\n\nNote: Tasks without a tool hint may require external MCP tools. Use connect_to_mcp if needed."
 
-    # --- Assemble messages ---
-    messages = [
-        SystemMessage(content=system_with_tools),
-    ] + history + [
-        HumanMessage(content=augmented_msg),
-    ]
-
     def generate():
-        nonlocal messages, system_with_tools
         full_response = ""
         ordered_messages = []
-        prev_call_sig = None  # detect repeated identical tool calls
 
         yield json.dumps({"conversation_id": conversation_id}) + "\n"
 
@@ -509,11 +397,10 @@ If you do not need to call a tool, respond with plain text."""
                 "reason": curation.reason,
             }}) + "\n"
 
-            # Wait for user response (accept/dismiss)
             event = threading.Event()
             _recommendation_events[conversation_id] = event
             try:
-                event.wait(timeout=120)  # 2 min timeout = dismiss
+                event.wait(timeout=120)
                 accepted_groups = _recommendation_responses.pop(conversation_id, [])
             finally:
                 _recommendation_events.pop(conversation_id, None)
@@ -521,237 +408,79 @@ If you do not need to call a tool, respond with plain text."""
             print(f"[CURATION] User accepted groups: {accepted_groups}", flush=True)
 
         # Resolve final tool set
+        final_tool_names = list(_initial_tool_names)
         if accepted_groups:
             extra_tools = tools_for_groups(accepted_groups)
-            final_tool_names = list(set(_initial_tool_names + extra_tools))
-
-            # Rebuild system prompt with expanded tools
-            tool_schemas_final = []
-            for tname in final_tool_names:
-                t = _TOOL_BY_NAME.get(tname)
-                if t:
-                    schema = t.args_schema.model_json_schema() if t.args_schema else {}
-                    props = schema.get("properties", {})
-                    params_desc = ", ".join(f'{k}: {v.get("type", "str")}' for k, v in props.items())
-                    desc = (t.description.split("\n")[0] if t.description else "")
-                    tool_schemas_final.append(f'- {tname}({params_desc}): {desc}')
-
-            tool_schemas_final.append("- mark_task_done(task_number: integer): Mark a task as done by its number from the [TASK LIST]")
-            tools_block_final = "\n".join(tool_schemas_final)
-            system_with_tools = f"""{SYSTEM_PROMPT}
-
-AVAILABLE TOOLS:
-{tools_block_final}
-
-To call a tool, respond with ONLY a JSON array like:
-[{{"name": "tool_name", "arguments": {{"param": "value"}}}}]
-
-If you do not need to call a tool, respond with plain text."""
-
-            messages = [
-                SystemMessage(content=system_with_tools),
-            ] + history + [
-                HumanMessage(content=augmented_msg),
-            ]
+            final_tool_names = list(set(final_tool_names + extra_tools))
             print(f"[CHAT] final tool set: {len(final_tool_names)} tools", flush=True)
 
+        # Build function_list for qwen-agent — only tools in TOOL_REGISTRY
+        function_list = [n for n in final_tool_names if n in QW_TOOL_REGISTRY]
+        function_list += ['mark_task_done', 'unmark_task_done']
+
+        assistant = Assistant(
+            llm=qwen_llm_cfg(model_name),
+            function_list=function_list,
+            system_message=SYSTEM_PROMPT,
+        )
+
+        qwen_messages = history + [{"role": "user", "content": augmented_msg}]
+
         try:
-            for _round in range(MAX_TOOL_ROUNDS):
-                print(f"[ROUND {_round}] invoking LLM with {len(messages)} messages", flush=True)
+            prev_content = ""
+            seen_fn_count = 0
 
-                # Buffer the full streamed response, then decide what to do
-                chunks = []
-                for chunk in llm.stream(messages):
-                    token = chunk.content or ""
-                    if token:
-                        chunks.append(token)
+            for responses in assistant.run(messages=qwen_messages):
+                if not responses:
+                    continue
+                last = responses[-1]
+                role = last.get("role", "")
+                content = last.get("content") or ""
+                fn_call = last.get("function_call")
 
-                content = "".join(chunks)
-                print(f"[ROUND {_round}] got {len(content)} chars, starts with: {content[:80]!r}", flush=True)
-
-                # Check for tool calls
-                calls = parse_tool_calls(content)
-
-                if not calls:
-                    # Final text response — replay buffered tokens for streaming effect
-                    for token in chunks:
-                        full_response += token
-                        yield json.dumps({"chunk": token}) + "\n"
-                    break
-
-                # Detect repeated tool calls (stuck in a loop) — compare names only,
-                # not params (which may contain varying HTML content)
-                call_sig = json.dumps([c["name"] for c in calls], sort_keys=True)
-                if call_sig == prev_call_sig:
-                    print(f"[ROUND {_round}] LOOP DETECTED — same tool calls as previous round, breaking", flush=True)
-                    # Tell the model to stop and respond with what it has
-                    messages.append(AIMessage(content=content))
-                    messages.append(HumanMessage(
-                        content="STOP: You are repeating the same tool calls. The previous attempt returned the same result. Summarize what you know so far and respond to the user."
-                    ))
-                    # Do one more round for final text
-                    final_chunks = []
-                    for chunk in llm.stream(messages):
-                        token = chunk.content or ""
-                        if token:
-                            final_chunks.append(token)
-                            # Stream immediately — this should be text
-                            full_response += token
-                            yield json.dumps({"chunk": token}) + "\n"
-                    break
-                prev_call_sig = call_sig
-
-                # Tool call round — process tools
-                messages.append(AIMessage(content=content))
-                for call in calls:
-                    tool_name = call["name"]
-                    tool_params = call["params"]
-
-                    # Stream tool_call event to frontend
-                    yield json.dumps({
-                        "tool_call": {
-                            "tool": tool_name,
-                            "input": json.dumps(tool_params),
-                        }
-                    }) + "\n"
-
-                    # ── Internal tools: mark_task_done / unmark_task_done ──
-                    if tool_name in ("mark_task_done", "unmark_task_done"):
-                        new_status = "done" if tool_name == "mark_task_done" else "pending"
-                        verb = "marked done" if new_status == "done" else "unmarked (pending)"
-                        try:
-                            task_number = int(tool_params.get("task_number", 0))
-                            ordered_tasks = (
-                                db.query(ConversationTask)
-                                .filter_by(conversation_id=conversation_id)
-                                .order_by(ConversationTask.created_at.asc())
-                                .all()
-                            )
-                            if 1 <= task_number <= len(ordered_tasks):
-                                task = ordered_tasks[task_number - 1]
-                                task.status = new_status
-                                db.commit()
-                                result_str = f"Task {task_number} {verb}: {task.title}"
-                            else:
-                                result_str = f"Invalid task number {task_number}. Valid range: 1-{len(ordered_tasks)}"
-                        except Exception as e:
-                            result_str = f"Error updating task: {e}"
-
-                        # Stream result and add to messages
-                        yield json.dumps({
-                            "tool_result": {
-                                "tool": tool_name,
-                                "result": result_str,
-                            }
-                        }) + "\n"
-                        messages.append(ToolMessage(
-                            content=result_str,
-                            tool_call_id=tool_name,
-                        ))
-                        continue
-
-                    # Execute the tool with self-correcting retry
-                    tool_obj = _TOOL_BY_NAME.get(tool_name)
-                    if not tool_obj:
-                        result_str = f"Unknown tool: {tool_name}"
+                if role == "assistant":
+                    if fn_call:
+                        # Tool is being invoked — emit tool_call event once per new call
+                        fn_calls_so_far = [
+                            r for r in responses
+                            if r.get("role") == "assistant" and r.get("function_call")
+                        ]
+                        if len(fn_calls_so_far) > seen_fn_count:
+                            for fc in fn_calls_so_far[seen_fn_count:]:
+                                fc_info = fc.get("function_call", {})
+                                yield json.dumps({
+                                    "tool_call": {
+                                        "tool": fc_info.get("name", ""),
+                                        "input": fc_info.get("arguments", ""),
+                                    }
+                                }) + "\n"
+                            seen_fn_count = len(fn_calls_so_far)
                     else:
-                        retry_attempts = []
-                        max_retries = 3
-                        result_str = None
+                        # Streaming text — emit new tokens only
+                        new_text = content[len(prev_content):]
+                        if new_text:
+                            full_response = content
+                            yield json.dumps({"chunk": new_text}) + "\n"
+                        prev_content = content
 
-                        for attempt in range(max_retries):
-                            try:
-                                result = tool_obj.invoke(tool_params)
-                                result_str = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-                            except Exception as tool_err:
-                                result_str = f"Error: {tool_err}"
-
-                            # Check if the result is an error or empty
-                            is_error = _is_tool_failure(result_str)
-
-                            if not is_error or attempt == max_retries - 1:
-                                break
-
-                            # Self-correct: ask the LLM what to fix
-                            retry_attempts.append({
-                                "params": tool_params,
-                                "result": result_str[:500],
-                            })
-
-                            if attempt == 0:
-                                fix_prompt = (
-                                    f"Tool '{tool_name}' was called with {json.dumps(tool_params)} "
-                                    f"but returned an error/empty result: {result_str[:500]}\n\n"
-                                    f"What caused this error? What would you change about the "
-                                    f"parameters to make it succeed? Respond with ONLY a JSON "
-                                    f"object of corrected parameters, nothing else."
-                                )
-                            else:
-                                history_str = "\n".join(
-                                    f"  Attempt {i+1}: params={json.dumps(a['params'])}, result={a['result']}"
-                                    for i, a in enumerate(retry_attempts)
-                                )
-                                fix_prompt = (
-                                    f"Tool '{tool_name}' has failed {len(retry_attempts)} times:\n"
-                                    f"{history_str}\n\n"
-                                    f"What would you change this time? Respond with ONLY a JSON "
-                                    f"object of corrected parameters, nothing else."
-                                )
-
-                            print(f"[RETRY] {tool_name} attempt {attempt+1} failed, asking LLM to fix", flush=True)
-
-                            # Ask LLM for corrected params
-                            try:
-                                fix_resp = llm.invoke([
-                                    SystemMessage(content="You are fixing a failed tool call. Respond with ONLY valid JSON parameters."),
-                                    HumanMessage(content=fix_prompt),
-                                ])
-                                fix_text = fix_resp.content.strip()
-                                # Extract JSON from response
-                                fix_match = re.search(r'\{.*\}', fix_text, flags=re.DOTALL)
-                                if fix_match:
-                                    new_params = json.loads(fix_match.group())
-                                    print(f"[RETRY] LLM suggested: {json.dumps(new_params)}", flush=True)
-                                    tool_params = new_params
-
-                                    # Stream the retry to frontend
-                                    yield json.dumps({
-                                        "tool_call": {
-                                            "tool": f"{tool_name} (retry {attempt+2})",
-                                            "input": json.dumps(tool_params),
-                                        }
-                                    }) + "\n"
-                            except Exception:
-                                break  # can't self-correct, use what we have
-
-                    # Stream tool_result event to frontend
+                elif role == "function":
+                    fn_name = last.get("name", "")
+                    fn_content = content
+                    # Clean HTML noise before context is stored
+                    cleaned = _clean_tool_result(
+                        fn_content if isinstance(fn_content, str) else json.dumps(fn_content)
+                    )
                     yield json.dumps({
                         "tool_result": {
-                            "tool": tool_name,
-                            "output": result_str[:500],
+                            "tool": fn_name,
+                            "output": cleaned[:500],
                         }
                     }) + "\n"
-
-                    ordered_messages.append(("tool_call", {
-                        "name": tool_name,
-                        "args": tool_params,
-                        "id": "",
-                    }))
                     ordered_messages.append(("tool_result", {
-                        "name": tool_name,
+                        "name": fn_name,
                         "tool_call_id": "",
-                        "content": result_str,
+                        "content": cleaned[:12000],
                     }))
-
-                    # Clean HTML noise and truncate before feeding back to LLM
-                    cleaned = _clean_tool_result(result_str)
-                    truncated = cleaned[:12000]
-                    if len(cleaned) > 12000:
-                        truncated += f"\n... (truncated, {len(cleaned)} chars total)"
-                    print(f"[TOOL] {tool_name}: raw={len(result_str)} → cleaned={len(cleaned)} → ctx={len(truncated)}", flush=True)
-                    messages.append(HumanMessage(
-                        content=f"Tool '{tool_name}' returned:\n{truncated}"
-                    ))
 
         except Exception as e:
             yield json.dumps({"error": str(e)}) + "\n"
@@ -768,14 +497,7 @@ If you do not need to call a tool, respond with plain text."""
             ))
 
             for msg_type, msg_data in ordered_messages:
-                if msg_type == "tool_call":
-                    db.add(ConversationMessage(
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content="",
-                        tool_calls=[msg_data],
-                    ))
-                elif msg_type == "tool_result":
+                if msg_type == "tool_result":
                     result_row = serialize_tool_result(
                         msg_data["name"], msg_data["tool_call_id"], msg_data["content"]
                     )
@@ -821,9 +543,9 @@ def _get_user_selected_tools() -> list[str]:
     if hasattr(current_user, 'preferences') and current_user.preferences:
         user_tools = current_user.preferences.get("selected_tools")
         if user_tools is not None:
-            # Convert indices to names if user still has old index-based prefs
-            if user_tools and isinstance(user_tools[0], int):
-                return [ALL_TOOLS[i].name for i in user_tools if i < len(ALL_TOOLS)]
+            # Filter out any stale names not in the registry
+            if user_tools and isinstance(user_tools[0], str):
+                return [n for n in user_tools if n in QW_TOOL_REGISTRY]
             return user_tools
     return list(DEFAULT_TOOL_NAMES)
 
@@ -918,8 +640,13 @@ def cli_chat():
     print(f"\nChatting with: {model}")
     print("Type 'quit' to exit\n")
 
-    llm = _get_llm(model, [t.name for t in ALL_TOOLS])
-    history = [SystemMessage(content=SYSTEM_PROMPT)]
+    function_list = list(QW_TOOL_REGISTRY.keys())
+    assistant = Assistant(
+        llm=qwen_llm_cfg(model),
+        function_list=function_list,
+        system_message=SYSTEM_PROMPT,
+    )
+    history = []
 
     while True:
         try:
@@ -933,40 +660,20 @@ def cli_chat():
         if user_input.lower() == "quit":
             break
 
-        history.append(HumanMessage(content=user_input))
+        history.append({"role": "user", "content": user_input})
         print("Agent: ", end="", flush=True)
 
         try:
-            for _round in range(MAX_TOOL_ROUNDS):
-                resp = llm.invoke(history)
-                content = resp.content or ""
-                calls = parse_tool_calls(content)
-
-                if not calls:
-                    print(content)
-                    history.append(AIMessage(content=content))
-                    break
-
-                history.append(AIMessage(content=content))
-                for call in calls:
-                    tool_name = call["name"]
-                    tool_params = call["params"]
-                    print(f"\n  [calling {tool_name}({tool_params})]")
-                    tool_obj = _TOOL_BY_NAME.get(tool_name)
-                    if tool_obj:
-                        try:
-                            r = tool_obj.invoke(tool_params)
-                            result = json.dumps(r) if isinstance(r, (dict, list)) else str(r)
-                        except Exception as te:
-                            result = f"Error: {te}"
-                    else:
-                        result = f"Unknown tool: {tool_name}"
-                    print(f"  [result: {result[:200]}]")
-                    history.append(HumanMessage(
-                        content=f"Tool '{tool_name}' returned:\n{result}"
-                    ))
-                print("Agent: ", end="", flush=True)
-
+            responses = []
+            for responses in assistant.run(messages=history):
+                pass
+            if responses:
+                last = responses[-1]
+                if last.get("role") == "assistant" and last.get("content"):
+                    print(last["content"])
+                    history.append({"role": "assistant", "content": last["content"]})
+                elif last.get("role") == "function":
+                    print(f"\n  [tool result: {str(last.get('content', ''))[:200]}]")
         except Exception as e:
             print(f"\n[Error: {e}]")
 
