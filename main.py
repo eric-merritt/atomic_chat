@@ -6,7 +6,7 @@ import os as _os
 from dotenv import load_dotenv
 
 load_dotenv()
-from flask import Flask, request, jsonify, Response, stream_with_context, send_file
+from flask import Flask, request, jsonify, Response, stream_with_context, send_file, g
 from flask_login import login_required, current_user
 import ollama as ollama_client
 import json5
@@ -239,9 +239,8 @@ class MarkTaskDoneTool(BaseTool):
         'type': 'object',
         'properties': {
             'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
-            'conversation_id': {'type': 'string', 'description': 'Active conversation ID.'},
         },
-        'required': ['task_number', 'conversation_id'],
+        'required': ['task_number'],
     }
 
     def call(self, params: str, **kwargs) -> dict:
@@ -255,9 +254,8 @@ class UnmarkTaskDoneTool(BaseTool):
         'type': 'object',
         'properties': {
             'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
-            'conversation_id': {'type': 'string', 'description': 'Active conversation ID.'},
         },
-        'required': ['task_number', 'conversation_id'],
+        'required': ['task_number'],
     }
 
     def call(self, params: str, **kwargs) -> dict:
@@ -272,7 +270,7 @@ def _update_task_status(params_str: str, new_status: str) -> dict:
     try:
         p = json5.loads(params_str)
         task_number = int(p.get('task_number', 0))
-        conversation_id = p.get('conversation_id', '')
+        conversation_id = g.get('conversation_id', '')
         db = SessionLocal()
         try:
             ordered = (
@@ -340,6 +338,8 @@ def chat_stream():
         db.add(conv)
         db.commit()
         conversation_id = conv.id
+
+    g.conversation_id = conversation_id
 
     # --- Load conversation history ---
     db_messages = (
