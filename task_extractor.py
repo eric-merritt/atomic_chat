@@ -10,8 +10,7 @@ import logging
 import os
 import re
 
-from langchain_ollama import ChatOllama
-from langchain_core.messages import HumanMessage
+from qwen_agent.llm import get_chat_model
 
 from config import TASK_EXTRACTOR_MODEL
 
@@ -65,10 +64,9 @@ def _build_extractor_prompt(
     else:
         history_lines = "(none)"
 
-    return f"""You are a task extraction agent. Read the user's message and conversation
-context, then decide if there are new tasks.
+    return f"""You are a task extraction agent. Read the user's message and decide if it contains NEW tasks not already in the list.
 
-Current tasks:
+EXISTING TASKS (DO NOT repeat, rephrase, or re-extract these):
 {task_lines}
 
 Recent conversation:
@@ -77,11 +75,11 @@ Recent conversation:
 User message: "{user_message}"
 
 Rules:
-- A "task" is a concrete action the user wants the agent to perform.
-- Follow-ups like "try again", "format that differently", "now do X with that"
-  are NOT new tasks — they modify existing tasks.
-- If the message contains new tasks, return a JSON array of short task titles.
-- If there are no new tasks, return an empty array.
+- ONLY extract tasks that are genuinely NEW and not already covered by existing tasks above.
+- If the user says "do the tasks", "perform the task list", "execute", "go ahead", etc. — these are NOT new tasks. Return [].
+- Follow-ups like "try again", "fix that", "now do X with that" are NOT new tasks. Return [].
+- References to existing tasks are NOT new tasks. Return [].
+- If the message contains truly new tasks not in the list above, return a JSON array of short titles.
 
 Return ONLY a JSON array. Examples:
 - New tasks: ["Scrape supplier pricing from URL", "Import prices into ledger"]
@@ -150,17 +148,16 @@ def extract_tasks(
     ]
 
     prompt = _build_extractor_prompt(user_message, existing_tasks, recent_messages)
-
+    
     try:
-        from config import OLLAMA_CURATION_NUM_CTX
-        llm = ChatOllama(
-            model=TASK_EXTRACTOR_MODEL,
-            temperature=0,
-            base_url="http://localhost:11434",
-            num_ctx=OLLAMA_CURATION_NUM_CTX,
-        )
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content
+        from config import qwen_curation_llm_cfg
+        llm = get_chat_model(qwen_curation_llm_cfg(TASK_EXTRACTOR_MODEL))
+        messages = [
+            {"role": "system", "content": _SYSTEM_MSG},
+            {"role": "user", "content": prompt},
+        ]
+        *_, final = llm.chat(messages=messages)
+        raw = final[-1].get("content", "")
         new_titles = _parse_extractor_response(raw)
         _log_exchange(prompt, raw)
     except Exception as e:
@@ -169,6 +166,43 @@ def extract_tasks(
 
     if not new_titles:
         logger.info("Task Extractor: no new tasks")
+        return False
+
+    # Deduplicate against existing tasks (exact + overlap)
+    _STOPWORDS = {"the", "a", "an", "to", "from", "for", "of", "in", "on", "and", "or", "with"}
+    existing_lower = [t["title"].lower().strip() for t in existing_tasks]
+
+    def _normalize_words(s: str) -> set[str]:
+        return {w for w in re.sub(r"[^\w\s]", "", s.lower()).split() if w not in _STOPWORDS}
+
+    def _extract_urls(s: str) -> set[str]:
+        return set(re.findall(r'[\w.-]+\.(?:com|org|net|io|dev|co)\b[/\w.-]*', s.lower()))
+
+    def _is_duplicate(candidate: str) -> bool:
+        c = candidate.lower().strip()
+        c_words = _normalize_words(c)
+        c_urls = _extract_urls(c)
+        for ex in existing_lower:
+            if c == ex:
+                return True
+            # Catch rephrased duplicates: if one contains the other
+            if len(c) > 8 and len(ex) > 8 and (c in ex or ex in c):
+                return True
+            # URL overlap: same domain/URL referenced means same task
+            if c_urls and c_urls & _extract_urls(ex):
+                return True
+            # Word overlap: >50% shared meaningful words means duplicate
+            ex_words = _normalize_words(ex)
+            if c_words and ex_words:
+                overlap = len(c_words & ex_words) / min(len(c_words), len(ex_words))
+                if overlap >= 0.5:
+                    return True
+        return False
+
+    new_titles = [t for t in new_titles if not _is_duplicate(t)]
+
+    if not new_titles:
+        logger.info("Task Extractor: all extracted tasks already exist, skipping")
         return False
 
     # Write new tasks to DB
