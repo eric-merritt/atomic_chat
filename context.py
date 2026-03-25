@@ -1,63 +1,41 @@
-"""Context pipeline: conversation history loading, replay, and persistence.
+"""Context pipeline: conversation history loading and serialization.
 
-Converts between DB rows (dicts with role/content/tool_calls) and
-LangChain message types for agent consumption.
+Converts DB rows to qwen-agent message dicts (role/content/name).
 """
-
-from langchain_core.messages import (
-    HumanMessage,
-    AIMessage,
-    ToolMessage,
-)
 
 TOOL_RESULT_MAX_CHARS = 4000
 
 
-def _db_row_to_langchain(row: dict):
-    """Convert a DB message dict to the corresponding LangChain message.
+def _db_row_to_qwen(row: dict) -> dict:
+    """Convert a DB message dict to a qwen-agent message dict.
 
-    Args:
-        row: Dict with keys: role, content, tool_calls.
-
-    Returns:
-        HumanMessage, AIMessage, or ToolMessage.
+    qwen-agent format:
+    - user: {"role": "user", "content": "..."}
+    - assistant: {"role": "assistant", "content": "..."}
+    - tool result: {"role": "function", "name": "tool_name", "content": "..."}
     """
     role = row["role"]
     content = row.get("content", "")
     tool_calls = row.get("tool_calls", [])
 
     if role == "user":
-        return HumanMessage(content=content)
+        return {"role": "user", "content": content}
 
     if role == "assistant":
-        if tool_calls:
-            return AIMessage(content=content, tool_calls=tool_calls)
-        return AIMessage(content=content)
+        return {"role": "assistant", "content": content}
 
     if role == "tool":
         truncated = content[:TOOL_RESULT_MAX_CHARS] if content else ""
         tool_name = tool_calls[0]["name"] if tool_calls else "unknown"
-        tool_call_id = tool_calls[0].get("id", "unknown") if tool_calls else "unknown"
-        return ToolMessage(content=truncated, name=tool_name, tool_call_id=tool_call_id)
+        return {"role": "function", "name": tool_name, "content": truncated}
 
-    # Fallback — treat unknown roles as human messages
-    return HumanMessage(content=content)
+    return {"role": "user", "content": content}
 
 
-def build_history(db_messages: list[dict]) -> list:
-    """Convert a list of DB message dicts to LangChain messages.
+def build_history(db_messages: list[dict]) -> list[dict]:
+    """Convert DB message dicts to qwen-agent message dicts."""
+    return [_db_row_to_qwen(row) for row in db_messages]
 
-    Args:
-        db_messages: List of dicts from ConversationMessage table,
-                     ordered by created_at ascending.
-
-    Returns:
-        List of LangChain message objects.
-    """
-    return [_db_row_to_langchain(row) for row in db_messages]
-
-
-# --- Serialization helpers (LangChain → DB row dicts) ---
 
 def serialize_user_message(content: str) -> dict:
     """Serialize a user message for DB storage."""
@@ -70,7 +48,7 @@ def serialize_assistant_message(content: str, tool_calls: list) -> dict:
 
 
 def serialize_tool_result(tool_name: str, tool_call_id: str, content: str) -> dict:
-    """Serialize a tool result for DB storage. Truncates content to 4000 chars."""
+    """Serialize a tool result for DB storage."""
     truncated = content[:TOOL_RESULT_MAX_CHARS] if content else ""
     return {
         "role": "tool",

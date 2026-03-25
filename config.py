@@ -24,3 +24,29 @@ RATE_LIMITS = {
 
 # Dispatcher retry config
 MAX_RETRIES = 2
+
+
+def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
+    """Build a qwen-agent LLM config pointing at the local Ollama instance."""
+    return {
+        'model': model or os.environ.get('CHAT_MODEL', 'qwen3:8b'),
+        'model_type': 'oai',
+        'model_server': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434') + '/v1',
+        'api_key': 'EMPTY',
+        'generate_cfg': {
+            'max_input_tokens': num_ctx or OLLAMA_NUM_CTX,
+        },
+    }
+
+
+def qwen_curation_llm_cfg(model: str = "") -> dict:
+    """Build a qwen-agent LLM config for 1.7B curation workers."""
+    return {
+        'model': model or TASK_EXTRACTOR_MODEL,
+        'model_type': 'oai',
+        'model_server': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434') + '/v1',
+        'api_key': 'EMPTY',
+        'generate_cfg': {
+            'max_input_tokens': OLLAMA_CURATION_NUM_CTX,
+        },
+    }

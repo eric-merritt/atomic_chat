@@ -1,8 +1,8 @@
 """Tool Curator — 1.7B worker #2.
 
-Reads the task list and user's active tools, then either passes through
-(tools are sufficient) or recommends additional workflow groups.
-Short-circuits entirely when no new tasks were extracted.
+Reads the full task list and maps each task to the specific tool(s) needed,
+then determines which workflow groups must be active. Builds an exhaustive
+tool plan before returning any recommendation.
 """
 
 import json
@@ -11,11 +11,10 @@ import os
 import re
 from dataclasses import dataclass, field
 
-from langchain_ollama import ChatOllama
-from langchain_core.messages import HumanMessage
+from qwen_agent.llm import get_chat_model
 
 from config import TOOL_CURATOR_MODEL
-from workflow_groups import WORKFLOW_GROUPS
+from workflow_groups import WORKFLOW_GROUPS, group_for_tool
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +22,8 @@ _LOG_DIR = os.path.join(os.path.dirname(__file__), "training_data", "logs")
 _CURATOR_LOG = os.path.join(_LOG_DIR, "tool_curator.jsonl")
 
 _SYSTEM_MSG = (
-    "You are a tool curation agent. Given tasks and the user's active tools, "
-    "decide if additional workflow groups are needed. Never remove user-chosen "
-    "tools. Recommend the minimum groups needed. Return ONLY JSON: "
-    '{\"action\":\"pass\"} or {\"action\":\"recommend\",\"groups\":[...],\"reason\":\"...\"}'
+    "You are a tool curation agent. For each task, identify the specific tool "
+    "needed to complete it. Return ONLY a JSON array of task-tool mappings."
 )
 
 
@@ -46,8 +43,12 @@ def _log_exchange(prompt: str, response: str):
     except Exception as e:
         logger.debug("Failed to log curator exchange: %s", e)
 
-# Per-conversation cache: conversation_id → last tool names
-_tool_cache: dict[str, list[str]] = {}
+
+@dataclass
+class TaskToolMapping:
+    task_title: str
+    tool: str           # primary tool name
+    group: str | None   # workflow group the tool belongs to
 
 
 @dataclass
@@ -55,6 +56,16 @@ class CurationResult:
     action: str  # "pass" or "recommend"
     groups: list[str] = field(default_factory=list)
     reason: str = ""
+    task_plan: list[TaskToolMapping] = field(default_factory=list)
+
+
+def _build_all_tools_reference() -> str:
+    """Build a flat reference of every tool organized by group."""
+    lines = []
+    for group_name, g in WORKFLOW_GROUPS.items():
+        tool_list = ", ".join(g.tools)
+        lines.append(f'Group "{group_name}" ({g.tooltip}): {tool_list}')
+    return "\n".join(lines)
 
 
 def _build_curator_prompt(
@@ -62,87 +73,111 @@ def _build_curator_prompt(
     user_tool_names: list[str],
 ) -> str:
     """Build the prompt for the Tool Curator model."""
-    task_lines = "\n".join(f"- [{t['status']}] {t['title']}" for t in tasks)
     user_set = set(user_tool_names)
 
-    # Categorize groups
+    # Build numbered task list
+    task_lines = "\n".join(
+        f"{i}. [{t['status']}] {t['title']}" for i, t in enumerate(tasks, 1)
+    )
+
+    # Categorize groups as active vs available
     active_groups = []
-    partial_groups = []
-    missing_groups = []
+    available_groups = []
     for name, g in WORKFLOW_GROUPS.items():
         group_tools = set(g.tools)
-        if group_tools.issubset(user_set):
-            active_groups.append(f'- "{name}" — {g.tooltip}')
-        elif group_tools & user_set:
-            partial_groups.append(f'- "{name}" — {g.tooltip} (partially active)')
+        if group_tools.issubset(user_set) or (group_tools & user_set):
+            active_groups.append(name)
         else:
-            missing_groups.append(f'- "{name}" — {g.tooltip}')
+            available_groups.append(name)
 
-    active_str = "\n".join(active_groups) if active_groups else "(none)"
-    available_str = "\n".join(missing_groups + partial_groups) if (missing_groups or partial_groups) else "(none — user has all groups)"
+    tools_ref = _build_all_tools_reference()
 
-    return f"""You are a tool curation agent. You recommend WORKFLOW GROUPS, never individual tools.
+    return f"""You are a tool curation agent. Analyze EVERY task and assign the best tool for it.
 
-Tasks:
+TASKS:
 {task_lines}
 
-User's active groups:
-{active_str}
+TOOL REFERENCE (group → tools):
+{tools_ref}
 
-Available workflow groups (NOT yet active):
-{available_str}
+USER'S ACTIVE GROUPS: {', '.join(active_groups) if active_groups else '(none)'}
+AVAILABLE GROUPS (not active): {', '.join(available_groups) if available_groups else '(none)'}
 
-IMPORTANT: You must recommend GROUPS by their exact name (e.g. "Web Tools", "Accounting"), NOT individual tool names.
+INSTRUCTIONS:
+1. For EACH task above, pick the ONE primary tool best suited to start or complete it.
+2. Use tool names from the TOOL REFERENCE, not group names.
+3. If a task needs a tool from an AVAILABLE (inactive) group, still assign it — the system will recommend that group.
+4. If no tool fits a task, use "mcp" to indicate the main agent should query external MCP servers.
 
-Rules:
-- Never remove tools the user has chosen.
-- If the active groups are sufficient for the tasks, return: {{"action": "pass"}}
-- If a task requires a missing group, return:
-  {{"action": "recommend", "groups": ["Exact Group Name"], "reason": "short reason"}}
-- The "groups" array MUST contain group names from the list above, NOT tool names.
-- Recommend the minimum set of groups needed.
-- Keep the reason under 15 words.
-
-Return ONLY JSON."""
+Return ONLY a JSON array. One object per task, in order:
+[
+  {{"task": 1, "tool": "tool_name"}},
+  {{"task": 2, "tool": "tool_name"}},
+  ...
+]"""
 
 
-def _parse_curator_response(raw: str) -> CurationResult:
-    """Parse the curator's response into a CurationResult.
+def _parse_curator_response(
+    raw: str, tasks: list[dict]
+) -> list[TaskToolMapping]:
+    """Parse the curator's response into task-tool mappings.
 
-    Returns a pass-through result if the response is malformed.
+    Returns an empty list if the response is malformed.
     """
     # Strip <think>...</think> tags
     cleaned = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
 
-    # Extract JSON object
-    match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+    # Extract JSON array
+    match = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
     if not match:
-        return CurationResult(action="pass")
+        return []
 
     try:
         parsed = json.loads(match.group())
     except (json.JSONDecodeError, TypeError):
-        return CurationResult(action="pass")
+        return []
 
-    if not isinstance(parsed, dict):
-        return CurationResult(action="pass")
+    if not isinstance(parsed, list):
+        return []
 
-    action = parsed.get("action", "pass")
-    if action != "recommend":
-        return CurationResult(action="pass")
+    # Build a set of all known tool names for validation
+    all_tools = set()
+    for g in WORKFLOW_GROUPS.values():
+        all_tools.update(g.tools)
+    all_tools.add("mcp")  # virtual tool for MCP delegation
 
-    # Validate group names against registry
-    raw_groups = parsed.get("groups", [])
-    valid_groups = [g for g in raw_groups if isinstance(g, str) and g in WORKFLOW_GROUPS]
+    mappings = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        task_num = item.get("task", 0)
+        tool_name = item.get("tool", "")
 
-    if not valid_groups:
-        return CurationResult(action="pass")
+        if not isinstance(tool_name, str) or not tool_name.strip():
+            continue
 
-    reason = parsed.get("reason", "")
-    if not isinstance(reason, str):
-        reason = ""
+        tool_name = tool_name.strip()
 
-    return CurationResult(action="recommend", groups=valid_groups, reason=reason)
+        # Resolve task title
+        idx = (int(task_num) - 1) if isinstance(task_num, (int, float)) else -1
+        if 0 <= idx < len(tasks):
+            title = tasks[idx]["title"]
+        else:
+            continue
+
+        # Validate tool name exists
+        if tool_name not in all_tools:
+            # Try to find the closest match (model might use group name)
+            tool_name = "mcp"  # fallback to MCP delegation
+
+        group = group_for_tool(tool_name)
+        mappings.append(TaskToolMapping(
+            task_title=title,
+            tool=tool_name,
+            group=group,
+        ))
+
+    return mappings
 
 
 def curate_tools(
@@ -153,7 +188,8 @@ def curate_tools(
 ) -> CurationResult:
     """Run the Tool Curator for this conversation.
 
-    Short-circuits (returns pass) if no new tasks were extracted.
+    Maps each pending task to a specific tool and determines which
+    workflow groups need to be activated.
 
     Args:
         conversation_id: Active conversation ID.
@@ -162,13 +198,8 @@ def curate_tools(
         db: SQLAlchemy session.
 
     Returns:
-        CurationResult with action, groups, and reason.
+        CurationResult with action, groups, reason, and task_plan.
     """
-    # Short-circuit: no new tasks = no inference needed
-    if not has_new_tasks:
-        logger.info("Tool Curator: no new tasks, passing through")
-        return CurationResult(action="pass")
-
     from auth.conversation_tasks import ConversationTask
 
     # Load all non-done tasks for this conversation
@@ -178,27 +209,70 @@ def curate_tools(
     ).all()
     task_dicts = [{"title": t.title, "status": t.status} for t in tasks]
 
+    # Short-circuit: no pending tasks at all
     if not task_dicts:
+        logger.info("Tool Curator: no pending tasks, passing through")
         return CurationResult(action="pass")
 
     prompt = _build_curator_prompt(task_dicts, user_tool_names)
 
     try:
-        from config import OLLAMA_CURATION_NUM_CTX
-        llm = ChatOllama(
-            model=TOOL_CURATOR_MODEL,
-            temperature=0,
-            base_url="http://localhost:11434",
-            num_ctx=OLLAMA_CURATION_NUM_CTX,
-        )
-        response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content
-        result = _parse_curator_response(raw)
+        from config import qwen_curation_llm_cfg
+        llm = get_chat_model(qwen_curation_llm_cfg(TOOL_CURATOR_MODEL))
+        messages = [
+            {"role": "system", "content": _SYSTEM_MSG},
+            {"role": "user", "content": prompt},
+        ]
+        *_, final = llm.chat(messages=messages)
+        raw = final[-1].get("content", "")
+        task_plan = _parse_curator_response(raw, task_dicts)
         _log_exchange(prompt, raw)
-
-        logger.info("Tool Curator: action=%s, groups=%s", result.action, result.groups)
-        return result
 
     except Exception as e:
         logger.warning("Tool Curator failed (%s), passing through", e)
         return CurationResult(action="pass")
+
+    if not task_plan:
+        logger.info("Tool Curator: could not map tasks, passing through")
+        return CurationResult(action="pass")
+
+    # Determine which groups are needed but not active
+    user_set = set(user_tool_names)
+    needed_groups = set()
+    for m in task_plan:
+        if m.group and not set(WORKFLOW_GROUPS[m.group].tools).issubset(user_set):
+            needed_groups.add(m.group)
+
+    # Filter to only groups that are truly missing (no tools active at all)
+    missing_groups = []
+    for g in needed_groups:
+        group_tools = set(WORKFLOW_GROUPS[g].tools)
+        if not (group_tools & user_set):
+            missing_groups.append(g)
+
+    if missing_groups:
+        # Build reason from task plan
+        reasons = []
+        for g in missing_groups:
+            tasks_needing = [m.task_title for m in task_plan if m.group == g]
+            if tasks_needing:
+                reasons.append(f"{g} for: {tasks_needing[0][:40]}")
+        reason = "; ".join(reasons)[:80]
+
+        logger.info(
+            "Tool Curator: recommend %s, plan=%s",
+            missing_groups,
+            [(m.task_title[:30], m.tool) for m in task_plan],
+        )
+        return CurationResult(
+            action="recommend",
+            groups=missing_groups,
+            reason=reason,
+            task_plan=task_plan,
+        )
+
+    logger.info(
+        "Tool Curator: all tools available, plan=%s",
+        [(m.task_title[:30], m.tool) for m in task_plan],
+    )
+    return CurationResult(action="pass", task_plan=task_plan)
