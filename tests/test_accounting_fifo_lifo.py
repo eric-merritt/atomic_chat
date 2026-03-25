@@ -4,6 +4,10 @@ import json
 import pytest
 
 
+def _load(result):
+    return result if isinstance(result, dict) else json.loads(result)
+
+
 @pytest.fixture
 def stocked_ledger(db_session, ledger_with_defaults):
     """Ledger with 2 inventory layers at different costs."""
@@ -29,7 +33,7 @@ def stocked_ledger(db_session, ledger_with_defaults):
 
 def test_fifo_sale(stocked_ledger):
     from tools.accounting import _journalize_fifo_transaction_impl, _get_account_balance_impl
-    result = json.loads(_journalize_fifo_transaction_impl(
+    result = _load(_journalize_fifo_transaction_impl(
         stocked_ledger, "test-user-001", "2026-03-20", "Sold 5 GPUs",
         "GPU-001", 5, 300.00
     ))
@@ -42,7 +46,7 @@ def test_fifo_sale(stocked_ledger):
 
 def test_lifo_sale(stocked_ledger):
     from tools.accounting import _journalize_lifo_transaction_impl
-    result = json.loads(_journalize_lifo_transaction_impl(
+    result = _load(_journalize_lifo_transaction_impl(
         stocked_ledger, "test-user-001", "2026-03-20", "Sold 5 GPUs LIFO",
         "GPU-001", 5, 300.00
     ))
@@ -54,7 +58,7 @@ def test_lifo_sale(stocked_ledger):
 
 def test_fifo_insufficient_inventory(stocked_ledger):
     from tools.accounting import _journalize_fifo_transaction_impl
-    result = json.loads(_journalize_fifo_transaction_impl(
+    result = _load(_journalize_fifo_transaction_impl(
         stocked_ledger, "test-user-001", "2026-03-20", "Too many",
         "GPU-001", 25, 300.00  # only 20 in stock
     ))
@@ -66,7 +70,7 @@ def test_fifo_rejects_service_items(db_session, ledger_with_defaults):
     from tools.accounting import _register_inventory_item_impl, _journalize_fifo_transaction_impl
     _register_inventory_item_impl(db_session, "test-user-001", "SVC-001", "Consulting", "service")
     db_session.flush()
-    result = json.loads(_journalize_fifo_transaction_impl(
+    result = _load(_journalize_fifo_transaction_impl(
         db_session, "test-user-001", "2026-03-20", "Bad",
         "SVC-001", 1, 100.00
     ))
@@ -77,7 +81,7 @@ def test_fifo_rejects_service_items(db_session, ledger_with_defaults):
 def test_fifo_multi_layer_consumption(stocked_ledger):
     """Sell 15 units — should consume all of Layer 1 (10@$200) + 5 from Layer 2 (5@$250)."""
     from tools.accounting import _journalize_fifo_transaction_impl
-    result = json.loads(_journalize_fifo_transaction_impl(
+    result = _load(_journalize_fifo_transaction_impl(
         stocked_ledger, "test-user-001", "2026-03-20", "Big sale",
         "GPU-001", 15, 300.00
     ))
@@ -90,7 +94,7 @@ def test_fifo_multi_layer_consumption(stocked_ledger):
 
 def test_inventory_valuation_fifo(stocked_ledger):
     from tools.accounting import _inventory_valuation_impl
-    result = json.loads(_inventory_valuation_impl(stocked_ledger, "test-user-001", "fifo"))
+    result = _load(_inventory_valuation_impl(stocked_ledger, "test-user-001", "fifo"))
     assert result["status"] == "success"
     items = result["data"]["items"]
     assert len(items) == 1

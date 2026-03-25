@@ -1,23 +1,21 @@
 """Test that ecommerce tools are importable."""
 
 
-def test_ecommerce_tools_importable():
-    from tools.ecommerce import ECOMMERCE_TOOLS
-    assert len(ECOMMERCE_TOOLS) == 6
-    names = {t.name for t in ECOMMERCE_TOOLS}
+def test_ecommerce_tools_registered():
+    from qwen_agent.tools.base import TOOL_REGISTRY
+    import tools.ecommerce  # noqa: F401
     expected = {
         "ebay_search", "ebay_sold_search", "ebay_deep_scan",
         "amazon_search", "craigslist_search", "craigslist_multi_search",
     }
-    assert names == expected
+    assert expected.issubset(set(TOOL_REGISTRY.keys()))
 
 
-def test_flow_tools_separate():
-    """Flow tools exist but are NOT in ECOMMERCE_TOOLS — they belong to the dispatcher."""
-    from tools.ecommerce import FLOW_TOOLS
-    assert len(FLOW_TOOLS) == 3
-    names = {t.name for t in FLOW_TOOLS}
-    assert names == {"cross_platform_search", "deal_finder", "enrichment_pipeline"}
+def test_flow_tools_registered():
+    from qwen_agent.tools.base import TOOL_REGISTRY
+    import tools.ecommerce  # noqa: F401
+    expected = {"cross_platform_search", "deal_finder", "enrichment_pipeline"}
+    assert expected.issubset(set(TOOL_REGISTRY.keys()))
 
 
 def test_ebay_sort_options():

@@ -30,6 +30,12 @@ class ConversationTask(Base):
     )
     title = Column(Text, nullable=False)
     status = Column(String(16), nullable=False, default="pending")
+    depends_on = Column(
+        String(36),
+        ForeignKey("conversation_tasks.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=True), default=_now)
 
     conversation = relationship("Conversation")
+    dependency = relationship("ConversationTask", remote_side="ConversationTask.id")
