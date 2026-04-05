@@ -215,7 +215,7 @@ def _create_ledger_impl(db: Session, user_id: str, name: str = "My Ledger") -> s
     })
 
 
-@register_tool('create_ledger')
+@register_tool('fa_ledger')
 class CreateLedgerTool(BaseTool):
     description = 'Initialize a new accounting ledger for the current user with 12 default accounts.'
     parameters = {
@@ -249,7 +249,7 @@ def _create_account_impl(
 ) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     try:
         acct_type = AccountType(account_type.lower())
@@ -285,7 +285,7 @@ def _create_account_impl(
     })
 
 
-@register_tool('create_account')
+@register_tool('fa_new_acct')
 class CreateAccountTool(BaseTool):
     description = 'Add a new account to the user\'s chart of accounts.'
     parameters = {
@@ -322,7 +322,7 @@ class CreateAccountTool(BaseTool):
 def _list_accounts_impl(db: Session, user_id: str, account_type: str = None) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     query = db.query(Account).filter_by(ledger_id=ledger.id)
     if account_type:
@@ -349,7 +349,7 @@ def _list_accounts_impl(db: Session, user_id: str, account_type: str = None) -> 
     })
 
 
-@register_tool('list_accounts')
+@register_tool('fa_ls_accts')
 class ListAccountsTool(BaseTool):
     description = 'List all accounts in the user\'s chart of accounts.'
     parameters = {
@@ -374,7 +374,7 @@ class ListAccountsTool(BaseTool):
 def _get_account_balance_impl(db: Session, user_id: str, account_name: str, as_of_date: str = None) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     account = _resolve_account(db, ledger.id, account_name)
     if not account:
@@ -398,7 +398,7 @@ def _get_account_balance_impl(db: Session, user_id: str, account_name: str, as_o
     })
 
 
-@register_tool('get_account_balance')
+@register_tool('fa_acct_bal')
 class GetAccountBalanceTool(BaseTool):
     description = 'Get the current balance of a single account.'
     parameters = {
@@ -427,7 +427,7 @@ def _update_account_impl(
 ) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     account = db.query(Account).filter_by(ledger_id=ledger.id, name=account_name).first()
     if not account:
@@ -460,7 +460,7 @@ def _update_account_impl(
     })
 
 
-@register_tool('update_account')
+@register_tool('fa_update_acct')
 class UpdateAccountTool(BaseTool):
     description = "Update an account's name, number, or active status. Cannot deactivate an account with a non-zero balance."
     parameters = {
@@ -500,7 +500,7 @@ def _journalize_transaction_impl(db: Session, user_id: str, date_str: str, memo:
     """Core journalizing engine. Validates and creates a balanced journal entry."""
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     try:
         entry_date = _parse_date(date_str)
@@ -576,7 +576,7 @@ def _journalize_transaction_impl(db: Session, user_id: str, date_str: str, memo:
     })
 
 
-@register_tool('journalize_transaction')
+@register_tool('fa_tx_new')
 class JournalizeTransactionTool(BaseTool):
     description = 'Record a double-entry journal transaction. Every transaction MUST balance: total debits == total credits.'
     parameters = {
@@ -617,7 +617,7 @@ def _search_journal_impl(
 ) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     query = db.query(JournalEntry).filter_by(ledger_id=ledger.id)
 
@@ -661,7 +661,7 @@ def _search_journal_impl(
     return tool_result(data={"count": len(results), "entries": results})
 
 
-@register_tool('search_journal')
+@register_tool('fa_tx_search')
 class SearchJournalTool(BaseTool):
     description = 'Search journal entries by date, memo text, amount, or account.'
     parameters = {
@@ -696,7 +696,7 @@ class SearchJournalTool(BaseTool):
 def _void_transaction_impl(db: Session, user_id: str, journal_entry_id: int, date_str: str, memo: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     entry = db.query(JournalEntry).filter_by(id=journal_entry_id, ledger_id=ledger.id).first()
     if not entry:
@@ -770,7 +770,7 @@ def _void_transaction_impl(db: Session, user_id: str, journal_entry_id: int, dat
     })
 
 
-@register_tool('void_transaction')
+@register_tool('fa_tx_void')
 class VoidTransactionTool(BaseTool):
     description = 'Void a journal entry by creating an equal and opposite reversing entry. Never deletes — preserves full audit trail.'
     parameters = {
@@ -802,7 +802,7 @@ class VoidTransactionTool(BaseTool):
 def _account_ledger_impl(db: Session, user_id: str, account_name: str, start_date: str = None, end_date: str = None) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     account = _resolve_account(db, ledger.id, account_name)
     if not account:
@@ -843,7 +843,7 @@ def _account_ledger_impl(db: Session, user_id: str, account_name: str, start_dat
     })
 
 
-@register_tool('account_ledger')
+@register_tool('fa_acct_det')
 class AccountLedgerTool(BaseTool):
     description = 'View all journal lines for a specific account with running balance.'
     parameters = {
@@ -875,7 +875,7 @@ def _register_inventory_item_impl(
 ) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     try:
         itype = ItemType(item_type.lower())
@@ -905,7 +905,7 @@ def _register_inventory_item_impl(
     })
 
 
-@register_tool('register_inventory_item')
+@register_tool('fa_new_item')
 class RegisterInventoryItemTool(BaseTool):
     description = 'Register a new inventory item (goods or service) before receiving inventory or recording sales.'
     parameters = {
@@ -944,7 +944,7 @@ def _receive_inventory_impl(
 ) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku, is_active=True).first()
     if not item:
@@ -996,7 +996,7 @@ def _receive_inventory_impl(
     })
 
 
-@register_tool('receive_inventory')
+@register_tool('fa_receive')
 class ReceiveInventoryTool(BaseTool):
     description = 'Receive inventory and auto-record the purchase journal entry (debit Inventory, credit payment_account).'
     parameters = {
@@ -1033,7 +1033,7 @@ class ReceiveInventoryTool(BaseTool):
 def _list_inventory_items_impl(db: Session, user_id: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     items = db.query(InventoryItem).filter_by(ledger_id=ledger.id).order_by(InventoryItem.sku).all()
 
@@ -1054,7 +1054,7 @@ def _list_inventory_items_impl(db: Session, user_id: str) -> str:
     return tool_result(data={"count": len(result_items), "items": result_items})
 
 
-@register_tool('list_inventory_items')
+@register_tool('fa_ls_items')
 class ListInventoryItemsTool(BaseTool):
     description = 'List all inventory items with quantity on hand.'
     parameters = {
@@ -1076,7 +1076,7 @@ class ListInventoryItemsTool(BaseTool):
 def _deactivate_inventory_item_impl(db: Session, user_id: str, item_sku: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku).first()
     if not item:
@@ -1098,7 +1098,7 @@ def _deactivate_inventory_item_impl(db: Session, user_id: str, item_sku: str) ->
     })
 
 
-@register_tool('deactivate_inventory_item')
+@register_tool('fa_rm_item')
 class DeactivateInventoryItemTool(BaseTool):
     description = 'Deactivate an inventory item. Rejects if any cost layers still have remaining quantity.'
     parameters = {
@@ -1136,7 +1136,7 @@ def _journalize_cost_layer_sale(
     """Shared FIFO/LIFO implementation. method='fifo' or 'lifo'."""
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     item = db.query(InventoryItem).filter_by(ledger_id=ledger.id, sku=item_sku, is_active=True).first()
     if not item:
@@ -1224,7 +1224,7 @@ def _journalize_fifo_transaction_impl(
     )
 
 
-@register_tool('journalize_fifo_transaction')
+@register_tool('fa_tx_fifo')
 class JournalizeFifoTransactionTool(BaseTool):
     description = 'Record a FIFO (first-in, first-out) inventory sale or consumption. Pulls cost from oldest layers first.'
     parameters = {
@@ -1274,7 +1274,7 @@ def _journalize_lifo_transaction_impl(
     )
 
 
-@register_tool('journalize_lifo_transaction')
+@register_tool('fa_tx_lifo')
 class JournalizeLifoTransactionTool(BaseTool):
     description = 'Record a LIFO (last-in, first-out) inventory sale or consumption. Pulls cost from newest layers first.'
     parameters = {
@@ -1316,7 +1316,7 @@ class JournalizeLifoTransactionTool(BaseTool):
 def _inventory_valuation_impl(db: Session, user_id: str, method: str = "fifo") -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     items = db.query(InventoryItem).filter_by(
         ledger_id=ledger.id, item_type=ItemType.GOODS,
@@ -1355,7 +1355,7 @@ def _inventory_valuation_impl(db: Session, user_id: str, method: str = "fifo") -
     return tool_result(data={"method": method, "items": result_items})
 
 
-@register_tool('inventory_valuation')
+@register_tool('fa_value')
 class InventoryValuationTool(BaseTool):
     description = 'Get current inventory valuation with cost layer details.'
     parameters = {
@@ -1382,7 +1382,7 @@ class InventoryValuationTool(BaseTool):
 def _trial_balance_impl(db: Session, user_id: str, as_of_date: str = None) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     as_of = _parse_date(as_of_date) if as_of_date else None
     accounts = db.query(Account).filter_by(ledger_id=ledger.id).order_by(Account.account_type, Account.name).all()
@@ -1419,24 +1419,48 @@ def _trial_balance_impl(db: Session, user_id: str, as_of_date: str = None) -> st
     })
 
 
-@register_tool('trial_balance')
-class TrialBalanceTool(BaseTool):
-    description = 'Generate a trial balance showing all accounts with debit/credit totals to verify the books balance.'
+_STMT_TYPES = {
+    'trial_balance': lambda db, uid, p: _trial_balance_impl(db, uid, p.get('as_of_date')),
+    'income_statement': lambda db, uid, p: _income_statement_impl(db, uid, p['start_date'], p['end_date']),
+    'balance_sheet': lambda db, uid, p: _balance_sheet_impl(db, uid, p.get('as_of_date')),
+    'cash_flow': lambda db, uid, p: _cash_flow_statement_impl(db, uid, p['start_date'], p['end_date']),
+}
+
+
+@register_tool('fa_stmt')
+class FinancialStatementTool(BaseTool):
+    description = (
+        'Generate a financial statement. '
+        'Types: trial_balance, income_statement, balance_sheet, cash_flow. '
+        'trial_balance and balance_sheet take optional as_of_date. '
+        'income_statement and cash_flow require start_date and end_date.'
+    )
     parameters = {
         'type': 'object',
         'properties': {
-            'as_of_date': {'type': 'string', 'description': 'Optional cutoff date (YYYY-MM-DD). Defaults to all time.'},
+            'type': {
+                'type': 'string',
+                'enum': ['trial_balance', 'income_statement', 'balance_sheet', 'cash_flow'],
+                'description': 'Statement type.',
+            },
+            'as_of_date': {'type': 'string', 'description': 'Cutoff date (YYYY-MM-DD). For trial_balance and balance_sheet.'},
+            'start_date': {'type': 'string', 'description': 'Period start (YYYY-MM-DD). For income_statement and cash_flow.'},
+            'end_date': {'type': 'string', 'description': 'Period end (YYYY-MM-DD). For income_statement and cash_flow.'},
         },
-        'required': [],
+        'required': ['type'],
     }
 
     @retry()
     def call(self, params: str, **kwargs) -> dict:
         from flask_login import current_user
         p = json5.loads(params)
+        stmt_type = p.get('type')
+        handler = _STMT_TYPES.get(stmt_type)
+        if not handler:
+            return tool_result(error=f"Unknown statement type '{stmt_type}'. Must be one of: {', '.join(_STMT_TYPES)}")
         db = _get_db()
         try:
-            return _trial_balance_impl(db, current_user.id, p.get('as_of_date'))
+            return handler(db, current_user.id, p)
         finally:
             db.close()
 
@@ -1444,7 +1468,7 @@ class TrialBalanceTool(BaseTool):
 def _income_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     start = _parse_date(start_date)
     end = _parse_date(end_date)
@@ -1494,33 +1518,11 @@ def _income_statement_impl(db: Session, user_id: str, start_date: str, end_date:
     })
 
 
-@register_tool('income_statement')
-class IncomeStatementTool(BaseTool):
-    description = 'Generate an income statement (profit & loss) for a date range showing revenue, expenses, and net income.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'start_date': {'type': 'string', 'description': 'Period start (YYYY-MM-DD).'},
-            'end_date': {'type': 'string', 'description': 'Period end (YYYY-MM-DD).'},
-        },
-        'required': ['start_date', 'end_date'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        from flask_login import current_user
-        p = json5.loads(params)
-        db = _get_db()
-        try:
-            return _income_statement_impl(db, current_user.id, p['start_date'], p['end_date'])
-        finally:
-            db.close()
-
 
 def _balance_sheet_impl(db: Session, user_id: str, as_of_date: str = None) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     as_of = _parse_date(as_of_date) if as_of_date else None
 
@@ -1564,32 +1566,11 @@ def _balance_sheet_impl(db: Session, user_id: str, as_of_date: str = None) -> st
     })
 
 
-@register_tool('balance_sheet')
-class BalanceSheetTool(BaseTool):
-    description = 'Generate a balance sheet showing Assets = Liabilities + Equity at a point in time.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'as_of_date': {'type': 'string', 'description': 'Optional date (YYYY-MM-DD). Defaults to all time.'},
-        },
-        'required': [],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        from flask_login import current_user
-        p = json5.loads(params)
-        db = _get_db()
-        try:
-            return _balance_sheet_impl(db, current_user.id, p.get('as_of_date'))
-        finally:
-            db.close()
-
 
 def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     end_date = _parse_date(period_end_date)
 
@@ -1697,7 +1678,7 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
     })
 
 
-@register_tool('close_period')
+@register_tool('fa_close')
 class ClosePeriodTool(BaseTool):
     description = "Close revenue and expense accounts for a period, transferring net income to Owner's Capital via 3 closing entries."
     parameters = {
@@ -1727,7 +1708,7 @@ class ClosePeriodTool(BaseTool):
 def _cash_flow_statement_impl(db: Session, user_id: str, start_date: str, end_date: str) -> str:
     ledger = _get_ledger(db, user_id)
     if not ledger:
-        return tool_result(error="No ledger found. Call create_ledger first.")
+        return tool_result(error="No ledger found. Call fa_ledger first.")
 
     start = _parse_date(start_date)
     end = _parse_date(end_date)
@@ -1822,24 +1803,3 @@ def _cash_flow_statement_impl(db: Session, user_id: str, start_date: str, end_da
     })
 
 
-@register_tool('cash_flow_statement')
-class CashFlowStatementTool(BaseTool):
-    description = 'Generate a cash flow statement using the indirect method for a date range.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'start_date': {'type': 'string', 'description': 'Period start (YYYY-MM-DD).'},
-            'end_date': {'type': 'string', 'description': 'Period end (YYYY-MM-DD).'},
-        },
-        'required': ['start_date', 'end_date'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        from flask_login import current_user
-        p = json5.loads(params)
-        db = _get_db()
-        try:
-            return _cash_flow_statement_impl(db, current_user.id, p['start_date'], p['end_date'])
-        finally:
-            db.close()

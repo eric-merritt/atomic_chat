@@ -1,4 +1,4 @@
-"""Conversations API: CRUD + message management."""
+"""Conversations API: CRUD + message management + tasks."""
 
 from datetime import datetime, timezone
 
@@ -8,6 +8,7 @@ from sqlalchemy import or_
 
 from auth.db import get_db
 from auth.conversations import Conversation, ConversationMessage
+from auth.conversation_tasks import ConversationTask
 
 conv_bp = Blueprint("conversations", __name__, url_prefix="/api/conversations")
 
@@ -172,3 +173,88 @@ def add_message(conv_id):
     conv.updated_at = datetime.now(timezone.utc)
     db.commit()
     return jsonify({"message": _msg_json(msg)}), 201
+
+
+# ── Conversation Tasks ───────────────────────────────────────────────────────
+
+def _task_json(task: ConversationTask) -> dict:
+    return {
+        "id": task.id,
+        "title": task.title,
+        "status": task.status,
+        "depends_on": task.depends_on,
+        "created_at": task.created_at.isoformat() if task.created_at else None,
+    }
+
+
+@conv_bp.route("/<conv_id>/tasks", methods=["GET"])
+@login_required
+def list_tasks(conv_id):
+    db = get_db()
+    conv = db.query(Conversation).filter_by(id=conv_id, user_id=current_user.id).first()
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    tasks = (
+        db.query(ConversationTask)
+        .filter_by(conversation_id=conv_id)
+        .order_by(ConversationTask.created_at.asc())
+        .all()
+    )
+    return jsonify({"tasks": [_task_json(t) for t in tasks]})
+
+
+@conv_bp.route("/<conv_id>/tasks", methods=["POST"])
+@login_required
+def create_task(conv_id):
+    db = get_db()
+    conv = db.query(Conversation).filter_by(id=conv_id, user_id=current_user.id).first()
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    data = request.get_json(force=True)
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    task = ConversationTask(
+        conversation_id=conv_id,
+        title=title,
+        depends_on=data.get("depends_on"),
+    )
+    db.add(task)
+    db.commit()
+    return jsonify({"task": _task_json(task)}), 201
+
+
+@conv_bp.route("/<conv_id>/tasks/<task_id>", methods=["PATCH"])
+@login_required
+def update_task(conv_id, task_id):
+    db = get_db()
+    conv = db.query(Conversation).filter_by(id=conv_id, user_id=current_user.id).first()
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    task = db.query(ConversationTask).filter_by(id=task_id, conversation_id=conv_id).first()
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    data = request.get_json(force=True)
+    if "title" in data:
+        task.title = data["title"]
+    if "status" in data:
+        task.status = data["status"]
+    if "depends_on" in data:
+        task.depends_on = data["depends_on"]
+    db.commit()
+    return jsonify({"task": _task_json(task)})
+
+
+@conv_bp.route("/<conv_id>/tasks/<task_id>", methods=["DELETE"])
+@login_required
+def delete_task(conv_id, task_id):
+    db = get_db()
+    conv = db.query(Conversation).filter_by(id=conv_id, user_id=current_user.id).first()
+    if not conv:
+        return jsonify({"error": "Conversation not found"}), 404
+    task = db.query(ConversationTask).filter_by(id=task_id, conversation_id=conv_id).first()
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    db.delete(task)
+    db.commit()
+    return jsonify({"ok": True})

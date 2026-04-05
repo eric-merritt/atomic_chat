@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import threading
 from datetime import datetime, timezone
 import os as _os
@@ -12,11 +13,11 @@ import ollama as ollama_client
 import json5
 from qwen_agent.agents import Assistant
 from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
+_BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
 import tools  # triggers @register_tool side-effects for all tool modules
 from config import qwen_llm_cfg
-from task_extractor import extract_tasks
-from tool_curator import curate_tools
-from workflow_groups import WORKFLOW_GROUPS, tools_for_groups
+from change_hats import analyze_message
+from workflow_groups import WORKFLOW_GROUPS, tools_for_groups, group_for_tool
 from context import build_history, serialize_user_message, serialize_assistant_message, serialize_tool_result
 from auth.conversations import Conversation, ConversationMessage
 
@@ -36,18 +37,31 @@ from auth.conversation_tasks import ConversationTask
 # SYSTEM PROMPT (Qwen-optimized)
 # ─────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an execution agent with tool access.
+_SYSTEM_BASE = """You are a conversational agent with tool calling capabilities. If a message requires tools you must call them. If it does not, be conversational.
+
+TOOL REFERENCE:
+{tool_ref}
+
+Before calling any tool, call get_params(tool_name) first to learn its required and optional parameters. This is mandatory — never guess parameters.
 
 RULES:
-- If tools can solve the task, call them. Chain multiple tools in series when needed — carry data forward from each result.
+- ONLY call tools listed in TOOL REFERENCE above. NEVER invent tool names.
+- ALWAYS begin responding immediately to be polite, even if just to say "Absolutely, let me think about the best way to do this." This ensures that even if you have to call tools, the user feels like they're conversing with a friend.
+- NEVER call a tool without first finding its required parameters. Once you find which parameters are needed, infer them from the user message. If the parameters are not included in the user message, ask the user for them specifically.
+- The user message is your PRIMARY source of data you'll need to complete tool calls. Read it carefully for: details, parameters, URLs, names, and other constraints.
+- A [TASK LIST] may appear below the message. While this can inform you of the current state of the tasks, it should NOT be used to infer parameters, URLs, etc. Use ONLY the user message.
+- If it is NECESSARY to call tools, call them. Chain multiple tools in series when needed — the output of one tool call SHOULD provide parameters needed for the next tool call. If it does NOT, the Toolchain is broken and you must re-think it. Use error messages as hints on how to move forward without bothering the user.
 - Follow instructions explicitly. Return data in the exact format requested.
 - When stuck on tool flow, ask the user — show your plan up to the sticking point.
-- Never explain, instruct, describe tools, or summarize unless asked. Act.
-- Never fabricate data. Never use placeholder strings in tool arguments — use actual values from the user message or prior tool results.
+- ACT FIRST, explain later. Do NOT explain to the user how you're going to perform a task.
+- The ONLY time it is acceptable to respond with a tool's content, is when a user asks you about a specific tool or group of tools. These should be formatted in human readable format, not JSON.
+- Every tool call MUST include arguments.
+- NEVER call a tool with empty or missing arguments — always pass the required parameters.
+- NEVER fabricate data — use actual values from the user message or prior tool results.
+- NEVER use placeholder strings in tool arguments — use actual values from the user message or prior tool results. "example.com", "path/to/file", "your_query_here" are ALL placeholders. Use REAL data.
 - Copy strings from the user message EXACTLY as written into tool arguments. Preserve hyphens, dots, spaces, and special characters. If the user writes "img.lazy-loaded", the tool argument must be exactly "img.lazy-loaded".
 - Tool results appear in conversation. Read and analyze them directly.
 - If a tool returns the same result twice, stop retrying and work with what you have.
-- When a [TASK LIST] is present and you complete a task, call mark_task_done with the task number to mark it done. Do this immediately after completing each task, before moving to the next.
 """
 
 # ─────────────────────────────────────────────────────────────
@@ -124,14 +138,12 @@ def _tool_meta(cls) -> dict:
     return {'name': name, 'description': desc, 'params': params}
 
 
-# Snapshot qwen-agent built-in tool names before our registrations
-_BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
-
 TOOL_REGISTRY: list[dict] = []  # populated below after internal tools are defined
 
-DEFAULT_TOOL_NAMES = ["read", "info", "ls", "tree", "write", "append", "replace", "insert",
-                      "delete", "copy", "move", "mkdir", "grep", "find", "definition",
-                      "webscrape", "find_all", "find_download_link"]
+DEFAULT_TOOL_NAMES = ["fs_read", "fs_info", "fs_ls", "fs_tree", "fs_write", "fs_append",
+                      "fs_replace", "fs_insert_at_line", "fs_delete", "fs_copy", "fs_move",
+                      "fs_create_directory", "cs_grep", "cs_find", "cs_def",
+                      "www_scrape", "www_find_all", "www_find_dl"]
 
 login_manager.init_app(app)
 init_oauth(app)
@@ -231,6 +243,67 @@ def serve_frontend(path):
 # INTERNAL TOOLS (mark_task_done / unmark_task_done)
 # Registered as qwen-agent tools so Assistant handles them natively.
 # ─────────────────────────────────────────────────────────────
+
+@register_tool('get_params')
+class GetParamsTool(BaseTool):
+    description = 'Look up a tool\'s parameters before calling it. Returns param names, types, descriptions, and which are required.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'tool_name': {'type': 'string', 'description': 'Name of the tool to look up.'},
+        },
+        'required': ['tool_name'],
+    }
+
+    def call(self, params: str, **kwargs) -> dict:
+        from tools._output import tool_result
+        p = json5.loads(params)
+        name = p.get('tool_name', '')
+        cls = QW_TOOL_REGISTRY.get(name)
+        if not cls:
+            return tool_result(error=f"Unknown tool '{name}'")
+        schema = getattr(cls, 'parameters', {})
+        props = schema.get('properties', {})
+        required = set(schema.get('required', []))
+        param_list = []
+        for pname, pdef in props.items():
+            param_list.append({
+                "name": pname,
+                "type": pdef.get("type", "string"),
+                "required": pname in required,
+                "description": pdef.get("description", ""),
+            })
+        return tool_result(data={
+            "tool": name,
+            "description": getattr(cls, 'description', ''),
+            "params": param_list,
+        })
+
+
+@register_tool('list_tools')
+class ListToolsTool(BaseTool):
+    description = 'List all available tool names grouped by workflow category. Call this when the user asks what tools you have.'
+    parameters = {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+    }
+
+    def call(self, params: str, **kwargs) -> dict:
+        from tools._output import tool_result
+        groups = {}
+        for name, group in WORKFLOW_GROUPS.items():
+            groups[name] = {
+                "tooltip": group.tooltip,
+                "tools": group.tools,
+            }
+        # Add internal tools
+        groups["Internal"] = {
+            "tooltip": "Task management",
+            "tools": ["mark_task_done", "unmark_task_done", "list_tools"],
+        }
+        return tool_result(data=groups)
+
 
 @register_tool('mark_task_done')
 class MarkTaskDoneTool(BaseTool):
@@ -354,15 +427,27 @@ def chat_stream():
     ]
     history = build_history(history_rows)
 
-    # --- Task Extractor + Tool Curator pipeline ---
+    # --- Change Hats: Gate + Plan pipeline ---
     user_tool_names = _get_user_selected_tools()
-    has_new_tasks = extract_tasks(user_msg, conversation_id, db)
-    curation = curate_tools(conversation_id, user_tool_names, has_new_tasks, db)
+    analysis = analyze_message(user_msg, conversation_id, user_tool_names, db)
 
-    print(f"[CURATION] new_tasks={has_new_tasks}, action={curation.action}, groups={curation.groups}", flush=True)
+    print(f"[HATS] classification={analysis['classification']}, tasks={len(analysis['task_list'])}", flush=True)
 
-    # tool_names will be finalized inside generate() after recommendation flow
-    _initial_tool_names = user_tool_names
+    # Write new tasks from plan to DB
+    if analysis["task_list"]:
+        existing_titles = {
+            t.title.lower()
+            for t in db.query(ConversationTask).filter_by(conversation_id=conversation_id).all()
+        }
+        for task in analysis["task_list"]:
+            title = task.get("title", "")
+            if title and title.lower() not in existing_titles:
+                db.add(ConversationTask(
+                    conversation_id=conversation_id,
+                    title=title,
+                ))
+                existing_titles.add(title.lower())
+        db.commit()
 
     # --- Append conversation tasks to user message ---
     conv_tasks = (
@@ -371,57 +456,99 @@ def chat_stream():
         .order_by(ConversationTask.created_at.asc())
         .all()
     )
-    augmented_msg = user_msg
-    if conv_tasks:
-        tool_hints = {m.task_title: m.tool for m in curation.task_plan} if curation.task_plan else {}
-        task_lines = []
-        for i, ct in enumerate(conv_tasks, 1):
-            hint = tool_hints.get(ct.title, "")
-            suffix = f" → use {hint}" if hint and hint != "mcp" else ""
-            task_lines.append(f"  {i}. [{ct.status}] {ct.title}{suffix}")
-        augmented_msg += "\n\n[TASK LIST]\n" + "\n".join(task_lines)
-        if any(m.tool == "mcp" for m in curation.task_plan):
-            augmented_msg += "\n\nNote: Tasks without a tool hint may require external MCP tools. Use connect_to_mcp if needed."
-
     def generate():
         full_response = ""
         ordered_messages = []
 
         yield json.dumps({"conversation_id": conversation_id}) + "\n"
 
-        # --- Recommendation flow ---
-        accepted_groups: list[str] = []
-        if curation.action == "recommend":
-            yield json.dumps({"recommendation": {
-                "groups": curation.groups,
-                "reason": curation.reason,
-            }}) + "\n"
+        # --- Determine tool set based on classification ---
+        classification = analysis["classification"]
 
-            event = threading.Event()
-            _recommendation_events[conversation_id] = event
-            try:
-                event.wait(timeout=120)
-                accepted_groups = _recommendation_responses.pop(conversation_id, [])
-            finally:
-                _recommendation_events.pop(conversation_id, None)
+        # list_tools + internal tools are always available
+        _ALWAYS_TOOLS = {"get_params", "list_tools", "mark_task_done", "unmark_task_done", "mcp_connect"}
 
-            print(f"[CURATION] User accepted groups: {accepted_groups}", flush=True)
+        if classification == "conversational":
+            # Conversational — only list_tools so the model can answer "what tools do you have?"
+            function_list = [n for n in _ALWAYS_TOOLS if n in QW_TOOL_REGISTRY]
+            print("[CHAT] conversational mode — list_tools only", flush=True)
+        else:
+            # tool_required or mixed — curator determines which groups to load
+            # Determine which groups are needed from the plan
+            needed_tools = set()
+            for task in analysis["task_list"]:
+                for subtask in task.get("subtasks", []):
+                    action = subtask.get("action", "")
+                    if action not in ("respond", "mark_task_done"):
+                        needed_tools.add(action)
 
-        # Resolve final tool set
-        final_tool_names = list(_initial_tool_names)
-        if accepted_groups:
-            extra_tools = tools_for_groups(accepted_groups)
-            final_tool_names = list(set(final_tool_names + extra_tools))
-            print(f"[CHAT] final tool set: {len(final_tool_names)} tools", flush=True)
+            # Map needed tools to their groups
+            needed_groups = set()
+            for tool_name in needed_tools:
+                g = group_for_tool(tool_name)
+                if g:
+                    needed_groups.add(g)
 
-        # Build function_list for qwen-agent — only tools in TOOL_REGISTRY
-        function_list = [n for n in final_tool_names if n in QW_TOOL_REGISTRY]
-        function_list += ['mark_task_done', 'unmark_task_done']
+            # Split into groups the user already has vs groups that need recommendation
+            user_set = set(user_tool_names)
+            approved_groups = []
+            missing_groups = []
+            for gname in needed_groups:
+                group_tools = set(WORKFLOW_GROUPS[gname].tools)
+                if group_tools & user_set:
+                    # User already has tools from this group — auto-approve
+                    approved_groups.append(gname)
+                else:
+                    missing_groups.append(gname)
+
+            # Recommend missing groups to user
+            if missing_groups:
+                missing_tool_names = {t for t in needed_tools if group_for_tool(t) in missing_groups}
+                yield json.dumps({"recommendation": {
+                    "groups": missing_groups,
+                    "reason": f"Tasks need: {', '.join(missing_tool_names)}",
+                }}) + "\n"
+
+                event = threading.Event()
+                _recommendation_events[conversation_id] = event
+                try:
+                    event.wait(timeout=120)
+                    accepted = _recommendation_responses.pop(conversation_id, [])
+                finally:
+                    _recommendation_events.pop(conversation_id, None)
+                approved_groups.extend(accepted)
+                print(f"[HATS] User accepted groups: {accepted}", flush=True)
+
+            # Build function_list from approved groups
+            if approved_groups:
+                curator_tools = set(tools_for_groups(approved_groups))
+                function_list = [n for n in curator_tools if n in QW_TOOL_REGISTRY and n not in _BUILTIN_TOOL_NAMES]
+                print(f"[CHAT] tool mode — {len(function_list)} tools from groups {approved_groups}", flush=True)
+            else:
+                # Planner couldn't map to groups — fall back to all user-selected tools
+                function_list = [n for n in user_tool_names if n in QW_TOOL_REGISTRY and n not in _BUILTIN_TOOL_NAMES]
+                print(f"[CHAT] tool mode (fallback) — {len(function_list)} user-selected tools", flush=True)
+            # Always include internal tools
+            for t in _ALWAYS_TOOLS:
+                if t in QW_TOOL_REGISTRY and t not in function_list:
+                    function_list.append(t)
+
+        # Build system prompt with tool reference
+        from workflow_groups import TOOL_REF
+        tool_ref_lines = [f"  {n} — {TOOL_REF[n]}" for n in function_list if n in TOOL_REF]
+        tool_ref_text = "\n".join(tool_ref_lines) if tool_ref_lines else "(none)"
+        system_prompt = _SYSTEM_BASE.format(tool_ref=tool_ref_text)
+
+        # Build augmented message: task list only (tools are in system prompt)
+        augmented_msg = user_msg
+        if conv_tasks:
+            task_lines = [f"  {i}. [{ct.status}] {ct.title}" for i, ct in enumerate(conv_tasks, 1)]
+            augmented_msg += "\n\n[TASK LIST]\n" + "\n".join(task_lines)
 
         assistant = Assistant(
             llm=qwen_llm_cfg(model_name),
             function_list=function_list,
-            system_message=SYSTEM_PROMPT,
+            system_message=system_prompt,
         )
 
         qwen_messages = history + [{"role": "user", "content": augmented_msg}]
@@ -545,8 +672,11 @@ def _get_user_selected_tools() -> list[str]:
         if user_tools is not None:
             # Filter out any stale names not in the registry
             if user_tools and isinstance(user_tools[0], str):
-                return [n for n in user_tools if n in QW_TOOL_REGISTRY]
-            return user_tools
+                valid = [n for n in user_tools if n in QW_TOOL_REGISTRY]
+                if valid:
+                    return valid
+            elif user_tools:
+                return user_tools
     return list(DEFAULT_TOOL_NAMES)
 
 
@@ -640,11 +770,14 @@ def cli_chat():
     print(f"\nChatting with: {model}")
     print("Type 'quit' to exit\n")
 
-    function_list = list(QW_TOOL_REGISTRY.keys())
+    function_list = [n for n in QW_TOOL_REGISTRY.keys() if n not in _BUILTIN_TOOL_NAMES]
+    from workflow_groups import TOOL_REF
+    tool_ref_lines = [f"  {n} — {TOOL_REF[n]}" for n in function_list if n in TOOL_REF]
+    system_prompt = _SYSTEM_BASE.format(tool_ref="\n".join(tool_ref_lines) or "(none)")
     assistant = Assistant(
         llm=qwen_llm_cfg(model),
         function_list=function_list,
-        system_message=SYSTEM_PROMPT,
+        system_message=system_prompt,
     )
     history = []
 

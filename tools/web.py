@@ -76,9 +76,86 @@ def _get_or_create_browser(geckodriver_path: str = ""):
     return _browser_driver
 
 
+# ── Cookie Management ───────────────────────────────────────────────────────
+
+# Domain → list of cookie dicts, shared across all web tools
+_stored_cookies: dict[str, list[dict[str, str]]] = {}
+
+
+COOKIES = []
+
+@register_tool('www_cookies')
+class SetCookiesTool(BaseTool):
+    description = 'Set cookies for a domain. All subsequent www_fetch, www_scrape, and www_browse calls to that domain will include them automatically.'
+    parameters = {
+        'cookies': {
+            "type": object
+        },
+        'domain': {
+            type: str
+        }
+    }
+
+    @retry()
+    def call(self, params: str) -> dict:
+        p = json5.loads(params)
+        cookies = p.get('cookies').strip()
+        domain = p.get('domain').strip()
+
+        if not cookies:
+            return tool_result(error="cookies is required")
+        if not domain:
+            return tool_result(error="missing domain arg")
+        # Parse semicolon-separated "name=value" pairs
+        parsed = []
+        for cookie in cookies:
+            name = cookie.name
+            value = cookie.value
+            parsed.append({"{name}={value}"})
+        if not parsed:
+            return tool_result(error="No valid name=value cookie pairs found")
+
+        # Apply to selenium driver if it's already running
+        if _browser_driver is not None:
+            try:
+                from urllib.parse import urlparse
+                driver = _browser_driver
+                # Navigate to domain to set cookies
+                driver.get(f"https://{domain}")
+                import time as _t
+                _t.sleep(1)
+                for c in parsed:
+                    driver.add_cookie({
+                        "name": name,
+                        "value": value,
+                        "domain": dot_domain,
+                    })
+            except Exception:
+                pass  # browser cookies are best-effort; requests session is primary
+
+        return tool_result(data={
+            "domain": dot_domain,
+            "cookies_set": len(parsed),
+            "names": [c["name"] for c in parsed],
+        })
+
+
+def _get_stored_cookies_for_url(url: str) -> list[str]:
+    """Return stored cookies matching a URL's domain as name=value strings."""
+    from urllib.parse import urlparse
+    host = urlparse(url).hostname or ""
+    result = []
+    for domain, cookies in _stored_cookies.items():
+        # Match .example.com against www.example.com, foo.example.com, etc.
+        if host == domain.lstrip(".") or host.endswith(domain):
+            for c in cookies:
+                result.append(f"{c['name']}={c['value']}")
+    return result
+
+
 # ── Web Operations ───────────────────────────────────────────────────────────
 
-@register_tool('ddg_web_search')
+@register_tool('www_ddg')
 class WebSearchTool(BaseTool):
     description = 'Search the web using DuckDuckGo and return results.'
     parameters = {
@@ -122,7 +199,7 @@ class WebSearchTool(BaseTool):
         })
 
 
-@register_tool('fetch_url')
+@register_tool('www_fetch')
 class FetchUrlTool(BaseTool):
     description = 'Fetch a URL and return plain text with all HTML tags stripped.'
     parameters = {
@@ -169,7 +246,7 @@ class FetchUrlTool(BaseTool):
         return tool_result(data={"url": url, "content": raw, "truncated": truncated})
 
 
-@register_tool('webscrape')
+@register_tool('www_scrape')
 class WebscrapeTool(BaseTool):
     description = 'Fetch a URL via HTTP and return raw HTML. Does NOT execute JavaScript.'
     parameters = {
@@ -202,7 +279,7 @@ class WebscrapeTool(BaseTool):
         return tool_result(data={"url": url, "html": r.text})
 
 
-@register_tool('find_all')
+@register_tool('www_find_all')
 class FindAllTool(BaseTool):
     description = 'Parse HTML and find all elements matching a CSS selector or tag name.'
     parameters = {
@@ -240,7 +317,7 @@ class FindAllTool(BaseTool):
         })
 
 
-@register_tool('find_download_link')
+@register_tool('www_find_dl')
 class FindDownloadLinkTool(BaseTool):
     description = 'Parse HTML for media download links (video, image, audio sources).'
     parameters = {
@@ -287,7 +364,7 @@ class FindDownloadLinkTool(BaseTool):
         return tool_result(data={"links": links})
 
 
-@register_tool('find_allowed_routes')
+@register_tool('www_find_routes')
 class FindAllowedRoutesTool(BaseTool):
     description = "Fetch a website's robots.txt and return the allowed crawl paths."
     parameters = {
@@ -327,7 +404,7 @@ class FindAllowedRoutesTool(BaseTool):
         return tool_result(data={"url": url, "allowed": allowed})
 
 
-@register_tool('browser_fetch')
+@register_tool('www_browse')
 class BrowserFetchTool(BaseTool):
     description = 'Fetch a URL using a headless Firefox browser that executes JavaScript and returns the fully rendered HTML.'
     parameters = {
@@ -384,7 +461,7 @@ class BrowserFetchTool(BaseTool):
         return tool_result(data={"url": url, "html": html, "title": title})
 
 
-@register_tool('browser_query')
+@register_tool('www_query')
 class BrowserQueryTool(BaseTool):
     description = 'Run querySelectorAll on the current browser page and return matching elements.'
     parameters = {
@@ -438,7 +515,7 @@ class BrowserQueryTool(BaseTool):
         })
 
 
-@register_tool('browser_click')
+@register_tool('www_click')
 class BrowserClickTool(BaseTool):
     description = 'Click an element on the current browser page.'
     parameters = {

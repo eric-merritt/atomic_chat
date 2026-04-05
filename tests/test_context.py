@@ -58,7 +58,7 @@ def test_tool_result_truncation():
     from context import _db_row_to_qwen
 
     long_content = "x" * 5000
-    row = {"role": "tool", "content": long_content, "tool_calls": [{"name": "web_search", "id": "call_2"}]}
+    row = {"role": "tool", "content": long_content, "tool_calls": [{"name": "www_ddg", "id": "call_2"}]}
     msg = _db_row_to_qwen(row)
     assert len(msg["content"]) == 4000
 
@@ -90,11 +90,11 @@ def test_build_history_with_tool_message():
 
     db_messages = [
         {"role": "user", "content": "search for cats", "tool_calls": []},
-        {"role": "assistant", "content": "", "tool_calls": [{"name": "web_search", "args": {"q": "cats"}, "id": "c1"}]},
-        {"role": "tool", "content": "results here", "tool_calls": [{"name": "web_search", "id": "c1"}]},
+        {"role": "assistant", "content": "", "tool_calls": [{"name": "www_ddg", "args": {"q": "cats"}, "id": "c1"}]},
+        {"role": "tool", "content": "results here", "tool_calls": [{"name": "www_ddg", "id": "c1"}]},
     ]
     history = build_history(db_messages)
-    assert history[2] == {"role": "function", "name": "web_search", "content": "results here"}
+    assert history[2] == {"role": "function", "name": "www_ddg", "content": "results here"}
 
 
 # --- Serialization for DB ---
@@ -146,5 +146,5 @@ def test_serialize_tool_result_truncates():
     from context import serialize_tool_result
 
     long = "y" * 5000
-    row = serialize_tool_result("web_search", "call_2", long)
+    row = serialize_tool_result("www_ddg", "call_2", long)
     assert len(row["content"]) == 4000

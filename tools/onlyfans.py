@@ -92,7 +92,7 @@ def safe_find(element, by, value):
 # TOOLS
 # ======================
 
-@register_tool('scroll_conversations')
+@register_tool('of_scroll_convos')
 class ScrollConversationsTool(BaseTool):
     description = 'Scroll the OnlyFans conversations sidebar until all conversations are loaded.'
     parameters = {'type': 'object', 'properties': {}, 'required': []}
@@ -117,7 +117,7 @@ class ScrollConversationsTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('scroll_messages')
+@register_tool('of_scroll_msgs')
 class ScrollMessagesTool(BaseTool):
     description = 'Scroll the current conversation to load additional messages.'
     parameters = {'type': 'object', 'properties': {}, 'required': []}
@@ -136,7 +136,7 @@ class ScrollMessagesTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('save_image')
+@register_tool('of_save_img')
 class SaveImageTool(BaseTool):
     description = 'Download and save an image from a URL to disk.'
     parameters = {
@@ -165,7 +165,7 @@ class SaveImageTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('save_video')
+@register_tool('of_save_vid')
 class SaveVideoTool(BaseTool):
     description = 'Download and save a video from a URL to disk.'
     parameters = {
@@ -194,7 +194,7 @@ class SaveVideoTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('extract_images_and_videos')
+@register_tool('of_extract_all')
 class ExtractImagesAndVideosTool(BaseTool):
     description = 'Extract all images and videos from the currently open OnlyFans conversation.'
     parameters = {
@@ -251,7 +251,7 @@ class ExtractImagesAndVideosTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('extract_media')
+@register_tool('of_extract')
 class ExtractMediaTool(BaseTool):
     description = 'Extract media from ALL conversations in the user\'s OnlyFans inbox.'
     parameters = {

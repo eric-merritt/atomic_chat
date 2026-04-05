@@ -22,7 +22,7 @@ def _resolve(path: str) -> str:
 
 # ── Read Operations ──────────────────────────────────────────────────────────
 
-@register_tool('read')
+@register_tool('fs_read')
 class ReadTool(BaseTool):
     description = 'Read a file and return its contents with line numbers.'
     parameters = {
@@ -62,7 +62,7 @@ class ReadTool(BaseTool):
         })
 
 
-@register_tool('info')
+@register_tool('fs_info')
 class InfoTool(BaseTool):
     description = 'Return metadata about a file: size, modified time, type, line count.'
     parameters = {
@@ -102,7 +102,7 @@ class InfoTool(BaseTool):
         return tool_result(data=info_dict)
 
 
-@register_tool('ls')
+@register_tool('fs_ls')
 class LsTool(BaseTool):
     description = 'List directory contents, optionally recursive with glob pattern.'
     parameters = {
@@ -133,15 +133,15 @@ class LsTool(BaseTool):
         return tool_result(data={'path': os.path.abspath(path), 'count': len(entries), 'entries': entries})
 
 
-@register_tool('tree')
+@register_tool('fs_tree')
 class TreeTool(BaseTool):
-    description = 'Print the directory tree structure.'
+    description = 'Print a directory tree with configurable depth.'
     parameters = {
         'type': 'object',
         'properties': {
-            'path': {'type': 'string', 'description': 'Root directory. Defaults to current directory.'},
-            'max_depth': {'type': 'integer', 'description': 'Maximum depth to traverse. Range: 1-10.'},
-            'show_hidden': {'type': 'boolean', 'description': 'Include dotfiles/dotdirs. Default: false.'},
+            'path': {'type': 'string', 'description': 'Directory path to tree. Default: current directory.'},
+            'max_depth': {'type': 'integer', 'description': 'Max recursion depth. Default: 3.'},
+            'show_hidden': {'type': 'boolean', 'description': 'Include hidden files/dirs. Default: false.'},
         },
         'required': [],
     }
@@ -179,7 +179,7 @@ class TreeTool(BaseTool):
 
 # ── Write Operations ─────────────────────────────────────────────────────────
 
-@register_tool('write')
+@register_tool('fs_write')
 class WriteTool(BaseTool):
     description = 'Write content to a file, creating parent directories if needed. DESTRUCTIVE: overwrites existing content.'
     parameters = {
@@ -208,7 +208,7 @@ class WriteTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('append')
+@register_tool('fs_append')
 class AppendTool(BaseTool):
     description = 'Append content to the end of a file.'
     parameters = {
@@ -234,7 +234,7 @@ class AppendTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('replace')
+@register_tool('fs_replace')
 class ReplaceTool(BaseTool):
     description = 'Replace exact string occurrences in a file.'
     parameters = {
@@ -282,7 +282,7 @@ class ReplaceTool(BaseTool):
         return tool_result(data={'path': os.path.abspath(path), 'replacements': replaced})
 
 
-@register_tool('insert_at_line')
+@register_tool('fs_insert_at_line')
 class InsertAtLineTool(BaseTool):
     description = 'Insert content at a specific line number (1-indexed).'
     parameters = {
@@ -321,7 +321,7 @@ class InsertAtLineTool(BaseTool):
         return tool_result(data={'path': os.path.abspath(path), 'inserted_at_line': line_number})
 
 
-@register_tool('delete')
+@register_tool('fs_delete')
 class DeleteTool(BaseTool):
     description = (
         'Delete a file, empty directory, or a range of lines from a file. '
@@ -373,7 +373,7 @@ class DeleteTool(BaseTool):
 
 # ── File Management ──────────────────────────────────────────────────────────
 
-@register_tool('copy')
+@register_tool('fs_copy')
 class CopyTool(BaseTool):
     description = 'Copy a file or directory.'
     parameters = {
@@ -403,7 +403,7 @@ class CopyTool(BaseTool):
         return tool_result(data={'src': os.path.abspath(src), 'dst': os.path.abspath(dst)})
 
 
-@register_tool('move')
+@register_tool('fs_move')
 class MoveTool(BaseTool):
     description = 'Move or rename a file or directory. WARNING: overwrites destination if it exists.'
     parameters = {
@@ -430,7 +430,7 @@ class MoveTool(BaseTool):
         return tool_result(data={'src': os.path.abspath(src), 'dst': os.path.abspath(dst)})
 
 
-@register_tool('create_directory')
+@register_tool('fs_create_directory')
 class CreateDirectoryTool(BaseTool):
     description = 'Create a directory and any missing parents.'
     parameters = {

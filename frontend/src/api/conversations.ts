@@ -35,3 +35,38 @@ export async function updateConversation(id: string, data: { title?: string; fol
 export async function deleteConversation(id: string) {
   await fetch(`/api/conversations/${id}`, { ...OPTS, method: 'DELETE' });
 }
+
+// ── Conversation Tasks ──────────────────────────────────────────────────────
+
+export interface ConversationTaskDTO {
+  id: string;
+  title: string;
+  status: string;
+  depends_on: string | null;
+  created_at: string | null;
+}
+
+export async function getConversationTasks(conversationId: string) {
+  const resp = await fetch(`/api/conversations/${conversationId}/tasks`, OPTS);
+  return resp.json() as Promise<{ tasks: ConversationTaskDTO[] }>;
+}
+
+export async function createConversationTask(conversationId: string, title: string, dependsOn?: string) {
+  const resp = await fetch(`/api/conversations/${conversationId}/tasks`, {
+    ...OPTS, method: 'POST', headers: HEADERS,
+    body: JSON.stringify({ title, depends_on: dependsOn }),
+  });
+  return resp.json();
+}
+
+export async function updateConversationTask(conversationId: string, taskId: string, data: { title?: string; status?: string; depends_on?: string | null }) {
+  const resp = await fetch(`/api/conversations/${conversationId}/tasks/${taskId}`, {
+    ...OPTS, method: 'PATCH', headers: HEADERS,
+    body: JSON.stringify(data),
+  });
+  return resp.json();
+}
+
+export async function deleteConversationTask(conversationId: string, taskId: string) {
+  await fetch(`/api/conversations/${conversationId}/tasks/${taskId}`, { ...OPTS, method: 'DELETE' });
+}

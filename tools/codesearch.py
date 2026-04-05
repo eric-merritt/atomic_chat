@@ -12,7 +12,7 @@ from tools._output import tool_result, retry
 
 # ── Search Operations ────────────────────────────────────────────────────────
 
-@register_tool('grep')
+@register_tool('cs_grep')
 class GrepTool(BaseTool):
     description = 'Search file contents with regex, returning matches with context.'
     parameters = {
@@ -95,7 +95,7 @@ class GrepTool(BaseTool):
         })
 
 
-@register_tool('find')
+@register_tool('cs_find')
 class FindTool(BaseTool):
     description = 'Find files by name pattern, extension, or content.'
     parameters = {
@@ -151,7 +151,7 @@ class FindTool(BaseTool):
         })
 
 
-@register_tool('definition')
+@register_tool('cs_def')
 class DefinitionTool(BaseTool):
     description = 'Find where a function, class, or variable is defined.'
     parameters = {

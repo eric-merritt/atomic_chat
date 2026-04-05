@@ -5,22 +5,21 @@
 def test_accounting_tools_in_registry():
     from tools import ALL_TOOLS
     names = {t.name for t in ALL_TOOLS}
-    assert "create_ledger" in names
-    assert "journalize_transaction" in names
-    assert "trial_balance" in names
-    assert "balance_sheet" in names
+    assert "fa_ledger" in names
+    assert "fa_tx_new" in names
+    assert "fa_stmt" in names
 
 
 def test_accounting_tool_count():
     from qwen_agent.tools.base import TOOL_REGISTRY
     import tools.accounting  # noqa: F401
     accounting_names = {
-        'create_ledger', 'create_account', 'list_accounts', 'get_account_balance',
-        'update_account', 'journalize_transaction', 'search_journal', 'void_transaction',
-        'account_ledger', 'register_inventory_item', 'receive_inventory',
-        'list_inventory_items', 'deactivate_inventory_item', 'journalize_fifo_transaction',
-        'journalize_lifo_transaction', 'inventory_valuation', 'close_period',
-        'trial_balance', 'income_statement', 'balance_sheet', 'cash_flow_statement',
+        'fa_ledger', 'fa_new_acct', 'fa_ls_accts', 'fa_acct_bal',
+        'fa_update_acct', 'fa_tx_new', 'fa_tx_search', 'fa_tx_void',
+        'fa_acct_det', 'fa_new_item', 'fa_receive',
+        'fa_ls_items', 'fa_rm_item', 'fa_tx_fifo',
+        'fa_tx_lifo', 'fa_value', 'fa_close',
+        'fa_stmt',
     }
     registered = set(TOOL_REGISTRY.keys())
     assert accounting_names.issubset(registered), f"Missing: {accounting_names - registered}"
@@ -33,5 +32,5 @@ def test_mcp_server_registers_accounting():
     tool_names = set()
     for tool in mcp._tool_manager._tools.values():
         tool_names.add(tool.name)
-    assert "create_ledger" in tool_names
-    assert "journalize_transaction" in tool_names
+    assert "fa_ledger" in tool_names
+    assert "fa_tx_new" in tool_names

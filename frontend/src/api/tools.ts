@@ -27,20 +27,18 @@ interface ToolsResponse {
 /* ── Category inference from tool name ────────────────────────── */
 
 const CATEGORY_RULES: [RegExp, string][] = [
-  [/^(read|info|ls|tree|write|append|replace|insert|delete|copy|move|mkdir|grep|find|definition)$/, 'Filesystem'],
-  [/^(web_search|fetch_url)$/, 'Web'],
-  [/^ebay_/, 'Ecommerce'],
-  [/^(amazon_search)$/, 'Ecommerce'],
-  [/^craigslist_/, 'Ecommerce'],
-  [/^(cross_platform_search|deal_finder|enrichment_pipeline)$/, 'Ecommerce'],
-  [/^(create_ledger|create_account|list_accounts|get_account_balance|update_account|journalize_transaction|search_journal|void_transaction|account_ledger|register_inventory_item|receive_inventory|list_inventory_items|deactivate_inventory_item|journalize_fifo_transaction|journalize_lifo_transaction|inventory_valuation|close_period|trial_balance|income_statement|balance_sheet|cash_flow_statement)$/, 'Accounting'],
+  [/^fs_/, 'Filesystem'],
+  [/^cs_/, 'Code Search'],
+  [/^www_/, 'Web'],
+  [/^ec_/, 'Ecommerce'],
+  [/^of_/, 'OnlyFans'],
+  [/^bt_/, 'Torrent'],
+  [/^mcp_/, 'MCP'],
+  [/^fa_/, 'Accounting'],
 ];
 
 export function getSubcategory(name: string): string | undefined {
-  if (/^ebay_/.test(name)) return 'eBay';
-  if (/^(amazon_search)$/.test(name)) return 'Amazon';
-  if (/^craigslist_/.test(name)) return 'Craigslist';
-  if (/^(cross_platform_search|deal_finder|enrichment_pipeline)$/.test(name)) return 'Cross-Platform';
+  // Subcategories are no longer needed with prefixed tool names
   return undefined;
 }
 
@@ -70,7 +68,7 @@ function groupIntoCategories(allTools: (RawTool & { selected: boolean })[]): Too
   }
 
   // Stable ordering
-  const order = ['Filesystem', 'Web', 'Ecommerce', 'Accounting', 'Other'];
+  const order = ['Filesystem', 'Code Search', 'Web', 'Ecommerce', 'OnlyFans', 'Torrent', 'MCP', 'Accounting', 'Other'];
   const sorted = [...groups.entries()].sort((a, b) => {
     const ai = order.indexOf(a[0]), bi = order.indexOf(b[0]);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
