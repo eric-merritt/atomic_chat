@@ -169,7 +169,7 @@ def _parse_shipping_cost(shipping: str) -> float:
     return 0.0
 
 
-@register_tool('ebay_search')
+# internal — used by ec_search
 class EbaySearchTool(BaseTool):
     description = 'Search eBay Buy It Now listings and return parsed results.'
     parameters = {
@@ -228,7 +228,7 @@ class EbaySearchTool(BaseTool):
         return tool_result(data={"query": query, "count": len(listings), "listings": listings})
 
 
-@register_tool('ebay_sold_search')
+# internal — used by ec_search
 class EbaySoldSearchTool(BaseTool):
     description = 'Search eBay completed/sold listings to find market prices.'
     parameters = {
@@ -266,7 +266,7 @@ class EbaySoldSearchTool(BaseTool):
         return tool_result(data={"query": query, "count": len(listings), "listings": listings})
 
 
-@register_tool('ebay_deep_scan')
+# internal — used by ec_search
 class EbayDeepScanTool(BaseTool):
     description = 'Paginated eBay search that compresses results to model + price for bulk analysis.'
     parameters = {
@@ -441,7 +441,7 @@ def _parse_amazon_listings(html: str) -> list[dict]:
     return listings
 
 
-@register_tool('amazon_search')
+# internal — used by ec_search
 class AmazonSearchTool(BaseTool):
     description = 'Search Amazon and return parsed product listings.'
     parameters = {
@@ -624,7 +624,7 @@ def _craigslist_search_city(
     return _parse_craigslist_listings(html, city, is_local)[:max_results]
 
 
-@register_tool('craigslist_search')
+# internal — used by ec_search
 class CraigslistSearchTool(BaseTool):
     description = 'Search Craigslist in a specific city.'
     parameters = {
@@ -679,7 +679,7 @@ class CraigslistSearchTool(BaseTool):
         return tool_result(data={"query": query, "city": city_lower, "count": len(listings), "listings": listings})
 
 
-@register_tool('craigslist_multi_search')
+# internal — used by ec_search
 class CraigslistMultiSearchTool(BaseTool):
     description = 'Search Craigslist across multiple cities with rate-limiting.'
     parameters = {
@@ -756,7 +756,7 @@ class CraigslistMultiSearchTool(BaseTool):
 
 # ── Cross-Platform Flow Tools ─────────────────────────────────────────────────
 
-@register_tool('cross_platform_search')
+# internal — used by ec_search
 class CrossPlatformSearchTool(BaseTool):
     description = 'Search across eBay, Amazon, and Craigslist in a single call.'
     parameters = {
@@ -867,7 +867,67 @@ class CrossPlatformSearchTool(BaseTool):
         return tool_result(data=aggregated)
 
 
-@register_tool('deal_finder')
+_EC_SEARCH_HANDLERS = {
+    ('ebay', 'buy'): EbaySearchTool,
+    ('ebay', 'sold'): EbaySoldSearchTool,
+    ('ebay', 'deep_scan'): EbayDeepScanTool,
+    ('amazon', 'buy'): AmazonSearchTool,
+    ('cl', 'buy'): CraigslistSearchTool,
+    ('cl_cities', 'buy'): CraigslistMultiSearchTool,
+    ('all', 'buy'): CrossPlatformSearchTool,
+}
+
+
+@register_tool('ec_search')
+class EcommerceSearchTool(BaseTool):
+    description = (
+        'Search ecommerce platforms. '
+        'platform: ebay, amazon, cl, cl_cities, all. '
+        'section: buy (default), sold (ebay only), deep_scan (ebay only). '
+        'Pass additional params (query, min_price, max_price, etc.) through.'
+    )
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'platform': {
+                'type': 'string',
+                'enum': ['ebay', 'amazon', 'cl', 'cl_cities', 'all'],
+                'description': 'Platform to search.',
+            },
+            'section': {
+                'type': 'string',
+                'enum': ['buy', 'sold', 'deep_scan'],
+                'description': 'Search section. Default: buy.',
+            },
+            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
+            'sort': {'type': 'string', 'description': 'Sort order (platform-specific).'},
+            'min_price': {'type': 'number', 'description': 'Minimum price in USD.'},
+            'max_price': {'type': 'number', 'description': 'Maximum price in USD.'},
+            'condition': {'type': 'string', 'description': 'Item condition (ebay): new, used, refurbished, parts.'},
+            'max_results': {'type': 'integer', 'description': 'Maximum listings to return.'},
+            'city': {'type': 'string', 'description': 'City name (cl only).'},
+            'scope': {'type': 'string', 'description': 'City scope (cl_cities only): local, shipping, all.'},
+            'category': {'type': 'string', 'description': 'Craigslist category code (cl/cl_cities).'},
+            'pages': {'type': 'integer', 'description': 'Pages to scrape (ebay deep_scan only).'},
+        },
+        'required': ['platform', 'query'],
+    }
+
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        platform = p.pop('platform', 'ebay')
+        section = p.pop('section', 'buy')
+
+        handler_cls = _EC_SEARCH_HANDLERS.get((platform, section))
+        if not handler_cls:
+            valid = [f"{pl}/{sec}" for pl, sec in _EC_SEARCH_HANDLERS]
+            return tool_result(error=f"Invalid platform/section '{platform}/{section}'. Valid: {', '.join(valid)}")
+
+        return handler_cls().call(json5.dumps(p), **kwargs)
+
+
+@register_tool('ec_deals')
 class DealFinderTool(BaseTool):
     description = 'Find deals by comparing prices across platforms against median market price.'
     parameters = {
@@ -1047,7 +1107,7 @@ class DealFinderTool(BaseTool):
 
 # ── Enrichment Pipeline ──────────────────────────────────────────────────────
 
-@register_tool('enrichment_pipeline')
+@register_tool('ec_enrich')
 class EnrichmentPipelineTool(BaseTool):
     description = 'Iteratively enrich data by adding new analysis dimensions using an LLM eval loop.'
     parameters = {

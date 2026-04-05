@@ -4,17 +4,7 @@
 def test_ecommerce_tools_registered():
     from qwen_agent.tools.base import TOOL_REGISTRY
     import tools.ecommerce  # noqa: F401
-    expected = {
-        "ebay_search", "ebay_sold_search", "ebay_deep_scan",
-        "amazon_search", "craigslist_search", "craigslist_multi_search",
-    }
-    assert expected.issubset(set(TOOL_REGISTRY.keys()))
-
-
-def test_flow_tools_registered():
-    from qwen_agent.tools.base import TOOL_REGISTRY
-    import tools.ecommerce  # noqa: F401
-    expected = {"cross_platform_search", "deal_finder", "enrichment_pipeline"}
+    expected = {"ec_search", "ec_deals", "ec_enrich"}
     assert expected.issubset(set(TOOL_REGISTRY.keys()))
 
 

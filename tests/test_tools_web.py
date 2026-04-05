@@ -12,15 +12,15 @@ def test_all_web_tools_registered():
     import tools.web  # noqa: F401 — trigger registration
 
     expected = {
-        'ddg_web_search',
-        'fetch_url',
-        'webscrape',
-        'find_all',
-        'find_download_link',
-        'find_allowed_routes',
-        'browser_fetch',
-        'browser_query',
-        'browser_click',
+        'web_search',
+        'www_fetch',
+        'www_scrape',
+        'www_find_all',
+        'www_find_dl',
+        'www_find_routes',
+        'www_browse',
+        'www_query',
+        'www_click',
     }
     registered = set(TOOL_REGISTRY.keys())
     missing = expected - registered
@@ -29,47 +29,47 @@ def test_all_web_tools_registered():
 
 def test_web_search_registered():
     import tools.web  # noqa: F401
-    assert 'ddg_web_search' in TOOL_REGISTRY
+    assert 'web_search' in TOOL_REGISTRY
 
 
 def test_fetch_url_registered():
     import tools.web  # noqa: F401
-    assert 'fetch_url' in TOOL_REGISTRY
+    assert 'www_fetch' in TOOL_REGISTRY
 
 
 def test_webscrape_registered():
     import tools.web  # noqa: F401
-    assert 'webscrape' in TOOL_REGISTRY
+    assert 'www_scrape' in TOOL_REGISTRY
 
 
 def test_find_all_registered():
     import tools.web  # noqa: F401
-    assert 'find_all' in TOOL_REGISTRY
+    assert 'www_find_all' in TOOL_REGISTRY
 
 
 def test_find_download_link_registered():
     import tools.web  # noqa: F401
-    assert 'find_download_link' in TOOL_REGISTRY
+    assert 'www_find_dl' in TOOL_REGISTRY
 
 
 def test_find_allowed_routes_registered():
     import tools.web  # noqa: F401
-    assert 'find_allowed_routes' in TOOL_REGISTRY
+    assert 'www_find_routes' in TOOL_REGISTRY
 
 
 def test_browser_fetch_registered():
     import tools.web  # noqa: F401
-    assert 'browser_fetch' in TOOL_REGISTRY
+    assert 'www_browse' in TOOL_REGISTRY
 
 
 def test_browser_query_registered():
     import tools.web  # noqa: F401
-    assert 'browser_query' in TOOL_REGISTRY
+    assert 'www_query' in TOOL_REGISTRY
 
 
 def test_browser_click_registered():
     import tools.web  # noqa: F401
-    assert 'browser_click' in TOOL_REGISTRY
+    assert 'www_click' in TOOL_REGISTRY
 
 
 # ── Class identity tests ─────────────────────────────────────────────────────
@@ -80,9 +80,9 @@ def test_tool_classes_are_base_tool_subclasses():
     import tools.web  # noqa: F401
 
     tool_names = [
-        'ddg_web_search', 'fetch_url', 'webscrape', 'find_all',
-        'find_download_link', 'find_allowed_routes',
-        'browser_fetch', 'browser_query', 'browser_click',
+        'web_search', 'www_fetch', 'www_scrape', 'www_find_all',
+        'www_find_dl', 'www_find_routes',
+        'www_browse', 'www_query', 'www_click',
     ]
     for name in tool_names:
         cls = TOOL_REGISTRY[name]

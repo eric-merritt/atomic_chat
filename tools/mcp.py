@@ -28,7 +28,7 @@ async def _list_mcp_tools(url: str) -> list[dict]:
             return tools
 
 
-@register_tool('connect_to_mcp')
+@register_tool('mcp_connect')
 class ConnectToMcpTool(BaseTool):
     description = 'Connect to an MCP server and retrieve its available tools.'
     parameters = {

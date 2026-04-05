@@ -78,7 +78,7 @@ def _qb_request(path: str, params: dict | None = None, method: str = "GET") -> d
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-@register_tool('torrent_search')
+@register_tool('bt_search')
 class TorrentSearchTool(BaseTool):
     description = "Search for torrents using qBittorrent's search plugins."
     parameters = {
@@ -185,7 +185,7 @@ class TorrentSearchTool(BaseTool):
         return tool_result(data={"query": query, "count": len(formatted), "results": formatted})
 
 
-@register_tool('torrent_list_plugins')
+@register_tool('bt_plugins')
 class TorrentListPluginsTool(BaseTool):
     description = 'List all installed qBittorrent search plugins and their status.'
     parameters = {'type': 'object', 'properties': {}, 'required': []}
@@ -212,7 +212,7 @@ class TorrentListPluginsTool(BaseTool):
         return tool_result(data={"count": len(formatted), "plugins": formatted})
 
 
-@register_tool('torrent_enable_plugin')
+@register_tool('bt_toggle_plugin')
 class TorrentEnablePluginTool(BaseTool):
     description = 'Enable or disable qBittorrent search plugins.'
     parameters = {
@@ -245,7 +245,7 @@ class TorrentEnablePluginTool(BaseTool):
         return tool_result(data={"names": names, "action": action})
 
 
-@register_tool('torrent_add')
+@register_tool('bt_add')
 class TorrentAddTool(BaseTool):
     description = 'Add torrents to qBittorrent for download by magnet link or URL.'
     parameters = {
@@ -285,7 +285,7 @@ class TorrentAddTool(BaseTool):
         return tool_result(data={"added": len(url_list), "urls": url_list, "response": str(resp)})
 
 
-@register_tool('torrent_list_active')
+@register_tool('bt_active')
 class TorrentListActiveTool(BaseTool):
     description = 'List active/downloading torrents in qBittorrent.'
     parameters = {
@@ -325,7 +325,7 @@ class TorrentListActiveTool(BaseTool):
         return tool_result(data={"count": len(formatted), "torrents": formatted})
 
 
-@register_tool('torrent_download')
+@register_tool('bt_download')
 class TorrentDownloadTool(BaseTool):
     description = 'Download torrents by URL or magnet link (alias for torrent_add).'
     parameters = {

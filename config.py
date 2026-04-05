@@ -7,7 +7,7 @@ DEFAULT_WORKSPACE = os.environ.get("DEFAULT_WORKSPACE", os.path.expanduser("~/wo
 
 # Task-aware tool curation models
 TASK_EXTRACTOR_MODEL = os.environ.get("TASK_EXTRACTOR_MODEL", "qwen3:1.7b")
-TOOL_CURATOR_MODEL = os.environ.get("TOOL_CURATOR_MODEL", "qwen3:1.7b")
+TOOL_CURATOR_MODEL = os.environ.get("TOOL_CURATOR_MODEL", "qwen2.5-7b-abliterated:latest")
 
 # Context window sizes (tokens) — set to each model's max
 # qwen3:1.7b max=32768, qwen3:8b max=128k (use 32k default for VRAM)
