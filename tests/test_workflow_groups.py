@@ -1,4 +1,4 @@
-from workflow_groups import WORKFLOW_GROUPS, WorkflowGroup
+from pipeline.workflow_groups import WORKFLOW_GROUPS, WorkflowGroup
 
 
 def test_registry_is_not_empty():

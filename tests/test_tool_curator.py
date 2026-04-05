@@ -2,12 +2,12 @@
 
 import json
 
-from tool_curator import (
+from pipeline.tool_curator import (
     _build_curator_prompt,
     _parse_curator_response,
     TaskToolMapping,
 )
-from workflow_groups import WORKFLOW_GROUPS
+from pipeline.workflow_groups import WORKFLOW_GROUPS
 
 
 # ---------------------------------------------------------------------------

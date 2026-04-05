@@ -17,7 +17,7 @@ import ollama as ollama_client
 from qwen_agent.llm import get_chat_model
 
 from config import TOOL_CURATOR_MODEL
-from workflow_groups import WORKFLOW_GROUPS, TOOL_REF, group_for_tool
+from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF, group_for_tool
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +25,7 @@ _LOG_DIR = os.path.join(os.path.dirname(__file__), "training_data", "logs")
 _HATS_LOG = os.path.join(_LOG_DIR, "change_hats.jsonl")
 
 
-llm_cfg = {
-    'model': 'qwen2.5-7b-instruct-abliterated:latest',
-    'baseURL': 'https://localhost:11434'
-}
+
 # ── Call 1: Gate ─────────────────────────────────────────────
 
 _GATE_SYSTEM = """You classify user messages into exactly one category. Respond with ONLY the category name, nothing else.

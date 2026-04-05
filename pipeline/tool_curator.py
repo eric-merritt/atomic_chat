@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from qwen_agent.llm import get_chat_model
 
 from config import TOOL_CURATOR_MODEL
-from workflow_groups import WORKFLOW_GROUPS, TOOL_REF, tool_ref_for_group, group_for_tool
+from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF, tool_ref_for_group, group_for_tool
 
 logger = logging.getLogger(__name__)
 
