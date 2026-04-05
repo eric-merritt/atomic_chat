@@ -1,5 +1,5 @@
 """Tests for Task Extractor prompt building and response parsing."""
-from task_extractor import _build_extractor_prompt, _parse_extractor_response
+from pipeline.task_extractor import _build_extractor_prompt, _parse_extractor_response
 
 
 class TestBuildPrompt:

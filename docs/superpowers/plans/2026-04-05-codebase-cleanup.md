@@ -15,10 +15,12 @@
 ## File Map
 
 ### New directories
+
 - `pipeline/` — `__init__.py`, `gate.py`, `task_extractor.py`, `tool_curator.py`, `workflow_groups.py`
 - `atomic_client/` — `__init__.py`, `agent.py`, `bridge.py`
 
 ### Files deleted
+
 - `chained_assistant.py`, `chain_planner.py`, `Toolchain.py`, `toolchains.py`
 - `checkpoints.db`, `checkpoints.db-shm`, `checkpoints.db-wal`
 - `firebase-debug.log`, `main.css`, `claude_resume.txt`, `.zshrc`
@@ -27,6 +29,7 @@
 - `code_db/` (directory), `static/` (directory), `migrations/` (directory), `nginx/` (directory)
 
 ### Files moved/renamed
+
 - `change_hats.py` → `pipeline/gate.py`
 - `task_extractor.py` → `pipeline/task_extractor.py`
 - `tool_curator.py` → `pipeline/tool_curator.py`
@@ -36,6 +39,7 @@
 - `client_bridge.py` → `atomic_client/bridge.py`
 
 ### Files modified in-place
+
 - `tools/accounting.py` — kill aliases, merge FIFO/LIFO, extract DB boilerplate
 - `tools/ecommerce.py` — kill dispatcher, merge eBay tools, merge CL tools, kill cross-platform
 - `tools/onlyfans.py` — merge save_img/save_vid
@@ -100,14 +104,14 @@ Delete dead training scripts:
 rm -f training_data/round1_prompts.md training_data/run_prompts.py
 ```
 
-- [ ] **Step 6: Verify nothing imports deleted files**
+- [✓] **Step 6: Verify nothing imports deleted files**
 
 ```bash
 uv run python -c "import main" 2>&1
 ```
 Expected: No `ModuleNotFoundError` for any deleted file. `chain_planner`, `Toolchain`, `toolchains`, `chained_assistant` are only imported by each other — not by `main.py` or any live code.
 
-- [ ] **Step 7: Commit**
+- [✓] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -130,7 +134,7 @@ git commit -m "chore: delete dead files and artifacts from root"
 - Modify: `tests/test_tool_curator.py` — update imports
 - Modify: `tests/test_workflow_groups.py` — update imports
 
-- [ ] **Step 1: Create pipeline directory and move files**
+- [✓] **Step 1: Create pipeline directory and move files**
 
 ```bash
 mkdir -p pipeline
@@ -166,7 +170,7 @@ from workflow_groups import WORKFLOW_GROUPS, TOOL_REF, tool_ref_for_group, group
 from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF, tool_ref_for_group, group_for_tool
 ```
 
-- [ ] **Step 4: Update imports in `main.py`**
+- [✓] **Step 4: Update imports in `main.py`**
 
 ```python
 # old
@@ -177,7 +181,7 @@ from pipeline.gate import analyze_message
 from pipeline.workflow_groups import WORKFLOW_GROUPS, tools_for_groups, group_for_tool
 ```
 
-- [ ] **Step 5: Update imports in `routes/tools.py`**
+- [✓] **Step 5: Update imports in `routes/tools.py`**
 
 ```python
 # old
@@ -186,7 +190,7 @@ from workflow_groups import WORKFLOW_GROUPS
 from pipeline.workflow_groups import WORKFLOW_GROUPS
 ```
 
-- [ ] **Step 6: Update test imports**
+- [✓] **Step 6: Update test imports**
 
 In `tests/test_task_extractor.py`:
 ```python
@@ -219,7 +223,7 @@ from workflow_groups import WORKFLOW_GROUPS, WorkflowGroup
 from pipeline.workflow_groups import WORKFLOW_GROUPS, WorkflowGroup
 ```
 
-- [ ] **Step 7: Run tests to verify**
+- [30 pass, 1 fail, need rewrite of www_cookies] **Step 7: Run tests to verify**
 
 ```bash
 uv run pytest tests/test_task_extractor.py tests/test_tool_curator.py tests/test_workflow_groups.py -v
