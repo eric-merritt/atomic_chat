@@ -17,8 +17,8 @@ def test_accounting_tool_count():
         'fa_ledger', 'fa_new_acct', 'fa_ls_accts', 'fa_acct_bal',
         'fa_update_acct', 'fa_tx_new', 'fa_tx_search', 'fa_tx_void',
         'fa_acct_det', 'fa_new_item', 'fa_receive',
-        'fa_ls_items', 'fa_rm_item', 'fa_tx_fifo',
-        'fa_tx_lifo', 'fa_value', 'fa_close',
+        'fa_ls_items', 'fa_rm_item', 'fa_tx_sale',
+        'fa_value', 'fa_close',
         'fa_stmt',
     }
     registered = set(TOOL_REGISTRY.keys())

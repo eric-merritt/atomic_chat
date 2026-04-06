@@ -32,8 +32,8 @@ def stocked_ledger(db_session, ledger_with_defaults):
 
 
 def test_fifo_sale(stocked_ledger):
-    from tools.accounting import _journalize_fifo_transaction_impl, _get_account_balance_impl
-    result = _load(_journalize_fifo_transaction_impl(
+    from tools.accounting import _journalize_cost_layer_sale, _get_account_balance_impl
+    result = _load(_journalize_cost_layer_sale(
         stocked_ledger, "test-user-001", "2026-03-20", "Sold 5 GPUs",
         "GPU-001", 5, 300.00
     ))
@@ -45,10 +45,10 @@ def test_fifo_sale(stocked_ledger):
 
 
 def test_lifo_sale(stocked_ledger):
-    from tools.accounting import _journalize_lifo_transaction_impl
-    result = _load(_journalize_lifo_transaction_impl(
+    from tools.accounting import _journalize_cost_layer_sale
+    result = _load(_journalize_cost_layer_sale(
         stocked_ledger, "test-user-001", "2026-03-20", "Sold 5 GPUs LIFO",
-        "GPU-001", 5, 300.00
+        "GPU-001", 5, 300.00, method="lifo",
     ))
     stocked_ledger.flush()
     assert result["status"] == "success"
@@ -57,8 +57,8 @@ def test_lifo_sale(stocked_ledger):
 
 
 def test_fifo_insufficient_inventory(stocked_ledger):
-    from tools.accounting import _journalize_fifo_transaction_impl
-    result = _load(_journalize_fifo_transaction_impl(
+    from tools.accounting import _journalize_cost_layer_sale
+    result = _load(_journalize_cost_layer_sale(
         stocked_ledger, "test-user-001", "2026-03-20", "Too many",
         "GPU-001", 25, 300.00  # only 20 in stock
     ))
@@ -67,10 +67,10 @@ def test_fifo_insufficient_inventory(stocked_ledger):
 
 
 def test_fifo_rejects_service_items(db_session, ledger_with_defaults):
-    from tools.accounting import _register_inventory_item_impl, _journalize_fifo_transaction_impl
+    from tools.accounting import _register_inventory_item_impl, _journalize_cost_layer_sale
     _register_inventory_item_impl(db_session, "test-user-001", "SVC-001", "Consulting", "service")
     db_session.flush()
-    result = _load(_journalize_fifo_transaction_impl(
+    result = _load(_journalize_cost_layer_sale(
         db_session, "test-user-001", "2026-03-20", "Bad",
         "SVC-001", 1, 100.00
     ))
@@ -80,8 +80,8 @@ def test_fifo_rejects_service_items(db_session, ledger_with_defaults):
 
 def test_fifo_multi_layer_consumption(stocked_ledger):
     """Sell 15 units — should consume all of Layer 1 (10@$200) + 5 from Layer 2 (5@$250)."""
-    from tools.accounting import _journalize_fifo_transaction_impl
-    result = _load(_journalize_fifo_transaction_impl(
+    from tools.accounting import _journalize_cost_layer_sale
+    result = _load(_journalize_cost_layer_sale(
         stocked_ledger, "test-user-001", "2026-03-20", "Big sale",
         "GPU-001", 15, 300.00
     ))
