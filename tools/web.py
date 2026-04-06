@@ -82,62 +82,66 @@ def _get_or_create_browser(geckodriver_path: str = ""):
 _stored_cookies: dict[str, list[dict[str, str]]] = {}
 
 
-COOKIES = []
-
 @register_tool('www_cookies')
 class SetCookiesTool(BaseTool):
     description = 'Set cookies for a domain. All subsequent www_fetch, www_scrape, and www_browse calls to that domain will include them automatically.'
     parameters = {
-        'cookies': {
-            "type": object
+        'type': 'object',
+        'properties': {
+            'cookies': {'type': 'string', 'description': 'Semicolon-separated cookies in "name=value" format.'},
+            'domain': {'type': 'string', 'description': 'Cookie domain (e.g. ".example.com").'},
         },
-        'domain': {
-            type: str
-        }
+        'required': ['cookies', 'domain'],
     }
 
     @retry()
-    def call(self, params: str) -> dict:
+    def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        cookies = p.get('cookies').strip()
-        domain = p.get('domain').strip()
+        cookies_str = p.get('cookies', '').strip()
+        domain = p.get('domain', '').strip()
 
-        if not cookies:
+        if not cookies_str:
             return tool_result(error="cookies is required")
         if not domain:
-            return tool_result(error="missing domain arg")
-        # Parse semicolon-separated "name=value" pairs
+            return tool_result(error="domain is required")
+
+        dot_domain = domain if domain.startswith(".") else "." + domain
+
         parsed = []
-        for cookie in cookies:
-            name = cookie.name
-            value = cookie.value
-            parsed.append({"{name}={value}"})
+        for pair in cookies_str.split(";"):
+            pair = pair.strip()
+            if "=" in pair:
+                name, _, value = pair.partition("=")
+                parsed.append({"name": name.strip(), "value": value.strip()})
+
         if not parsed:
             return tool_result(error="No valid name=value cookie pairs found")
 
-        # Apply to selenium driver if it's already running
+        _apply_cookies("https://" + domain.lstrip("."), [f"{c['name']}={c['value']}" for c in parsed], dot_domain)
+
         if _browser_driver is not None:
             try:
-                from urllib.parse import urlparse
                 driver = _browser_driver
-                # Navigate to domain to set cookies
-                driver.get(f"https://{domain}")
+                driver.get(f"https://{domain.lstrip('.')}")
                 import time as _t
                 _t.sleep(1)
                 for c in parsed:
-                    driver.add_cookie({
-                        "name": name,
-                        "value": value,
-                        "domain": dot_domain,
-                    })
+                    driver.add_cookie({"name": c["name"], "value": c["value"], "domain": dot_domain})
             except Exception:
-                pass  # browser cookies are best-effort; requests session is primary
+                pass
 
         return tool_result(data={
             "domain": dot_domain,
             "cookies_set": len(parsed),
             "names": [c["name"] for c in parsed],
         })
+
+
+def _validate_url(url: str) -> str | None:
+    """Return error string if URL is invalid, None if ok."""
+    if not url or not url.startswith(("http://", "https://")):
+        return "url must start with http:// or https://"
+    return None
 
 
 def _get_stored_cookies_for_url(url: str) -> list[str]:
@@ -221,8 +225,9 @@ class FetchUrlTool(BaseTool):
         cookies = p.get('cookies', None)
         domain = p.get('domain', None)
 
-        if not url or not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
+        err = _validate_url(url)
+        if err:
+            return tool_result(error=err)
 
         try:
             _apply_cookies(url, cookies, domain)
@@ -266,8 +271,9 @@ class WebscrapeTool(BaseTool):
         cookies = p.get('cookies', None)
         domain = p.get('domain', None)
 
-        if not url or not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
+        err = _validate_url(url)
+        if err:
+            return tool_result(error=err)
 
         try:
             _apply_cookies(url, cookies, domain)
@@ -339,8 +345,9 @@ class FindDownloadLinkTool(BaseTool):
             return tool_result(error="Provide either html or url. Both cannot be empty.")
 
         if not html and url:
-            if not url.startswith(("http://", "https://")):
-                return tool_result(error="url must start with http:// or https://")
+            err = _validate_url(url)
+            if err:
+                return tool_result(error=err)
             try:
                 r = requests.get(url, timeout=15, headers={"User-Agent": "AgentTooling/1.0"})
                 r.raise_for_status()
@@ -380,8 +387,9 @@ class FindAllowedRoutesTool(BaseTool):
         p = json5.loads(params)
         url = p.get('url', '')
 
-        if not url or not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
+        err = _validate_url(url)
+        if err:
+            return tool_result(error=err)
 
         if not url.endswith("robots.txt"):
             url = url.rstrip("/") + "/robots.txt"
@@ -424,8 +432,9 @@ class BrowserFetchTool(BaseTool):
         wait_seconds = p.get('wait_seconds', 3)
         cookies = p.get('cookies', None)
 
-        if not url or not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
+        err = _validate_url(url)
+        if err:
+            return tool_result(error=err)
 
         wait_seconds = max(1, min(30, wait_seconds))
 

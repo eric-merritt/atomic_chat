@@ -25,9 +25,9 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="Search code by pattern, filename, or symbol",
     ),
     "Web Tools": WorkflowGroup(
-        tools=["www_ddg", "www_fetch", "www_scrape", "www_find_all",
-               "www_find_dl", "www_find_routes", "www_browse",
-               "www_query", "www_click"],
+        tools=["www_ddg", "www_fetch", "www_scrape", "www_cookies",
+               "www_find_all", "www_find_dl", "www_find_routes",
+               "www_browse", "www_query", "www_click"],
         tooltip="Web scraping, search, and navigation",
     ),
     "Ecommerce": WorkflowGroup(
@@ -84,6 +84,7 @@ TOOL_REF: dict[str, str] = {
     "cs_def":              "find definition",
     # Web
     "www_ddg":          "web search",
+    "www_cookies":         "set cookies",
     "www_fetch":           "fetch url",
     "www_scrape":          "scrape page",
     "www_find_all":        "find elements",

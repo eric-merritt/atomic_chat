@@ -8,13 +8,14 @@ from qwen_agent.tools.base import TOOL_REGISTRY
 # ── Registration tests ───────────────────────────────────────────────────────
 
 def test_all_web_tools_registered():
-    """All 9 web tools must be present in the qwen-agent TOOL_REGISTRY."""
+    """All 10 web tools must be present in the qwen-agent TOOL_REGISTRY."""
     import tools.web  # noqa: F401 — trigger registration
 
     expected = {
         'web_search',
         'www_fetch',
         'www_scrape',
+        'www_cookies',
         'www_find_all',
         'www_find_dl',
         'www_find_routes',
