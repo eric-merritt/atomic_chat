@@ -119,53 +119,6 @@ def _credit_account(db: Session, entry: JournalEntry, account: Account, amount: 
     return line
 
 
-# Convenience aliases — the account_type check happens in journalize_transaction,
-# not here. These exist so calling code reads naturally.
-def _debit_asset(db, entry, account, amount, memo=None):
-    return _debit_account(db, entry, account, amount, memo)
-
-def _credit_asset(db, entry, account, amount, memo=None):
-    return _credit_account(db, entry, account, amount, memo)
-
-def _debit_liability(db, entry, account, amount, memo=None):
-    return _debit_account(db, entry, account, amount, memo)
-
-def _credit_liability(db, entry, account, amount, memo=None):
-    return _credit_account(db, entry, account, amount, memo)
-
-def _debit_equity(db, entry, account, amount, memo=None):
-    return _debit_account(db, entry, account, amount, memo)
-
-def _credit_equity(db, entry, account, amount, memo=None):
-    return _credit_account(db, entry, account, amount, memo)
-
-def _debit_revenue(db, entry, account, amount, memo=None):
-    return _debit_account(db, entry, account, amount, memo)
-
-def _credit_revenue(db, entry, account, amount, memo=None):
-    return _credit_account(db, entry, account, amount, memo)
-
-def _debit_expense(db, entry, account, amount, memo=None):
-    return _debit_account(db, entry, account, amount, memo)
-
-def _credit_expense(db, entry, account, amount, memo=None):
-    return _credit_account(db, entry, account, amount, memo)
-
-
-# Dispatch table: (account_type, side) → primitive function
-_PRIMITIVE_DISPATCH = {
-    (AccountType.ASSET, "debit"): _debit_asset,
-    (AccountType.ASSET, "credit"): _credit_asset,
-    (AccountType.LIABILITY, "debit"): _debit_liability,
-    (AccountType.LIABILITY, "credit"): _credit_liability,
-    (AccountType.EQUITY, "debit"): _debit_equity,
-    (AccountType.EQUITY, "credit"): _credit_equity,
-    (AccountType.REVENUE, "debit"): _debit_revenue,
-    (AccountType.REVENUE, "credit"): _credit_revenue,
-    (AccountType.EXPENSE, "debit"): _debit_expense,
-    (AccountType.EXPENSE, "credit"): _credit_expense,
-}
-
 
 def _get_account_balance(db: Session, account: Account, as_of: date = None) -> Decimal:
     """Compute the current balance of an account.
@@ -555,8 +508,10 @@ def _journalize_transaction_impl(db: Session, user_id: str, date_str: str, memo:
     # Create lines via dispatch
     result_lines = []
     for account, side, amount, line_memo in resolved_lines:
-        primitive = _PRIMITIVE_DISPATCH[(account.account_type, side)]
-        jl = primitive(db, entry, account, amount, line_memo)
+        if side == "debit":
+            jl = _debit_account(db, entry, account, amount, line_memo)
+        else:
+            jl = _credit_account(db, entry, account, amount, line_memo)
         db.flush()
         result_lines.append({
             "account": account.name,
@@ -966,8 +921,7 @@ def _receive_inventory_impl(
         ],
         source_type=SourceType.INVENTORY_RECEIPT,
     )
-    import json
-    jr = json.loads(journal_result)
+    jr = journal_result
     if jr["status"] == "error":
         return journal_result
 
@@ -1197,8 +1151,7 @@ def _journalize_cost_layer_sale(
     source = SourceType.FIFO_SALE if method == "fifo" else SourceType.LIFO_SALE
     journal_result = _journalize_transaction_impl(db, user_id, date_str, memo, journal_lines, source_type=source)
 
-    import json as _json
-    jr = _json.loads(journal_result)
+    jr = journal_result
     if jr["status"] == "error":
         return journal_result
 
@@ -1213,30 +1166,20 @@ def _journalize_cost_layer_sale(
     })
 
 
-def _journalize_fifo_transaction_impl(
-    db: Session, user_id: str, date_str: str, memo: str,
-    item_sku: str, quantity: float, sale_price_per_unit: float = None,
-    revenue_account: str = "Revenue", receivable_account: str = "Cash",
-) -> str:
-    return _journalize_cost_layer_sale(
-        db, user_id, date_str, memo, item_sku, quantity,
-        sale_price_per_unit, revenue_account, receivable_account, method="fifo",
-    )
-
-
-@register_tool('fa_tx_fifo')
-class JournalizeFifoTransactionTool(BaseTool):
-    description = 'Record a FIFO (first-in, first-out) inventory sale or consumption. Pulls cost from oldest layers first.'
+@register_tool('fa_tx_sale')
+class JournalizeCostLayerSaleTool(BaseTool):
+    description = 'Record an inventory sale using FIFO or LIFO costing.'
     parameters = {
         'type': 'object',
         'properties': {
             'date': {'type': 'string', 'description': 'Sale date (YYYY-MM-DD).'},
             'memo': {'type': 'string', 'description': 'Transaction description.'},
             'item_sku': {'type': 'string', 'description': 'SKU of the item being sold.'},
-            'quantity': {'type': 'number', 'description': 'Units sold/consumed.'},
-            'sale_price_per_unit': {'type': 'number', 'description': 'Price per unit (omit for internal consumption).'},
-            'revenue_account': {'type': 'string', 'description': 'Revenue account name (default "Revenue").'},
-            'receivable_account': {'type': 'string', 'description': 'Account to debit for sale (default "Cash").'},
+            'quantity': {'type': 'number', 'description': 'Units sold.'},
+            'method': {'type': 'string', 'description': '"fifo" or "lifo". Default: "fifo".'},
+            'sale_price_per_unit': {'type': 'number', 'description': 'Price per unit. Omit for internal consumption.'},
+            'revenue_account': {'type': 'string', 'description': 'Revenue account name. Default: "Revenue".'},
+            'receivable_account': {'type': 'string', 'description': 'Account to debit. Default: "Cash".'},
         },
         'required': ['date', 'memo', 'item_sku', 'quantity'],
     }
@@ -1247,62 +1190,13 @@ class JournalizeFifoTransactionTool(BaseTool):
         p = json5.loads(params)
         db = _get_db()
         try:
-            result = _journalize_fifo_transaction_impl(
+            result = _journalize_cost_layer_sale(
                 db, current_user.id,
                 p['date'], p['memo'], p['item_sku'], p['quantity'],
                 p.get('sale_price_per_unit'),
                 p.get('revenue_account', 'Revenue'),
                 p.get('receivable_account', 'Cash'),
-            )
-            db.commit()
-            return result
-        except Exception as e:
-            db.rollback()
-            return tool_result(error=str(e))
-        finally:
-            db.close()
-
-
-def _journalize_lifo_transaction_impl(
-    db: Session, user_id: str, date_str: str, memo: str,
-    item_sku: str, quantity: float, sale_price_per_unit: float = None,
-    revenue_account: str = "Revenue", receivable_account: str = "Cash",
-) -> str:
-    return _journalize_cost_layer_sale(
-        db, user_id, date_str, memo, item_sku, quantity,
-        sale_price_per_unit, revenue_account, receivable_account, method="lifo",
-    )
-
-
-@register_tool('fa_tx_lifo')
-class JournalizeLifoTransactionTool(BaseTool):
-    description = 'Record a LIFO (last-in, first-out) inventory sale or consumption. Pulls cost from newest layers first.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'date': {'type': 'string', 'description': 'Sale date (YYYY-MM-DD).'},
-            'memo': {'type': 'string', 'description': 'Transaction description.'},
-            'item_sku': {'type': 'string', 'description': 'SKU of the item being sold.'},
-            'quantity': {'type': 'number', 'description': 'Units sold/consumed.'},
-            'sale_price_per_unit': {'type': 'number', 'description': 'Price per unit (omit for internal consumption).'},
-            'revenue_account': {'type': 'string', 'description': 'Revenue account name (default "Revenue").'},
-            'receivable_account': {'type': 'string', 'description': 'Account to debit for sale (default "Cash").'},
-        },
-        'required': ['date', 'memo', 'item_sku', 'quantity'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        from flask_login import current_user
-        p = json5.loads(params)
-        db = _get_db()
-        try:
-            result = _journalize_lifo_transaction_impl(
-                db, current_user.id,
-                p['date'], p['memo'], p['item_sku'], p['quantity'],
-                p.get('sale_price_per_unit'),
-                p.get('revenue_account', 'Revenue'),
-                p.get('receivable_account', 'Cash'),
+                method=p.get('method', 'fifo'),
             )
             db.commit()
             return result
@@ -1596,8 +1490,6 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
 
     journal_entry_ids = []
 
-    import json as _json
-
     # Step 1: Close revenue → Income Summary
     # Debit each revenue account (zeroing it), Credit Income Summary
     if revenue_with_balance:
@@ -1612,7 +1504,7 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
             db, user_id, period_end_date, f"Close revenue accounts for period ending {period_end_date}",
             lines, source_type=SourceType.PERIOD_CLOSE,
         )
-        jr = _json.loads(result)
+        jr = result
         if jr["status"] == "error":
             return result
         journal_entry_ids.append(jr["data"]["journal_entry_id"])
@@ -1632,7 +1524,7 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
             db, user_id, period_end_date, f"Close expense accounts for period ending {period_end_date}",
             lines, source_type=SourceType.PERIOD_CLOSE,
         )
-        jr = _json.loads(result)
+        jr = result
         if jr["status"] == "error":
             return result
         journal_entry_ids.append(jr["data"]["journal_entry_id"])
@@ -1659,7 +1551,7 @@ def _close_period_impl(db: Session, user_id: str, period_end_date: str) -> str:
             db, user_id, period_end_date, f"Close Income Summary to Owner's Capital",
             lines, source_type=SourceType.PERIOD_CLOSE,
         )
-        jr = _json.loads(result)
+        jr = result
         if jr["status"] == "error":
             return result
         journal_entry_ids.append(jr["data"]["journal_entry_id"])
