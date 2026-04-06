@@ -31,7 +31,7 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="Web scraping, search, and navigation",
     ),
     "Ecommerce": WorkflowGroup(
-        tools=["ec_search", "ec_deals", "ec_enrich"],
+        tools=["ebay_search", "amazon_search", "cl_search", "ec_enrich"],
         tooltip="Product search across eBay, Amazon, and Craigslist",
     ),
     "OnlyFans": WorkflowGroup(
@@ -93,8 +93,9 @@ TOOL_REF: dict[str, str] = {
     "www_query":           "query page",
     "www_click":           "click element",
     # Ecommerce
-    "ec_search":           "search listings",
-    "ec_deals":            "find deals",
+    "ebay_search":         "search eBay listings",
+    "amazon_search":       "search Amazon listings",
+    "cl_search":           "search Craigslist",
     "ec_enrich":           "enrich data",
     # OnlyFans
     "of_extract":          "extract media",

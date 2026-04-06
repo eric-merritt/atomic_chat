@@ -169,18 +169,65 @@ def _parse_shipping_cost(shipping: str) -> float:
     return 0.0
 
 
-# internal — used by ec_search
+def _validate_query(query: str) -> str | None:
+    """Return error string if query is invalid, None if ok."""
+    if not query.strip():
+        return "query must be a non-empty string"
+    return None
+
+
+def _ebay_url(query: str, sort: str = "best_match", min_price=None, max_price=None,
+              condition: str = "", sold: bool = False, page: int = 1) -> str:
+    """Build an eBay search URL."""
+    encoded = urllib.parse.quote_plus(query)
+    url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}"
+    url += EBAY_SORT_OPTIONS.get(sort, "")
+    if min_price is not None:
+        url += f"&_udlo={min_price}"
+    if max_price is not None:
+        url += f"&_udhi={max_price}"
+    condition_map = {
+        "new": "&LH_ItemCondition=1000",
+        "used": "&LH_ItemCondition=3000",
+        "refurbished": "&LH_ItemCondition=2500",
+        "parts": "&LH_ItemCondition=7000",
+    }
+    if condition.lower() in condition_map:
+        url += condition_map[condition.lower()]
+    if sold:
+        url += "&LH_Complete=1&LH_Sold=1"
+    else:
+        url += "&LH_BIN=1"
+    url += "&rt=nc"
+    if page > 1:
+        url += f"&_pgn={page}"
+    return url
+
+
+_EBAY_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0"}
+
+
+def _fetch_html(url: str, headers: dict = None) -> str:
+    """Fetch a URL and return decoded HTML. Raises on failure."""
+    req = urllib.request.Request(url, headers=headers or _EBAY_HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+@register_tool('ebay_search')
 class EbaySearchTool(BaseTool):
-    description = 'Search eBay Buy It Now listings and return parsed results.'
+    description = 'Search eBay listings by keyword with optional filters.'
     parameters = {
         'type': 'object',
         'properties': {
-            'query': {'type': 'string', 'description': 'Search terms (e.g. "RTX 3060"). Must be non-empty.'},
-            'sort': {'type': 'string', 'description': 'Sort order: best_match, ending_soonest, newly_listed, price_low, price_high.'},
-            'min_price': {'type': 'number', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'number', 'description': 'Maximum price in USD. Omit to skip.'},
-            'condition': {'type': 'string', 'description': 'Item condition: new, used, refurbished, parts, or "" to skip.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum listings to return. Range: 1-100.'},
+            'query': {'type': 'string', 'description': 'Search terms.'},
+            'sort': {'type': 'string', 'description': 'Sort: best_match, ending_soonest, newly_listed, price_low, price_high.'},
+            'min_price': {'type': 'number', 'description': 'Minimum price USD.'},
+            'max_price': {'type': 'number', 'description': 'Maximum price USD.'},
+            'condition': {'type': 'string', 'description': 'new, used, refurbished, or parts.'},
+            'sold': {'type': 'boolean', 'description': 'Search completed/sold listings instead of active. Default: false.'},
+            'pages': {'type': 'integer', 'description': 'Pages to scrape (1-10). Default: 1.'},
+            'max_results': {'type': 'integer', 'description': 'Max listings to return. Default: 20.'},
         },
         'required': ['query'],
     }
@@ -189,182 +236,44 @@ class EbaySearchTool(BaseTool):
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         query = p.get('query', '')
+        err = _validate_query(query)
+        if err:
+            return tool_result(error=err)
+
         sort = p.get('sort', 'best_match')
         min_price = p.get('min_price')
         max_price = p.get('max_price')
         condition = p.get('condition', '')
+        sold = p.get('sold', False)
+        pages = max(1, min(p.get('pages', 1), 10))
         max_results = p.get('max_results', 20)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        encoded = urllib.parse.quote_plus(query)
-        url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}"
-        url += EBAY_SORT_OPTIONS.get(sort, "")
-        if min_price is not None:
-            url += f"&_udlo={min_price}"
-        if max_price is not None:
-            url += f"&_udhi={max_price}"
-        condition_map = {
-            "new": "&LH_ItemCondition=1000",
-            "used": "&LH_ItemCondition=3000",
-            "refurbished": "&LH_ItemCondition=2500",
-            "parts": "&LH_ItemCondition=7000",
-        }
-        if condition.lower() in condition_map:
-            url += condition_map[condition.lower()]
-        url += "&rt=nc&LH_BIN=1"
-
-        try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
-            })
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                html = resp.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        listings = _parse_ebay_listings(html)[:max_results]
-        return tool_result(data={"query": query, "count": len(listings), "listings": listings})
-
-
-# internal — used by ec_search
-class EbaySoldSearchTool(BaseTool):
-    description = 'Search eBay completed/sold listings to find market prices.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum listings to return. Range: 1-100.'},
-        },
-        'required': ['query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        query = p.get('query', '')
-        max_results = p.get('max_results', 20)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        encoded = urllib.parse.quote_plus(query)
-        url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}&LH_Complete=1&LH_Sold=1&rt=nc"
-        try:
-            req = urllib.request.Request(url, headers={
-                "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
-            })
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                html = resp.read().decode("utf-8", errors="replace")
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        listings = _parse_ebay_listings(html)[:max_results]
-        for listing in listings:
-            listing["sold"] = True
-        return tool_result(data={"query": query, "count": len(listings), "listings": listings})
-
-
-# internal — used by ec_search
-class EbayDeepScanTool(BaseTool):
-    description = 'Paginated eBay search that compresses results to model + price for bulk analysis.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'condition': {'type': 'string', 'description': 'Filter: new, used, refurbished, parts, or "" to skip.'},
-            'min_price': {'type': 'number', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'number', 'description': 'Maximum price in USD. Omit to skip.'},
-            'sort': {'type': 'string', 'description': 'Sort order: best_match, ending_soonest, newly_listed, price_low, price_high.'},
-            'pages': {'type': 'integer', 'description': 'Number of result pages to scrape. Range: 1-10.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum total listings to return. Range: 1-500.'},
-        },
-        'required': ['query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        query = p.get('query', '')
-        condition = p.get('condition', 'used')
-        min_price = p.get('min_price')
-        max_price = p.get('max_price')
-        sort = p.get('sort', 'best_match')
-        pages = p.get('pages', 5)
-        max_results = p.get('max_results', 200)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        pages = max(1, min(pages, 10))
-
-        encoded = urllib.parse.quote_plus(query)
-        base_url = f"https://www.ebay.com/sch/i.html?_nkw={encoded}"
-        base_url += EBAY_SORT_OPTIONS.get(sort, "")
-        if min_price is not None:
-            base_url += f"&_udlo={min_price}"
-        if max_price is not None:
-            base_url += f"&_udhi={max_price}"
-        condition_map = {
-            "new": "&LH_ItemCondition=1000",
-            "used": "&LH_ItemCondition=3000",
-            "refurbished": "&LH_ItemCondition=2500",
-            "parts": "&LH_ItemCondition=7000",
-        }
-        if condition.lower() in condition_map:
-            base_url += condition_map[condition.lower()]
-        base_url += "&rt=nc&LH_BIN=1"
 
         seen_urls = set()
         all_listings = []
 
         for page_num in range(1, pages + 1):
-            url = base_url if page_num == 1 else f"{base_url}&_pgn={page_num}"
-
+            url = _ebay_url(query, sort, min_price, max_price, condition, sold, page_num)
             try:
-                req = urllib.request.Request(url, headers={
-                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0",
-                })
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    html = resp.read().decode("utf-8", errors="replace")
+                html = _fetch_html(url)
             except Exception:
                 if page_num < pages:
                     time.sleep(random.uniform(3.0, 6.0))
                 continue
 
-            raw_listings = _parse_ebay_listings(html)
-
-            for listing in raw_listings:
+            for listing in _parse_ebay_listings(html):
                 item_url = listing.get("url", "")
                 if not item_url or item_url in seen_urls:
                     continue
                 seen_urls.add(item_url)
-
-                price = listing.get("price", 0.0)
-                shipping_cost = _parse_shipping_cost(listing.get("shipping", ""))
-                model = _extract_gpu_model(listing.get("title", ""))
-
-                all_listings.append({
-                    "model": model,
-                    "title": listing.get("title", ""),
-                    "price": price,
-                    "shipping_cost": shipping_cost,
-                    "total_cost": round(price + shipping_cost, 2),
-                    "url": item_url,
-                })
+                if sold:
+                    listing["sold"] = True
+                all_listings.append(listing)
 
             if page_num < pages:
                 time.sleep(random.uniform(3.0, 6.0))
 
-        all_listings.sort(key=lambda x: (x["model"], x["total_cost"]))
-
-        return tool_result(data={
-            "query": query,
-            "pages_scraped": pages,
-            "count": len(all_listings[:max_results]),
-            "listings": all_listings[:max_results],
-        })
+        all_listings = all_listings[:max_results]
+        return tool_result(data={"query": query, "count": len(all_listings), "listings": all_listings})
 
 
 # ── Amazon Operations ─────────────────────────────────────────────────────────
@@ -441,7 +350,7 @@ def _parse_amazon_listings(html: str) -> list[dict]:
     return listings
 
 
-# internal — used by ec_search
+@register_tool('amazon_search')
 class AmazonSearchTool(BaseTool):
     description = 'Search Amazon and return parsed product listings.'
     parameters = {
@@ -624,18 +533,19 @@ def _craigslist_search_city(
     return _parse_craigslist_listings(html, city, is_local)[:max_results]
 
 
-# internal — used by ec_search
+@register_tool('cl_search')
 class CraigslistSearchTool(BaseTool):
-    description = 'Search Craigslist in a specific city.'
+    description = 'Search Craigslist in one city or across multiple cities.'
     parameters = {
         'type': 'object',
         'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'city': {'type': 'string', 'description': 'City name. Denver-area (pickup): denver, boulder, colorado springs, fort collins, pueblo. Remote cities require shipping.'},
-            'category': {'type': 'string', 'description': 'Craigslist category code: sss=for sale, cta=cars+trucks, sys=computers, ele=electronics.'},
-            'min_price': {'type': 'integer', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'integer', 'description': 'Maximum price in USD. Omit to skip.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum listings to return. Range: 1-100.'},
+            'query': {'type': 'string', 'description': 'Search terms.'},
+            'city': {'type': 'string', 'description': 'Single city name. Ignored if scope is set.'},
+            'scope': {'type': 'string', 'description': 'Search multiple cities: "local" (Denver area), "shipping" (20 cities), or "all". Overrides city.'},
+            'category': {'type': 'string', 'description': 'Category: sss (for sale), cta (cars), sys (computers), ele (electronics). Default: sss.'},
+            'min_price': {'type': 'integer', 'description': 'Minimum price USD.'},
+            'max_price': {'type': 'integer', 'description': 'Maximum price USD.'},
+            'max_results': {'type': 'integer', 'description': 'Max listings per city. Default: 25.'},
         },
         'required': ['query'],
     }
@@ -644,465 +554,48 @@ class CraigslistSearchTool(BaseTool):
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         query = p.get('query', '')
+        err = _validate_query(query)
+        if err:
+            return tool_result(error=err)
+
+        scope = p.get('scope')
         city = p.get('city', 'denver')
         category = p.get('category', 'sss')
         min_price = p.get('min_price')
         max_price = p.get('max_price')
         max_results = p.get('max_results', 25)
 
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        city_lower = city.lower().strip()
-
-        if city_lower in CRAIGSLIST_DENVER_AREA:
-            base_url = CRAIGSLIST_DENVER_AREA[city_lower]
-            is_local = True
-        elif city_lower in CRAIGSLIST_SHIPPING_CITIES:
-            base_url = CRAIGSLIST_SHIPPING_CITIES[city_lower]
-            is_local = False
+        if scope:
+            cities = []
+            if scope in ("local", "all"):
+                cities += [(n, u, True) for n, u in CRAIGSLIST_DENVER_AREA.items()]
+            if scope in ("shipping", "all"):
+                cities += [(n, u, False) for n, u in CRAIGSLIST_SHIPPING_CITIES.items()]
+            if not cities:
+                return tool_result(error=f"Invalid scope '{scope}'. Use 'local', 'shipping', or 'all'.")
         else:
-            all_cities = sorted(list(CRAIGSLIST_DENVER_AREA.keys()) + list(CRAIGSLIST_SHIPPING_CITIES.keys()))
-            return tool_result(error=f"Unknown city '{city}'. Use one of: {', '.join(all_cities)}")
-
-        listings = _craigslist_search_city(
-            base_url, query, city_lower, is_local,
-            category=category, min_price=min_price, max_price=max_price,
-            max_results=max_results,
-        )
-
-        for listing in listings:
-            model = _extract_gpu_model(listing.get("title", ""))
-            if model:
-                listing["gpu_model"] = model
-
-        return tool_result(data={"query": query, "city": city_lower, "count": len(listings), "listings": listings})
-
-
-# internal — used by ec_search
-class CraigslistMultiSearchTool(BaseTool):
-    description = 'Search Craigslist across multiple cities with rate-limiting.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'scope': {'type': 'string', 'description': 'Which cities to search: local (Denver area), shipping (20 remote cities), or all (25 cities).'},
-            'category': {'type': 'string', 'description': 'Craigslist category code: sss=for sale, sys=computers, ele=electronics, cta=cars+trucks.'},
-            'min_price': {'type': 'integer', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'integer', 'description': 'Maximum price in USD. Omit to skip.'},
-            'max_results_per_city': {'type': 'integer', 'description': 'Maximum listings per city. Range: 1-50.'},
-        },
-        'required': ['query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        query = p.get('query', '')
-        scope = p.get('scope', 'local')
-        category = p.get('category', 'sss')
-        min_price = p.get('min_price')
-        max_price = p.get('max_price')
-        max_results_per_city = p.get('max_results_per_city', 10)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        cities_to_search: list[tuple[str, str, bool]] = []
-
-        if scope in ("local", "all"):
-            for city_name, base_url in CRAIGSLIST_DENVER_AREA.items():
-                cities_to_search.append((city_name, base_url, True))
-        if scope in ("shipping", "all"):
-            for city_name, base_url in CRAIGSLIST_SHIPPING_CITIES.items():
-                cities_to_search.append((city_name, base_url, False))
-
-        if not cities_to_search:
-            return tool_result(error=f"Invalid scope '{scope}'. Use 'local', 'shipping', or 'all'.")
+            city_lower = city.lower().strip()
+            if city_lower in CRAIGSLIST_DENVER_AREA:
+                cities = [(city_lower, CRAIGSLIST_DENVER_AREA[city_lower], True)]
+            elif city_lower in CRAIGSLIST_SHIPPING_CITIES:
+                cities = [(city_lower, CRAIGSLIST_SHIPPING_CITIES[city_lower], False)]
+            else:
+                all_cities = sorted(list(CRAIGSLIST_DENVER_AREA) + list(CRAIGSLIST_SHIPPING_CITIES))
+                return tool_result(error=f"Unknown city '{city}'. Use one of: {', '.join(all_cities)}")
 
         all_listings = []
-        cities_searched = []
-        cities_failed = []
-
-        for i, (city_name, base_url, is_local) in enumerate(cities_to_search):
+        for i, (name, base_url, is_local) in enumerate(cities):
             results = _craigslist_search_city(
-                base_url, query, city_name, is_local,
+                base_url, query, name, is_local,
                 category=category, min_price=min_price, max_price=max_price,
-                max_results=max_results_per_city,
+                max_results=max_results,
             )
-
-            if results:
-                for listing in results:
-                    model = _extract_gpu_model(listing.get("title", ""))
-                    if model:
-                        listing["gpu_model"] = model
-                all_listings.extend(results)
-                cities_searched.append(f"{city_name} ({len(results)} results)")
-            else:
-                cities_failed.append(city_name)
-
-            if i < len(cities_to_search) - 1:
+            all_listings.extend(results)
+            if i < len(cities) - 1:
                 time.sleep(random.uniform(1.5, 3.0))
 
-        all_listings.sort(key=lambda x: (x.get("price") is None, x.get("price", 999999)))
+        return tool_result(data={"query": query, "count": len(all_listings), "listings": all_listings})
 
-        return tool_result(data={
-            "total_listings": len(all_listings),
-            "cities_searched": cities_searched,
-            "cities_with_no_results": cities_failed,
-            "listings": all_listings,
-        })
-
-
-# ── Cross-Platform Flow Tools ─────────────────────────────────────────────────
-
-# internal — used by ec_search
-class CrossPlatformSearchTool(BaseTool):
-    description = 'Search across eBay, Amazon, and Craigslist in a single call.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'platforms': {'type': 'string', 'description': 'Comma-separated list or "all". Options: ebay, amazon, craigslist.'},
-            'min_price': {'type': 'number', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'number', 'description': 'Maximum price in USD. Omit to skip.'},
-            'condition': {'type': 'string', 'description': 'Condition filter for eBay only: new, used, refurbished, parts, or "".'},
-            'max_results_per_platform': {'type': 'integer', 'description': 'Maximum listings per platform. Range: 1-50.'},
-        },
-        'required': ['query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        query = p.get('query', '')
-        platforms = p.get('platforms', 'all')
-        min_price = p.get('min_price')
-        max_price = p.get('max_price')
-        condition = p.get('condition', '')
-        max_results_per_platform = p.get('max_results_per_platform', 15)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        platform_list = [pl.strip().lower() for pl in platforms.split(",")]
-        if "all" in platform_list:
-            platform_list = ["ebay", "amazon", "craigslist"]
-
-        aggregated: dict = {
-            "query": query,
-            "platforms_searched": [],
-            "total_listings": 0,
-            "results": {},
-        }
-
-        for i, platform in enumerate(platform_list):
-            if platform == "ebay":
-                try:
-                    raw = EbaySearchTool().call(json5.dumps({
-                        "query": query,
-                        "min_price": min_price,
-                        "max_price": max_price,
-                        "condition": condition,
-                        "max_results": max_results_per_platform,
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
-                    for listing in listings:
-                        listing["platform"] = "ebay"
-                        listing["fulfillment"] = "shipping"
-                        model = _extract_gpu_model(listing.get("title", ""))
-                        if model:
-                            listing["gpu_model"] = model
-                    aggregated["results"]["ebay"] = listings
-                    aggregated["platforms_searched"].append(f"ebay ({len(listings)} results)")
-                    aggregated["total_listings"] += len(listings)
-                except Exception as e:
-                    aggregated["results"]["ebay"] = [{"error": str(e)}]
-
-            elif platform == "amazon":
-                try:
-                    raw = AmazonSearchTool().call(json5.dumps({
-                        "query": query,
-                        "min_price": min_price,
-                        "max_price": max_price,
-                        "max_results": max_results_per_platform,
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
-                    for listing in listings:
-                        listing["platform"] = "amazon"
-                        listing["fulfillment"] = "shipping"
-                    aggregated["results"]["amazon"] = listings
-                    aggregated["platforms_searched"].append(f"amazon ({len(listings)} results)")
-                    aggregated["total_listings"] += len(listings)
-                except Exception as e:
-                    aggregated["results"]["amazon"] = [{"error": str(e)}]
-
-            elif platform == "craigslist":
-                try:
-                    raw = CraigslistMultiSearchTool().call(json5.dumps({
-                        "query": query,
-                        "scope": "all",
-                        "min_price": int(min_price) if min_price is not None else None,
-                        "max_price": int(max_price) if max_price is not None else None,
-                        "max_results_per_city": max(3, max_results_per_platform // 5),
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    cl_data = parsed.get("data", {}) if parsed.get("status") == "success" else {}
-                    listings = cl_data.get("listings", [])
-                    for listing in listings:
-                        listing["platform"] = "craigslist"
-                    aggregated["results"]["craigslist"] = listings
-                    aggregated["platforms_searched"].append(
-                        f"craigslist ({len(listings)} results across {len(cl_data.get('cities_searched', []))} cities)"
-                    )
-                    aggregated["total_listings"] += len(listings)
-                except Exception as e:
-                    aggregated["results"]["craigslist"] = [{"error": str(e)}]
-
-            if i < len(platform_list) - 1:
-                time.sleep(random.uniform(2.0, 4.0))
-
-        return tool_result(data=aggregated)
-
-
-_EC_SEARCH_HANDLERS = {
-    ('ebay', 'buy'): EbaySearchTool,
-    ('ebay', 'sold'): EbaySoldSearchTool,
-    ('ebay', 'deep_scan'): EbayDeepScanTool,
-    ('amazon', 'buy'): AmazonSearchTool,
-    ('cl', 'buy'): CraigslistSearchTool,
-    ('cl_cities', 'buy'): CraigslistMultiSearchTool,
-    ('all', 'buy'): CrossPlatformSearchTool,
-}
-
-
-@register_tool('ec_search')
-class EcommerceSearchTool(BaseTool):
-    description = (
-        'Search ecommerce platforms. '
-        'platform: ebay, amazon, cl, cl_cities, all. '
-        'section: buy (default), sold (ebay only), deep_scan (ebay only). '
-        'Pass additional params (query, min_price, max_price, etc.) through.'
-    )
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'platform': {
-                'type': 'string',
-                'enum': ['ebay', 'amazon', 'cl', 'cl_cities', 'all'],
-                'description': 'Platform to search.',
-            },
-            'section': {
-                'type': 'string',
-                'enum': ['buy', 'sold', 'deep_scan'],
-                'description': 'Search section. Default: buy.',
-            },
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'sort': {'type': 'string', 'description': 'Sort order (platform-specific).'},
-            'min_price': {'type': 'number', 'description': 'Minimum price in USD.'},
-            'max_price': {'type': 'number', 'description': 'Maximum price in USD.'},
-            'condition': {'type': 'string', 'description': 'Item condition (ebay): new, used, refurbished, parts.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum listings to return.'},
-            'city': {'type': 'string', 'description': 'City name (cl only).'},
-            'scope': {'type': 'string', 'description': 'City scope (cl_cities only): local, shipping, all.'},
-            'category': {'type': 'string', 'description': 'Craigslist category code (cl/cl_cities).'},
-            'pages': {'type': 'integer', 'description': 'Pages to scrape (ebay deep_scan only).'},
-        },
-        'required': ['platform', 'query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        platform = p.pop('platform', 'ebay')
-        section = p.pop('section', 'buy')
-
-        handler_cls = _EC_SEARCH_HANDLERS.get((platform, section))
-        if not handler_cls:
-            valid = [f"{pl}/{sec}" for pl, sec in _EC_SEARCH_HANDLERS]
-            return tool_result(error=f"Invalid platform/section '{platform}/{section}'. Valid: {', '.join(valid)}")
-
-        return handler_cls().call(json5.dumps(p), **kwargs)
-
-
-@register_tool('ec_deals')
-class DealFinderTool(BaseTool):
-    description = 'Find deals by comparing prices across platforms against median market price.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search terms. Must be non-empty.'},
-            'platforms': {'type': 'string', 'description': 'Comma-separated list or "all". Options: ebay, amazon, craigslist.'},
-            'min_price': {'type': 'number', 'description': 'Minimum price in USD. Omit to skip.'},
-            'max_price': {'type': 'number', 'description': 'Maximum price in USD. Omit to skip.'},
-            'condition': {'type': 'string', 'description': 'Condition filter for eBay: new, used, refurbished, parts.'},
-            'threshold_pct': {'type': 'number', 'description': 'Minimum percentage below median to flag as a deal. Default: 20.0.'},
-        },
-        'required': ['query'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        import statistics
-
-        p = json5.loads(params)
-        query = p.get('query', '')
-        platforms = p.get('platforms', 'all')
-        min_price = p.get('min_price')
-        max_price = p.get('max_price')
-        condition = p.get('condition', 'used')
-        threshold_pct = p.get('threshold_pct', 20.0)
-
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
-
-        platform_list = [pl.strip().lower() for pl in platforms.split(",")]
-        if "all" in platform_list:
-            platform_list = ["ebay", "amazon", "craigslist"]
-
-        all_listings: list[dict] = []
-        platforms_searched = []
-
-        for i, platform in enumerate(platform_list):
-            if platform == "ebay":
-                try:
-                    raw = EbayDeepScanTool().call(json5.dumps({
-                        "query": query,
-                        "condition": condition,
-                        "min_price": min_price,
-                        "max_price": max_price,
-                        "pages": 3,
-                        "max_results": 100,
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
-                    for lst in listings:
-                        lst["platform"] = "ebay"
-                        lst["fulfillment"] = "shipping"
-                        if "total_cost" not in lst:
-                            lst["total_cost"] = lst.get("price", 0) + lst.get("shipping_cost", 0)
-                    all_listings.extend(listings)
-                    platforms_searched.append(f"ebay ({len(listings)} listings, 3-page deep scan)")
-                except Exception as e:
-                    platforms_searched.append(f"ebay (error: {e})")
-
-            elif platform == "amazon":
-                try:
-                    raw = AmazonSearchTool().call(json5.dumps({
-                        "query": query,
-                        "min_price": min_price,
-                        "max_price": max_price,
-                        "max_results": 30,
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    listings = parsed.get("data", {}).get("listings", []) if parsed.get("status") == "success" else []
-                    for lst in listings:
-                        lst["platform"] = "amazon"
-                        lst["fulfillment"] = "shipping"
-                        if "total_cost" not in lst:
-                            lst["total_cost"] = lst.get("price", 0) + lst.get("shipping_cost", 0)
-                        if "model" not in lst and "gpu_model" in lst:
-                            lst["model"] = lst["gpu_model"]
-                        elif "model" not in lst:
-                            lst["model"] = _extract_gpu_model(lst.get("title", ""))
-                    all_listings.extend(listings)
-                    platforms_searched.append(f"amazon ({len(listings)} listings)")
-                except Exception as e:
-                    platforms_searched.append(f"amazon (error: {e})")
-
-            elif platform == "craigslist":
-                try:
-                    raw = CraigslistMultiSearchTool().call(json5.dumps({
-                        "query": query,
-                        "scope": "all",
-                        "min_price": int(min_price) if min_price is not None else None,
-                        "max_price": int(max_price) if max_price is not None else None,
-                        "max_results_per_city": 5,
-                    }))
-                    parsed = raw if isinstance(raw, dict) else json.loads(raw)
-                    cl_data = parsed.get("data", {}) if parsed.get("status") == "success" else {}
-                    listings = cl_data.get("listings", [])
-                    for lst in listings:
-                        lst["platform"] = "craigslist"
-                        if "total_cost" not in lst:
-                            lst["total_cost"] = lst.get("price", 0)
-                        if "model" not in lst and "gpu_model" in lst:
-                            lst["model"] = lst["gpu_model"]
-                        elif "model" not in lst:
-                            lst["model"] = _extract_gpu_model(lst.get("title", ""))
-                    all_listings.extend(listings)
-                    n_cities = len(cl_data.get("cities_searched", []))
-                    platforms_searched.append(f"craigslist ({len(listings)} listings across {n_cities} cities)")
-                except Exception as e:
-                    platforms_searched.append(f"craigslist (error: {e})")
-
-            if i < len(platform_list) - 1:
-                time.sleep(random.uniform(2.0, 4.0))
-
-        # Group by model
-        groups: dict[str, list[dict]] = {}
-        ungrouped = []
-        for lst in all_listings:
-            model = lst.get("model", "")
-            if model:
-                groups.setdefault(model, []).append(lst)
-            else:
-                ungrouped.append(lst)
-
-        # Compute medians and find deals
-        deals = []
-        group_stats = {}
-
-        for model, items in groups.items():
-            prices = [x["total_cost"] for x in items if x.get("total_cost", 0) > 0]
-            if len(prices) < 3:
-                group_stats[model] = {
-                    "count": len(items),
-                    "note": "Too few listings for reliable comparison (need >=3)",
-                }
-                continue
-
-            median_price = statistics.median(prices)
-            group_stats[model] = {
-                "count": len(items),
-                "median_price": round(median_price, 2),
-                "min_price": round(min(prices), 2),
-                "max_price": round(max(prices), 2),
-            }
-
-            threshold = median_price * (1 - threshold_pct / 100)
-            for item in items:
-                total = item.get("total_cost", 0)
-                if total > 0 and total <= threshold:
-                    pct_below = round((1 - total / median_price) * 100, 1)
-                    savings = round(median_price - total, 2)
-                    deals.append({
-                        "model": model,
-                        "title": item.get("title", ""),
-                        "total_cost": total,
-                        "median_price": round(median_price, 2),
-                        "pct_below_median": pct_below,
-                        "savings": savings,
-                        "platform": item.get("platform", ""),
-                        "fulfillment": item.get("fulfillment", ""),
-                        "url": item.get("url", ""),
-                    })
-
-        deals.sort(key=lambda x: x["pct_below_median"], reverse=True)
-
-        return tool_result(data={
-            "query": query,
-            "platforms_searched": platforms_searched,
-            "total_listings_analyzed": len(all_listings),
-            "models_found": len(groups),
-            "ungrouped_listings": len(ungrouped),
-            "group_statistics": group_stats,
-            "deals_found": len(deals),
-            "threshold": f">={threshold_pct}% below median",
-            "deals": deals,
-        })
 
 
 # ── Enrichment Pipeline ──────────────────────────────────────────────────────
