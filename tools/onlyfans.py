@@ -136,14 +136,14 @@ class ScrollMessagesTool(BaseTool):
             return tool_result(error=str(e))
 
 
-@register_tool('of_save_img')
-class SaveImageTool(BaseTool):
-    description = 'Download and save an image from a URL to disk.'
+@register_tool('of_save_media')
+class SaveMediaTool(BaseTool):
+    description = 'Download and save a media file from a URL to disk.'
     parameters = {
         'type': 'object',
         'properties': {
-            'url': {'type': 'string', 'description': 'Direct image URL. Must start with http:// or https://.'},
-            'file_path': {'type': 'string', 'description': 'Local file path to save the image to.'},
+            'url': {'type': 'string', 'description': 'Direct media URL.'},
+            'file_path': {'type': 'string', 'description': 'Local path to save to.'},
         },
         'required': ['url', 'file_path'],
     }
@@ -153,36 +153,7 @@ class SaveImageTool(BaseTool):
         p = json5.loads(params)
         url = p['url']
         file_path = p['file_path']
-        if not url or not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            with open(file_path, "wb") as f:
-                f.write(r.content)
-            return tool_result(data={"url": url, "file_path": file_path, "bytes": len(r.content)})
-        except Exception as e:
-            return tool_result(error=str(e))
-
-
-@register_tool('of_save_vid')
-class SaveVideoTool(BaseTool):
-    description = 'Download and save a video from a URL to disk.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'url': {'type': 'string', 'description': 'Direct video URL. Must start with http:// or https://.'},
-            'file_path': {'type': 'string', 'description': 'Local file path to save the video to.'},
-        },
-        'required': ['url', 'file_path'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        url = p['url']
-        file_path = p['file_path']
-        if not url or not url.startswith(("http://", "https://")):
+        if not url.startswith(("http://", "https://")):
             return tool_result(error="url must start with http:// or https://")
         try:
             r = requests.get(url, timeout=10)
@@ -215,8 +186,7 @@ class ExtractImagesAndVideosTool(BaseTool):
             images_saved = 0
             videos_saved = 0
             scroll_tool = ScrollMessagesTool()
-            save_image_tool = SaveImageTool()
-            save_video_tool = SaveVideoTool()
+            save_tool = SaveMediaTool()
 
             while True:
                 scroll_tool.call('{}')
@@ -229,13 +199,13 @@ class ExtractImagesAndVideosTool(BaseTool):
                         for i, img in enumerate(media_wrapper.find_elements(By.CLASS_NAME, IMAGE_CLASS)):
                             src = img.get_attribute("src")
                             if src:
-                                save_image_tool.call(json5.dumps({"url": src, "file_path": f"{save_dir}/image_{msg_i}_{i}.jpg"}))
+                                save_tool.call(json5.dumps({"url": src, "file_path": f"{save_dir}/image_{msg_i}_{i}.jpg"}))
                                 images_saved += 1
                         for i, video in enumerate(media_wrapper.find_elements(By.CLASS_NAME, VIDEO_CLASS)):
                             for j, source in enumerate(video.find_elements(By.TAG_NAME, "source")):
                                 src = source.get_attribute(SOURCE_ATTRIBUTE)
                                 if src:
-                                    save_video_tool.call(json5.dumps({"url": src, "file_path": f"{save_dir}/video_{msg_i}_{i}_{j}.mp4"}))
+                                    save_tool.call(json5.dumps({"url": src, "file_path": f"{save_dir}/video_{msg_i}_{i}_{j}.mp4"}))
                                     videos_saved += 1
                     except Exception:
                         continue

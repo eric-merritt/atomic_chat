@@ -214,8 +214,7 @@ def _fetch_html(url: str, headers: dict = None) -> str:
         return resp.read().decode("utf-8", errors="replace")
 
 
-@register_tool('ebay_search')
-class EbaySearchTool(BaseTool):
+class _EbaySearchHandler(BaseTool):
     description = 'Search eBay listings by keyword with optional filters.'
     parameters = {
         'type': 'object',
@@ -350,8 +349,7 @@ def _parse_amazon_listings(html: str) -> list[dict]:
     return listings
 
 
-@register_tool('amazon_search')
-class AmazonSearchTool(BaseTool):
+class _AmazonSearchHandler(BaseTool):
     description = 'Search Amazon and return parsed product listings.'
     parameters = {
         'type': 'object',
@@ -533,8 +531,7 @@ def _craigslist_search_city(
     return _parse_craigslist_listings(html, city, is_local)[:max_results]
 
 
-@register_tool('cl_search')
-class CraigslistSearchTool(BaseTool):
+class _CraigslistSearchHandler(BaseTool):
     description = 'Search Craigslist in one city or across multiple cities.'
     parameters = {
         'type': 'object',
@@ -596,6 +593,56 @@ class CraigslistSearchTool(BaseTool):
 
         return tool_result(data={"query": query, "count": len(all_listings), "listings": all_listings})
 
+
+# ── Unified Search Dispatcher ────────────────────────────────────────────────
+
+_EC_HANDLERS = {
+    'ebay': _EbaySearchHandler,
+    'amazon': _AmazonSearchHandler,
+    'cl': _CraigslistSearchHandler,
+}
+
+
+@register_tool('ec_search')
+class EcommerceSearchTool(BaseTool):
+    description = (
+        'Search ecommerce platforms for product listings. '
+        'platform: ebay, amazon, or cl (Craigslist). '
+        'Pass query and platform-specific params (sort, condition, sold, city, scope, etc.).'
+    )
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'platform': {
+                'type': 'string',
+                'enum': ['ebay', 'amazon', 'cl'],
+                'description': 'Platform to search.',
+            },
+            'query': {'type': 'string', 'description': 'Search terms.'},
+            'sort': {'type': 'string', 'description': 'Sort order (platform-specific).'},
+            'min_price': {'type': 'number', 'description': 'Minimum price USD.'},
+            'max_price': {'type': 'number', 'description': 'Maximum price USD.'},
+            'condition': {'type': 'string', 'description': 'Item condition (ebay): new, used, refurbished, parts.'},
+            'sold': {'type': 'boolean', 'description': 'Search sold listings (ebay only). Default: false.'},
+            'pages': {'type': 'integer', 'description': 'Pages to scrape (ebay, 1-10). Default: 1.'},
+            'max_results': {'type': 'integer', 'description': 'Max listings to return. Default: 20.'},
+            'city': {'type': 'string', 'description': 'City name (cl only). Ignored if scope is set.'},
+            'scope': {'type': 'string', 'description': 'Multi-city scope (cl only): local, shipping, or all.'},
+            'category': {'type': 'string', 'description': 'Craigslist category code (cl only): sss, cta, sys, ele.'},
+        },
+        'required': ['platform', 'query'],
+    }
+
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        platform = p.pop('platform', 'ebay')
+
+        handler_cls = _EC_HANDLERS.get(platform)
+        if not handler_cls:
+            return tool_result(error=f"Invalid platform '{platform}'. Use: ebay, amazon, cl")
+
+        return handler_cls().call(json5.dumps(p), **kwargs)
 
 
 # ── Enrichment Pipeline ──────────────────────────────────────────────────────

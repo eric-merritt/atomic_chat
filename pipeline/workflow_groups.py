@@ -31,13 +31,13 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="Web scraping, search, and navigation",
     ),
     "Ecommerce": WorkflowGroup(
-        tools=["ebay_search", "amazon_search", "cl_search", "ec_enrich"],
+        tools=["ec_search", "ec_enrich"],
         tooltip="Product search across eBay, Amazon, and Craigslist",
     ),
     "OnlyFans": WorkflowGroup(
         tools=["of_extract", "of_extract_all",
                "of_scroll_convos", "of_scroll_msgs",
-               "of_save_img", "of_save_vid"],
+               "of_save_media"],
         tooltip="Creator discovery, profiles, and media management",
     ),
     "Torrent": WorkflowGroup(
@@ -93,17 +93,14 @@ TOOL_REF: dict[str, str] = {
     "www_query":           "query page",
     "www_click":           "click element",
     # Ecommerce
-    "ebay_search":         "search eBay listings",
-    "amazon_search":       "search Amazon listings",
-    "cl_search":           "search Craigslist",
+    "ec_search":           "search listings (ebay/amazon/cl)",
     "ec_enrich":           "enrich data",
     # OnlyFans
     "of_extract":          "extract media",
     "of_extract_all":      "extract all",
     "of_scroll_convos":    "scroll conversations",
     "of_scroll_msgs":      "scroll messages",
-    "of_save_img":         "save image",
-    "of_save_vid":         "save video",
+    "of_save_media":       "save media file",
     # Torrent
     "bt_search":           "search torrents",
     "bt_download":         "download torrent",

@@ -4,7 +4,7 @@
 def test_ecommerce_tools_registered():
     from qwen_agent.tools.base import TOOL_REGISTRY
     import tools.ecommerce  # noqa: F401
-    expected = {"ebay_search", "amazon_search", "cl_search", "ec_enrich"}
+    expected = {"ec_search", "ec_enrich"}
     assert expected.issubset(set(TOOL_REGISTRY.keys()))
 
 
