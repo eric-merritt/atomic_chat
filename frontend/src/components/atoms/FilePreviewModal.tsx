@@ -22,7 +22,8 @@ interface Props {
 const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.ico'])
 
 function getExt(path: string): string {
-  return path.slice(path.lastIndexOf('.')).toLowerCase()
+  const i = path.lastIndexOf('.')
+  return i === -1 ? '' : path.slice(i).toLowerCase()
 }
 
 function formatBytes(bytes: number): string {
@@ -120,6 +121,8 @@ export function FilePreviewModal({ path, toolResult, onClose }: Props) {
         </div>
       )
     }
+    if (loading) return <div className="p-4 text-xs text-[var(--text-muted)]">Loading…</div>
+    if (fetchError) return <div className="p-4 text-xs text-[var(--danger)]">Error: {fetchError}</div>
     if (!fileData) return null
     return (
       <div className="p-4 font-mono text-xs text-[var(--text-muted)] space-y-1">
