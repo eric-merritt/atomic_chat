@@ -1,12 +1,11 @@
 // frontend/src/components/molecules/MessageBubble.tsx
-import { useState, useEffect, useRef } from 'react'
+import { useState, useRef } from 'react'
 import type { Message } from '../../atoms/message'
 import { ToolCallBlock } from './ToolCallBlock'
 import { FilePreviewModal } from '../atoms/FilePreviewModal'
 
 interface Props {
   message: Message
-  autoScroll: boolean
 }
 
 const roleClasses: Record<string, string> = {
@@ -15,18 +14,11 @@ const roleClasses: Record<string, string> = {
   error:     'self-center bg-transparent text-[var(--danger)] text-center',
 }
 
-export function MessageBubble({ message, autoScroll }: Props) {
+export function MessageBubble({ message }: Props) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<unknown>(null)
   const bubbleRef = useRef<HTMLDivElement>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (autoScroll && endRef.current) {
-      endRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
-    }
-  }, [message.content, message.toolPairs.length, autoScroll])
 
   const bubbleHeightPx = bubbleRef.current?.clientHeight ?? 400
 
@@ -59,16 +51,14 @@ export function MessageBubble({ message, autoScroll }: Props) {
 
           {message.content}
 
-          {message.role === 'assistant' && (
+          {message.role === 'assistant' && (message.toolPairs.length > 0 || message.content.length > 300) && (
             <button
               onClick={() => setIsExpanded(e => !e)}
-              className="absolute top-2 right-2 text-sm text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+              className="absolute top-2 right-2 text-sm text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer"
             >
               {isExpanded ? '▼' : '▲'}
             </button>
           )}
-
-          <div ref={endRef} />
         </div>
       </div>
 

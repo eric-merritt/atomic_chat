@@ -69,37 +69,39 @@ export function MessageList({ onImageClick }: MessageListProps) {
   }, [messages, visibleDate]);
 
   return (
-    <div ref={scrollRef} onScroll={handleScroll} className="relative overflow-y-auto px-6 pb-5 flex flex-col gap-2 backdrop-blur-sm border border-[var(--accent)] rounded-[14px] m-2">
-      {visibleDate > 0 && (
-        <DateSeparator timestamp={visibleDate} />
-      )}
-      <div className="flex items-center justify-between px-2 py-1">
-        <ConversationTitle />
-        <NewConversationButton />
+    <div className="relative m-2 flex flex-col">
+      <div ref={scrollRef} onScroll={handleScroll} className="overflow-y-auto px-6 pb-5 flex flex-col gap-2 backdrop-blur-sm border border-[var(--accent)] rounded-[14px]">
+        {visibleDate > 0 && (
+          <DateSeparator timestamp={visibleDate} />
+        )}
+        <div className="flex items-center justify-between px-2 py-1">
+          <ConversationTitle />
+          <NewConversationButton />
+        </div>
+        <div className="mt-auto" />
+        {messages.map((msg) => {
+          const align = msg.role === 'user' ? 'right' : 'left';
+          return (
+            <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); }} className="flex flex-col">
+              <MessageBubble message={msg} />
+              {msg.images.map((img, i) => (
+                <ImageThumbnail
+                  key={i}
+                  src={img.src}
+                  filename={img.filename}
+                  sizeKb={img.sizeKb}
+                  onClick={() => onImageClick(img.src, img.filename)}
+                />
+              ))}
+              <Timestamp timestamp={msg.timestamp} align={align} />
+            </div>
+          );
+        })}
+        {streaming && (
+          <ThinkingIndicator label="Working..." elapsed={elapsed} preview="" />
+        )}
+        <div ref={bottomRef} />
       </div>
-      <div className="mt-auto" />
-      {messages.map((msg) => {
-        const align = msg.role === 'user' ? 'right' : 'left';
-        return (
-          <div key={msg.id} ref={(el) => { if (el) msgRefs.current.set(msg.id, el); }} className="flex flex-col">
-            <MessageBubble message={msg} autoScroll={!userScrolled} />
-            {msg.images.map((img, i) => (
-              <ImageThumbnail
-                key={i}
-                src={img.src}
-                filename={img.filename}
-                sizeKb={img.sizeKb}
-                onClick={() => onImageClick(img.src, img.filename)}
-              />
-            ))}
-            <Timestamp timestamp={msg.timestamp} align={align} />
-          </div>
-        );
-      })}
-      {streaming && (
-        <ThinkingIndicator label="Working..." elapsed={elapsed} preview="" />
-      )}
-      <div ref={bottomRef} />
 
       {userScrolled && (
         <button
