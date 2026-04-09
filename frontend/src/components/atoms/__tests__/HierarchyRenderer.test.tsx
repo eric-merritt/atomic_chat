@@ -30,5 +30,6 @@ describe('HierarchyRenderer', () => {
     expect(link.tagName).toBe('A')
     expect(link).toHaveAttribute('href', 'https://stackoverflow.com')
     expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
   })
 })
