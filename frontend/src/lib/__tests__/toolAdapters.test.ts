@@ -67,6 +67,35 @@ test('www_get summarize', () => {
   expect(a.summarize({}, data)).toBe("12 elements matching '.price'")
 })
 
+test('fs_tree toHierarchy parses lsd tree output into nodes', () => {
+  const a = getAdapter('fs_tree')!
+  // lsd --tree output format: 4-char prefix per depth level using box-drawing chars
+  // Directories are marked with trailing slash
+  const tree = [
+    'src/',
+    '├── components/',
+    '│   └── atoms/',
+    '│       └── Button.tsx',
+    '└── hooks/',
+    '    └── useStream.ts',
+  ].join('\n')
+  const nodes = a.toHierarchy({}, { path: '/home/ermer/project', tree })
+  // Root dir
+  expect(nodes[0]).toMatchObject({ label: 'src', depth: 0, isFile: false })
+  // components dir
+  expect(nodes[1]).toMatchObject({ label: 'components', depth: 1, isFile: false })
+  // atoms dir
+  expect(nodes[2]).toMatchObject({ label: 'atoms', depth: 2, isFile: false })
+  // Button.tsx file — isFile true, href reconstructed from root + path
+  expect(nodes[3]).toMatchObject({ label: 'Button.tsx', depth: 3, isFile: true })
+  expect(nodes[3].href).toContain('Button.tsx')
+  // hooks dir
+  expect(nodes[4]).toMatchObject({ label: 'hooks', depth: 1, isFile: false })
+  // useStream.ts file
+  expect(nodes[5]).toMatchObject({ label: 'useStream.ts', depth: 2, isFile: true })
+  expect(nodes[5].href).toContain('useStream.ts')
+})
+
 test('getAdapter returns null for unknown tool', () => {
   expect(getAdapter('unknown_tool')).toBeNull()
 })
