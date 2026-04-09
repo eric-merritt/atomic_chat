@@ -6,11 +6,11 @@ import { ThinkingIndicator } from '../ThinkingIndicator';
 import type { Message } from '../../../atoms/message';
 
 const userMsg: Message = {
-  id: '1', role: 'user', content: 'Hello', images: [], toolCalls: [], timestamp: 1,
+  id: '1', role: 'user', content: 'Hello', images: [], toolCalls: [], toolPairs: [], timestamp: 1,
 };
 
 const assistantMsg: Message = {
-  id: '2', role: 'assistant', content: 'Hi there', images: [], toolCalls: [], timestamp: 2,
+  id: '2', role: 'assistant', content: 'Hi there', images: [], toolCalls: [], toolPairs: [], timestamp: 2,
 };
 
 describe('MessageBubble', () => {
