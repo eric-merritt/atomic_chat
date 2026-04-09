@@ -48,7 +48,7 @@ export function ToolCallBlock({ pair, onFileClick, bubbleHeightPx }: Props) {
     >
       <button
         onClick={() => nodes.length > 0 && setExpanded(e => !e)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs font-mono text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+        className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs font-mono text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors ${nodes.length > 0 ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <span className="text-[var(--accent)]">✓</span>
         <span className="font-medium text-[var(--accent)] opacity-70">{pair.tool}</span>
