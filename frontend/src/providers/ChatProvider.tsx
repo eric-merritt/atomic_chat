@@ -152,17 +152,13 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setMessages(prev => {
               const msgs = [...prev]
               const last = msgs[msgs.length - 1]
-              if (!last || last.role !== 'assistant') return prev
-              return [
-                ...msgs.slice(0, -1),
-                {
-                  ...last,
-                  toolPairs: [
-                    ...last.toolPairs,
-                    { tool: ev.tool, params, result: null, status: 'streaming' as const },
-                  ],
-                },
-              ]
+              const pair = { tool: ev.tool, params, result: null, status: 'streaming' as const }
+              if (last?.role === 'assistant') {
+                return [...msgs.slice(0, -1), { ...last, toolPairs: [...last.toolPairs, pair] }]
+              }
+              // Tool called before any token — create assistant message now
+              if (!assistantCreated) assistantCreated = true
+              return [...msgs, { ...createMessage('assistant', ''), toolPairs: [pair] }]
             })
             // Keep existing toolActivities for backward compat
             setToolActivities(prev => [...prev, {
@@ -183,7 +179,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               const idx = [...pairs.keys()]
                 .filter(i => pairs[i].tool === ev.tool && pairs[i].status === 'streaming')
                 .at(-1)
-              if (idx === undefined) return prev
+              if (idx === undefined) {
+                console.warn('[ChatProvider] tool_result for', ev.tool, 'has no matching streaming pair')
+                return prev
+              }
               pairs[idx] = { ...pairs[idx], result, status: 'done' }
               return [...msgs.slice(0, -1), { ...last, toolPairs: pairs }]
             })
