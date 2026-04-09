@@ -52,6 +52,10 @@ def test_read_traversal_rejected(client):
     r = client.get('/api/files/read?path=/etc/../etc/passwd')
     assert r.status_code == 403
 
+def test_read_direct_system_path_rejected(client):
+    r = client.get('/api/files/read?path=/etc/passwd')
+    assert r.status_code == 403
+
 def test_serve_image(client, tmp_path):
     img = tmp_path / 'photo.png'
     img.write_bytes(b'\x89PNG\r\n\x1a\n')
