@@ -36,7 +36,7 @@ def _safe_path(path: str) -> str | None:
     if ".." in parts:
         return None
     resolved = os.path.realpath(os.path.expanduser(path))
-    if not any(resolved.startswith(root) for root in _ALLOWED_ROOTS):
+    if not any(resolved == root or resolved.startswith(root + os.sep) for root in _ALLOWED_ROOTS):
         return None
     return resolved
 
