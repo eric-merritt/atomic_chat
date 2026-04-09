@@ -2,13 +2,7 @@
 import { useState } from 'react'
 import { HierarchyRenderer } from '../atoms/HierarchyRenderer'
 import { getAdapter } from '../../lib/toolAdapters'
-
-export interface ToolCallPair {
-  tool: string
-  params: unknown        // parsed from tool_call input JSON
-  result: unknown | null // null while streaming
-  status: 'streaming' | 'done'
-}
+import type { ToolCallPair } from '../../atoms/message'
 
 interface Props {
   pair: ToolCallPair

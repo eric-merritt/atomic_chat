@@ -66,6 +66,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           content: m.content,
           images: m.images || [],
           toolCalls: m.tool_calls || [],
+          toolPairs: [],
           timestamp: new Date(m.created_at).getTime(),
         })
       );
@@ -80,8 +81,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const sendMessage = useCallback((text: string) => {
-    if (streamingRef.current || !currentModel) return;
-    const userMsg = createMessage('user', text);
+    if (!currentModel) return;
+    let actualText = text;
+    if (streamingRef.current) {
+      stop();
+      cancelChat();
+      setStreaming(false);
+      streamingRef.current = false;
+      if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+      actualText = `[User interrupted previous response to add the following context/task:]\n${text}`;
+    }
+    const userMsg = createMessage('user', actualText);
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     setToolActivities([]);
@@ -103,7 +113,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       }
     }, 10_000);
 
-    start(text, {
+    start(actualText, {
       onEvent: (ev) => {
         lastEventRef.current = Date.now();
         switch (ev.type) {
@@ -135,16 +145,53 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               return prev;
             });
             break;
-          case 'tool_call':
-            setToolActivities((prev) => [...prev, {
-              type: 'call', tool: ev.tool, content: ev.input, timestamp: Date.now(),
-            }]);
-            break;
-          case 'tool_result':
-            setToolActivities((prev) => [...prev, {
-              type: 'result', tool: ev.tool, content: ev.output, timestamp: Date.now(),
-            }]);
-            break;
+          case 'tool_call': {
+            let params: unknown = ev.input
+            try { params = JSON.parse(ev.input) } catch { /* keep raw string */ }
+
+            setMessages(prev => {
+              const msgs = [...prev]
+              const last = msgs[msgs.length - 1]
+              if (!last || last.role !== 'assistant') return prev
+              return [
+                ...msgs.slice(0, -1),
+                {
+                  ...last,
+                  toolPairs: [
+                    ...last.toolPairs,
+                    { tool: ev.tool, params, result: null, status: 'streaming' as const },
+                  ],
+                },
+              ]
+            })
+            // Keep existing toolActivities for backward compat
+            setToolActivities(prev => [...prev, {
+              type: 'call' as const, tool: ev.tool, content: ev.input, timestamp: Date.now(),
+            }])
+            break
+          }
+          case 'tool_result': {
+            let result: unknown = ev.output
+            try { result = JSON.parse(ev.output) } catch { /* keep raw string */ }
+
+            setMessages(prev => {
+              const msgs = [...prev]
+              const last = msgs[msgs.length - 1]
+              if (!last || last.role !== 'assistant') return prev
+              const pairs = [...last.toolPairs]
+              // Find the last streaming entry for this tool
+              const idx = [...pairs.keys()]
+                .filter(i => pairs[i].tool === ev.tool && pairs[i].status === 'streaming')
+                .at(-1)
+              if (idx === undefined) return prev
+              pairs[idx] = { ...pairs[idx], result, status: 'done' }
+              return [...msgs.slice(0, -1), { ...last, toolPairs: pairs }]
+            })
+            setToolActivities(prev => [...prev, {
+              type: 'result' as const, tool: ev.tool, content: ev.output, timestamp: Date.now(),
+            }])
+            break
+          }
           case 'recommendation':
             setRecommendation({ groups: ev.groups, reason: ev.reason });
             break;
@@ -165,7 +212,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
       },
     }, conversationId);
-  }, [start, currentModel, conversationId]);
+  }, [start, stop, currentModel, conversationId]);
 
   const cancelStream = useCallback(() => {
     stop();
