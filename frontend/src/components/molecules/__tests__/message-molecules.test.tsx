@@ -15,14 +15,14 @@ const assistantMsg: Message = {
 
 describe('MessageBubble', () => {
   it('renders user message right-aligned', () => {
-    const { container } = render(<MessageBubble message={userMsg} />);
-    expect(container.firstChild).toHaveClass('self-end');
+    render(<MessageBubble message={userMsg} autoScroll={false} />);
+    expect(screen.getByText('Hello').closest('.self-end')).toBeInTheDocument();
     expect(screen.getByText('Hello')).toBeInTheDocument();
   });
 
   it('renders assistant message left-aligned', () => {
-    const { container } = render(<MessageBubble message={assistantMsg} />);
-    expect(container.firstChild).toHaveClass('self-start');
+    render(<MessageBubble message={assistantMsg} autoScroll={false} />);
+    expect(screen.getByText('Hi there').closest('.self-start')).toBeInTheDocument();
   });
 });
 

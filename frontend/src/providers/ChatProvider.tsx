@@ -6,7 +6,12 @@ import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
-import type { ToolActivity } from '../components/atoms/ToolCallPanel';
+export interface ToolActivity {
+  type: 'call' | 'result';
+  tool: string;
+  content: string;
+  timestamp: number;
+}
 
 interface Recommendation {
   groups: string[];
