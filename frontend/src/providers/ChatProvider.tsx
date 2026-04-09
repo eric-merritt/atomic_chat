@@ -6,13 +6,6 @@ import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
-export interface ToolActivity {
-  type: 'call' | 'result';
-  tool: string;
-  content: string;
-  timestamp: number;
-}
-
 interface Recommendation {
   groups: string[];
   reason: string;
@@ -28,7 +21,6 @@ interface ChatContextValue {
   conversationId: string | null;
   loadConversation: (id: string) => Promise<void>;
   newConversation: () => void;
-  toolActivities: ToolActivity[];
   recommendation: Recommendation | null;
   acceptRecommendation: () => void;
   dismissRecommendation: () => void;
@@ -40,7 +32,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [toolActivities, setToolActivities] = useState<ToolActivity[]>([]);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const streamingRef = useRef(false);
   const lastEventRef = useRef(0);
@@ -99,7 +90,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const userMsg = createMessage('user', actualText);
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
-    setToolActivities([]);
     streamingRef.current = true;
 
     let assistantCreated = false;
@@ -165,10 +155,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               if (!assistantCreated) assistantCreated = true
               return [...msgs, { ...createMessage('assistant', ''), toolPairs: [pair] }]
             })
-            // Keep existing toolActivities for backward compat
-            setToolActivities(prev => [...prev, {
-              type: 'call' as const, tool: ev.tool, content: ev.input, timestamp: Date.now(),
-            }])
             break
           }
           case 'tool_result': {
@@ -191,9 +177,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               pairs[idx] = { ...pairs[idx], result, status: 'done' }
               return [...msgs.slice(0, -1), { ...last, toolPairs: pairs }]
             })
-            setToolActivities(prev => [...prev, {
-              type: 'result' as const, tool: ev.tool, content: ev.output, timestamp: Date.now(),
-            }])
             break
           }
           case 'recommendation':
@@ -247,7 +230,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     <ChatContext.Provider value={{
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
-      toolActivities, recommendation, acceptRecommendation, dismissRecommendation,
+      recommendation, acceptRecommendation, dismissRecommendation,
     }}>
       {children}
     </ChatContext.Provider>

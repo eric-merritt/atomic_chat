@@ -1,5 +1,5 @@
 // frontend/src/components/molecules/MessageBubble.tsx
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import type { Message } from '../../atoms/message'
 import { ToolCallBlock } from './ToolCallBlock'
 import { FilePreviewModal } from '../atoms/FilePreviewModal'
@@ -18,15 +18,11 @@ export function MessageBubble({ message }: Props) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<unknown>(null)
-  const bubbleRef = useRef<HTMLDivElement>(null)
-
-  const bubbleHeightPx = bubbleRef.current?.clientHeight ?? 400
 
   return (
     <>
       <div className="px-4 py-3">
         <div
-          ref={bubbleRef}
           className={[
             'overflow-y-auto max-w-[75%] px-4 py-3 rounded-xl text-sm leading-relaxed',
             'whitespace-pre-wrap break-words font-mono font-light',
@@ -41,7 +37,7 @@ export function MessageBubble({ message }: Props) {
             <ToolCallBlock
               key={i}
               pair={pair}
-              bubbleHeightPx={bubbleHeightPx}
+              bubbleHeightPx={400}
               onFileClick={(path) => {
                 setPreviewPath(path)
                 setPreviewResult(pair.result)

@@ -1,4 +1,7 @@
 import os
+import pathlib
+import tempfile
+import shutil
 import pytest
 from unittest.mock import patch, MagicMock
 from main import app, register_auth_bps
@@ -21,16 +24,23 @@ def client():
         with app.test_client() as c:
             yield c
 
+@pytest.fixture
+def home_tmp():
+    """Temp dir under home so it passes the _ALLOWED_ROOTS check."""
+    d = tempfile.mkdtemp(dir=os.path.expanduser("~"))
+    yield pathlib.Path(d)
+    shutil.rmtree(d, ignore_errors=True)
+
 def test_read_missing_path(client):
     r = client.get('/api/files/read')
     assert r.status_code == 400
 
-def test_read_nonexistent_file(client, tmp_path):
-    r = client.get(f'/api/files/read?path={tmp_path}/nope.py')
+def test_read_nonexistent_file(client, home_tmp):
+    r = client.get(f'/api/files/read?path={home_tmp}/nope.py')
     assert r.status_code == 404
 
-def test_read_python_file(client, tmp_path):
-    f = tmp_path / 'hello.py'
+def test_read_python_file(client, home_tmp):
+    f = home_tmp / 'hello.py'
     f.write_text('x = 1\n' * 5)
     r = client.get(f'/api/files/read?path={f}')
     assert r.status_code == 200
@@ -40,8 +50,8 @@ def test_read_python_file(client, tmp_path):
     assert data['truncated'] is False
     assert data['lines_returned'] == 5
 
-def test_read_truncates_at_500_lines(client, tmp_path):
-    f = tmp_path / 'big.py'
+def test_read_truncates_at_500_lines(client, home_tmp):
+    f = home_tmp / 'big.py'
     f.write_text('x = 1\n' * 600)
     r = client.get(f'/api/files/read?path={f}')
     data = r.get_json()
@@ -56,8 +66,8 @@ def test_read_direct_system_path_rejected(client):
     r = client.get('/api/files/read?path=/etc/passwd')
     assert r.status_code == 403
 
-def test_serve_image(client, tmp_path):
-    img = tmp_path / 'photo.png'
+def test_serve_image(client, home_tmp):
+    img = home_tmp / 'photo.png'
     img.write_bytes(b'\x89PNG\r\n\x1a\n')
     r = client.get(f'/api/files/serve?path={img}')
     assert r.status_code == 200

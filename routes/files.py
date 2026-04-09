@@ -8,7 +8,6 @@ files_bp = Blueprint("files", __name__, url_prefix="/api/files")
 
 _ALLOWED_ROOTS = (
     os.path.realpath(os.path.expanduser("~")),
-    "/tmp",
 )
 
 LANGUAGE_MAP = {
