@@ -6,6 +6,11 @@ from flask_login import login_required
 
 files_bp = Blueprint("files", __name__, url_prefix="/api/files")
 
+_ALLOWED_ROOTS = (
+    os.path.realpath(os.path.expanduser("~")),
+    "/tmp",
+)
+
 LANGUAGE_MAP = {
     '.py': 'python', '.ts': 'typescript', '.tsx': 'typescript',
     '.js': 'javascript', '.jsx': 'javascript', '.json': 'json',
@@ -24,22 +29,25 @@ MAX_LINES = 500
 
 
 def _safe_path(path: str) -> str | None:
-    """Resolve path and reject traversal attempts."""
-    if not path:
+    """Resolve path, reject traversal attempts, and enforce allowed roots."""
+    if not path or not path.strip():
         return None
-    parts = path.replace('\\', '/').split('/')
-    if '..' in parts:
+    parts = path.replace("\\", "/").split("/")
+    if ".." in parts:
         return None
-    return os.path.realpath(os.path.expanduser(path))
+    resolved = os.path.realpath(os.path.expanduser(path))
+    if not any(resolved.startswith(root) for root in _ALLOWED_ROOTS):
+        return None
+    return resolved
 
 
 @files_bp.route("/read")
 @login_required
 def read_file():
     path = request.args.get("path", "")
-    resolved = _safe_path(path)
     if not path:
         return jsonify({"error": "path required"}), 400
+    resolved = _safe_path(path)
     if not resolved:
         return jsonify({"error": "invalid path"}), 403
     if not os.path.isfile(resolved):
