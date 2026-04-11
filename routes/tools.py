@@ -4,7 +4,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import login_required, current_user
 
 from auth.db import get_db
-from workflow_groups import WORKFLOW_GROUPS
+from pipeline.workflow_groups import WORKFLOW_GROUPS
 
 tools_bp = Blueprint("tools", __name__, url_prefix="/api")
 

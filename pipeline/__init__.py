@@ -1,1 +1,1 @@
-"""Recommendation pipeline — message classification, task extraction, tool curation."""
+"""Pipeline — workflow group registry and tool reference data."""

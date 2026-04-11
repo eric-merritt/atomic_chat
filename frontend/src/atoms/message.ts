@@ -18,6 +18,7 @@ export interface ToolCallPair {
   params: unknown        // parsed from tool_call input JSON string
   result: unknown | null // null until tool_result arrives
   status: 'streaming' | 'done'
+  contentOffset: number  // char position in message.content when this tool was called
 }
 
 export interface Message {

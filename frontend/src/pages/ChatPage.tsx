@@ -45,8 +45,6 @@ export function ChatPage() {
     }
   })();
 
-  const showChat = layout !== 'workspace-inputbar';
-
   return (
     <div className="h-screen flex flex-col bg-[var(--bg-base)]">
       <ParticleCanvas theme={theme.id} />
@@ -87,10 +85,10 @@ export function ChatPage() {
         )}
 
         {/* Bottom row: spans all columns */}
-        <div style={{ gridColumn: '1 / -1' }} className="flex items-stretch">
+        <div style={{ gridColumn: '1 / -1' }} className="flex items-stretch shrink-0">
           <ErrorBoundary>
-            <div className="flex items-stretch m-2">
-              <TaskList sidebarExpanded={sidebarExpanded} />
+            <div className="flex items-stretch p-2 transition-[width] duration-300 ease-in-out" style={{ width: sidebarWidth }}>
+              <TaskList sidebarExpanded={sidebarExpanded} style={{}} />
             </div>
           </ErrorBoundary>
           <ErrorBoundary>

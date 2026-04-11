@@ -4,8 +4,9 @@ import os
 import re
 import json
 import time
-import urllib.request
+import uuid
 import urllib.parse
+from threading import Lock
 
 import bs4 as beautifulsoup
 import json5
@@ -13,6 +14,25 @@ import requests
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from tools._output import tool_result, retry
+
+
+def _strip_html_noise(html: str) -> str:
+    """Strip non-structural noise from HTML for LLM consumption.
+
+    Removes: <head>, <script>, <style>, <svg>, <noscript>, comments,
+    inline style/onclick attrs, data- attrs. Keeps structural <body> content.
+    """
+    cleaned = re.sub(r'<head\b[^>]*>[\s\S]*?</head>', '', html, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<(script|style|svg|noscript)\b[^>]*>[\s\S]*?</\1>', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r'<!--[\s\S]*?-->', '', cleaned)
+    cleaned = re.sub(r'\s+style="[^"]*"', '', cleaned)
+    cleaned = re.sub(r"\s+style='[^']*'", '', cleaned)
+    cleaned = re.sub(r'\s+on\w+="[^"]*"', '', cleaned)
+    cleaned = re.sub(r'\s+data-\w[\w-]*="[^"]*"', '', cleaned)
+    cleaned = re.sub(r'\n\s*\n', '\n', cleaned)
+    cleaned = re.sub(r'[ \t]+', ' ', cleaned)
+    return cleaned.strip()
+
 
 
 # ── Shared session for cookie persistence across tool calls ──────────────────
@@ -76,6 +96,90 @@ def _get_or_create_browser(geckodriver_path: str = ""):
     return _browser_driver
 
 
+# ── Result Store ────────────────────────────────────────────────────────────
+# Stores fetched page content server-side. Agent receives a ref handle and
+# queries into it; the raw content never enters the LLM context directly.
+
+_result_store: dict[str, dict] = {}
+_store_lock = Lock()
+_STORE_TTL = 3600  # 1 hour
+
+
+def _store_page(url: str, content: str) -> str:
+    """Store stripped page content and return a short ref ID."""
+    ref = uuid.uuid4().hex[:8]
+    now = time.time()
+    with _store_lock:
+        expired = [k for k, v in _result_store.items() if now - v['ts'] > _STORE_TTL]
+        for k in expired:
+            del _result_store[k]
+        _result_store[ref] = {'url': url, 'content': content, 'ts': now}
+    return ref
+
+
+def _load_page(ref: str) -> dict | None:
+    with _store_lock:
+        return _result_store.get(ref)
+
+
+def _page_summary(content: str, url: str) -> dict:
+    """Structural scan of the page to give the agent enough to pick selectors.
+
+    Returns title, headings, a sample of link texts + their CSS paths,
+    and notable class/id patterns seen on the page.
+    """
+    try:
+        soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
+
+        # Title
+        title = soup.title.string.strip() if soup.title and soup.title.string else ''
+
+        # Top headings (h1–h3, first 5)
+        headings = [
+            h.get_text(strip=True)
+            for h in soup.find_all(['h1', 'h2', 'h3'])[:5]
+            if h.get_text(strip=True)
+        ]
+
+        # Sample links — skip short nav links, prioritize substantive content links
+        link_samples = []
+        for a in soup.find_all('a', href=True):
+            text = a.get_text(strip=True)
+            if not text or len(text) < 15:
+                continue
+            parts = []
+            for el in [a.parent, a]:
+                if el and el.name:
+                    cls = ' '.join(el.get('class', []))[:40]
+                    eid = el.get('id', '')
+                    if eid:
+                        parts.append(f'#{eid}')
+                    elif cls:
+                        parts.append(f'{el.name}.{cls.split()[0]}')
+            selector_hint = ' > '.join(parts) if parts else a.name
+            link_samples.append({'text': text[:80], 'selector_hint': selector_hint})
+            if len(link_samples) >= 10:
+                break
+
+        # Notable class names on repeated elements (good selector candidates)
+        from collections import Counter
+        class_counts = Counter()
+        for el in soup.find_all(True):
+            for cls in el.get('class', []):
+                class_counts[cls] += 1
+        common_classes = [f'.{c}' for c, n in class_counts.most_common(12) if n > 2]
+
+        return {
+            'title': title or url,
+            'size_chars': len(content),
+            'headings': headings,
+            'link_samples': link_samples,
+            'common_classes': common_classes,
+        }
+    except Exception:
+        return {'title': url, 'size_chars': len(content)}
+
+
 # ── Cookie Management ───────────────────────────────────────────────────────
 
 # Domain → list of cookie dicts, shared across all web tools
@@ -84,7 +188,7 @@ _stored_cookies: dict[str, list[dict[str, str]]] = {}
 
 @register_tool('www_cookies')
 class SetCookiesTool(BaseTool):
-    description = 'Set cookies for a domain. All subsequent www_fetch, www_scrape, and www_browse calls to that domain will include them automatically.'
+    description = 'Set cookies for a domain. All subsequent www_fetch calls to that domain will include them automatically.'
     parameters = {
         'type': 'object',
         'properties': {
@@ -180,39 +284,35 @@ class WebSearchTool(BaseTool):
         if not query or not query.strip():
             return tool_result(error="query must be a non-empty string")
 
-        encoded = urllib.parse.quote_plus(query)
-        url = f"https://api.duckduckgo.com/?q={encoded}&format=json&no_html=1&skip_disambig=1"
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "AgentTooling/1.0"})
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+            from ddgs import DDGS
+            with DDGS() as ddgs:
+                hits = list(ddgs.text(query, max_results=num_results))
         except Exception as e:
             return tool_result(error=f"DuckDuckGo search failed: {e}")
 
-        results = []
-        abstract = data.get("AbstractText", "")
-        abstract_url = data.get("AbstractURL", "")
-        for topic in data.get("RelatedTopics", [])[:num_results]:
-            if isinstance(topic, dict) and "Text" in topic:
-                results.append({"text": topic["Text"], "url": topic.get("FirstURL", "")})
-
-        return tool_result(data={
-            "abstract": abstract,
-            "abstract_url": abstract_url,
-            "results": results,
-        })
+        results = [{"text": h.get("body", ""), "url": h.get("href", ""), "title": h.get("title", "")} for h in hits]
+        return tool_result(data={"query": query, "results": results})
 
 
-@register_tool('www_fetch')
-class FetchUrlTool(BaseTool):
-    description = 'Fetch a URL and return plain text with all HTML tags stripped.'
+@register_tool('www_extract')
+class ExtractUrlTool(BaseTool):
+    description = (
+        'Fetch a URL and extract content in one call. '
+        'Returns page structure (title, headings, link_samples, common_classes) when no selector is given — use that to choose a selector, then call again with selector to get content. '
+        'Set js=true for pages that require JavaScript.'
+    )
     parameters = {
         'type': 'object',
         'properties': {
             'url': {'type': 'string', 'description': 'Full URL to fetch. Must start with http:// or https://.'},
-            'max_chars': {'type': 'integer', 'description': 'Maximum characters to return. Range: 100-50000. Default: 5000.'},
-            'cookies': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional list of cookie strings in "name=value" format.'},
-            'domain': {'type': 'string', 'description': 'Optional cookie domain (e.g. ".example.com"). Auto-derived from url if omitted.'},
+            'selector': {'type': 'string', 'description': 'CSS selector to extract (e.g. "span.titleline", "tr.athing", "a.storylink"). Omit to get page structure summary first.'},
+            'extract': {'type': 'string', 'description': 'What to extract: "text" (default), "html", or "attr:<name>" (e.g. attr:href).'},
+            'max_results': {'type': 'integer', 'description': 'Max elements to return. Default: 50.'},
+            'js': {'type': 'boolean', 'description': 'Use headless Firefox to execute JavaScript. Default: false.'},
+            'wait_seconds': {'type': 'integer', 'description': 'Seconds to wait after JS load. Default: 3.'},
+            'cookies': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional cookies in "name=value" format.'},
+            'domain': {'type': 'string', 'description': 'Optional cookie domain.'},
         },
         'required': ['url'],
     }
@@ -221,7 +321,11 @@ class FetchUrlTool(BaseTool):
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         url = p.get('url', '')
-        max_chars = p.get('max_chars', 5000)
+        selector = p.get('selector', '')
+        extract = p.get('extract', 'text')
+        max_results = p.get('max_results', 50)
+        js = p.get('js', False)
+        wait_seconds = max(1, min(30, p.get('wait_seconds', 3)))
         cookies = p.get('cookies', None)
         domain = p.get('domain', None)
 
@@ -229,146 +333,104 @@ class FetchUrlTool(BaseTool):
         if err:
             return tool_result(error=err)
 
+        # Fetch
         try:
-            _apply_cookies(url, cookies, domain)
-            resp = _web_session.get(url, timeout=15)
-            resp.raise_for_status()
-            content_type = resp.headers.get("Content-Type", "")
-            raw = resp.text
+            if js:
+                driver = _get_or_create_browser()
+                if cookies:
+                    from urllib.parse import urlparse as _urlparse
+                    parsed = _urlparse(url)
+                    driver.get(f"{parsed.scheme}://{parsed.netloc}")
+                    time.sleep(1)
+                    for c in (cookies or []):
+                        if '=' in c:
+                            name, _, value = c.partition('=')
+                            driver.add_cookie({'name': name.strip(), 'value': value.strip(), 'domain': parsed.netloc})
+                driver.get(url)
+                time.sleep(wait_seconds)
+                raw_html = driver.page_source
+            else:
+                _apply_cookies(url, cookies, domain)
+                r = _web_session.get(url, timeout=15)
+                r.raise_for_status()
+                raw_html = r.text
         except Exception as e:
             return tool_result(error=f"Failed to fetch {url}: {e}")
 
-        if "html" in content_type.lower() or raw.strip().startswith("<"):
-            raw = re.sub(r"<script[^>]*>.*?</script>", "", raw, flags=re.DOTALL | re.IGNORECASE)
-            raw = re.sub(r"<style[^>]*>.*?</style>", "", raw, flags=re.DOTALL | re.IGNORECASE)
-            raw = re.sub(r"<[^>]+>", " ", raw)
-            raw = re.sub(r"\s+", " ", raw).strip()
+        content = _strip_html_noise(raw_html)
+        _store_page(url, content)  # cache for potential www_find_dl use
 
-        truncated = len(raw) > max_chars
-        if truncated:
-            raw = raw[:max_chars]
+        # No selector — return structure summary so agent can choose one
+        if not selector:
+            summary = _page_summary(content, url)
+            return tool_result(data={'url': url, **summary,
+                'note': 'No selector provided. Use link_samples selector_hints or common_classes to pick one, then call www_extract again with selector.'})
 
-        return tool_result(data={"url": url, "content": raw, "truncated": truncated})
-
-
-@register_tool('www_scrape')
-class WebscrapeTool(BaseTool):
-    description = 'Fetch a URL via HTTP and return raw HTML. Does NOT execute JavaScript.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'url': {'type': 'string', 'description': 'Full URL to fetch. Must start with http:// or https://.'},
-            'cookies': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional list of cookie strings in "name=value" format.'},
-            'domain': {'type': 'string', 'description': 'Optional cookie domain (e.g. ".example.com"). Auto-derived from url if omitted.'},
-        },
-        'required': ['url'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        url = p.get('url', '')
-        cookies = p.get('cookies', None)
-        domain = p.get('domain', None)
-
-        err = _validate_url(url)
-        if err:
-            return tool_result(error=err)
-
+        # Extract with selector
         try:
-            _apply_cookies(url, cookies, domain)
-            r = _web_session.get(url, timeout=15)
-            r.raise_for_status()
+            soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
+            elements = soup.select(selector)[:max_results]
         except Exception as e:
-            return tool_result(error=f"Failed to fetch {url}: {e}")
+            return tool_result(error=f"CSS selector failed: {e}")
 
-        return tool_result(data={"url": url, "html": r.text})
+        if not elements:
+            summary = _page_summary(content, url)
+            return tool_result(data={'url': url, 'selector': selector, 'count': 0, 'results': [],
+                'hint': 'No elements matched. Try one of these: ' + ', '.join(summary.get('common_classes', [])[:6])})
 
+        if extract == 'text':
+            results = [el.get_text(separator=' ', strip=True) for el in elements]
+        elif extract == 'html':
+            results = [str(el) for el in elements]
+        elif extract.startswith('attr:'):
+            attr = extract[5:]
+            results = [el.get(attr, '') for el in elements]
+        else:
+            return tool_result(error=f"Unknown extract mode '{extract}'. Use text, html, or attr:<name>.")
 
-@register_tool('www_find_all')
-class FindAllTool(BaseTool):
-    description = 'Parse HTML and find all elements matching a CSS selector or tag name.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'html': {'type': 'string', 'description': 'Raw HTML string to parse.'},
-            'target': {'type': 'string', 'description': 'CSS selector or tag name (e.g. "a", "img.lazy-loaded", "div.card > a", "#main").'},
-        },
-        'required': ['html', 'target'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        html = p.get('html', '')
-        target = p.get('target', '')
-
-        if not html or not html.strip():
-            return tool_result(error="html must be a non-empty string")
-        if not target or not target.strip():
-            return tool_result(error="target must be a non-empty CSS selector or tag name")
-
-        try:
-            soup = beautifulsoup.BeautifulSoup(html, "html.parser")
-            # Use CSS select — works for both selectors ("img.foo") and plain tags ("img")
-            elements = soup.select(target)
-            element_strings = [str(el) for el in elements]
-        except Exception as e:
-            return tool_result(error=f"HTML parsing failed: {e}")
-
-        return tool_result(data={
-            "target": target,
-            "count": len(element_strings),
-            "elements": element_strings,
-        })
+        return tool_result(data={'url': url, 'selector': selector, 'count': len(results), 'results': results})
 
 
 @register_tool('www_find_dl')
 class FindDownloadLinkTool(BaseTool):
-    description = 'Parse HTML for media download links (video, image, audio sources).'
+    description = 'Find media download links (video, image, audio sources) in a page by URL.'
     parameters = {
         'type': 'object',
         'properties': {
-            'html': {'type': 'string', 'description': 'Raw HTML string to parse. If empty, url must be provided.'},
-            'url': {'type': 'string', 'description': 'URL to fetch HTML from. Only used if html is empty.'},
+            'url': {'type': 'string', 'description': 'URL of the page to search for media links.'},
         },
-        'required': [],
+        'required': ['url'],
     }
 
     @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        html = p.get('html', '')
         url = p.get('url', '')
 
-        if not html and not url:
-            return tool_result(error="Provide either html or url. Both cannot be empty.")
-
-        if not html and url:
-            err = _validate_url(url)
-            if err:
-                return tool_result(error=err)
-            try:
-                r = requests.get(url, timeout=15, headers={"User-Agent": "AgentTooling/1.0"})
-                r.raise_for_status()
-                html = r.text
-            except Exception as e:
-                return tool_result(error=f"Failed to fetch {url}: {e}")
+        err = _validate_url(url)
+        if err:
+            return tool_result(error=err)
 
         try:
-            soup = beautifulsoup.BeautifulSoup(html, "html.parser")
+            r = _web_session.get(url, timeout=15)
+            r.raise_for_status()
+            content = _strip_html_noise(r.text)
+        except Exception as e:
+            return tool_result(error=f"Failed to fetch {url}: {e}")
+
+        try:
+            soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
         except Exception as e:
             return tool_result(error=f"HTML parsing failed: {e}")
 
-        media_tags = ["video", "source", "img", "audio"]
         links = []
-        for tag_name in media_tags:
+        for tag_name in ('video', 'source', 'img', 'audio'):
             for el in soup.find_all(tag_name):
-                src = el.get("src") or el.get("data-src") or ""
+                src = el.get('src') or el.get('data-src') or ''
                 if src:
-                    links.append({"tag": tag_name, "src": src})
+                    links.append({'tag': tag_name, 'src': src})
 
-        return tool_result(data={"links": links})
+        return tool_result(data={'url': url, 'links': links})
 
 
 @register_tool('www_find_routes')
@@ -411,63 +473,6 @@ class FindAllowedRoutesTool(BaseTool):
 
         return tool_result(data={"url": url, "allowed": allowed})
 
-
-@register_tool('www_browse')
-class BrowserFetchTool(BaseTool):
-    description = 'Fetch a URL using a headless Firefox browser that executes JavaScript and returns the fully rendered HTML.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'url': {'type': 'string', 'description': 'Full URL to fetch. Must start with http:// or https://.'},
-            'wait_seconds': {'type': 'integer', 'description': 'Seconds to wait after page load for JS to execute. Range: 1-30. Default: 3.'},
-            'cookies': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional list of cookie strings in "name=value" format.'},
-        },
-        'required': ['url'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        url = p.get('url', '')
-        wait_seconds = p.get('wait_seconds', 3)
-        cookies = p.get('cookies', None)
-
-        err = _validate_url(url)
-        if err:
-            return tool_result(error=err)
-
-        wait_seconds = max(1, min(30, wait_seconds))
-
-        try:
-            driver = _get_or_create_browser()
-
-            # Set cookies before navigating — need to visit domain first
-            if cookies:
-                from urllib.parse import urlparse
-                parsed = urlparse(url)
-                domain = parsed.netloc
-                # Navigate to domain root to set cookies
-                driver.get(f"{parsed.scheme}://{domain}")
-                time.sleep(1)
-                for c in cookies:
-                    if "=" in c:
-                        name, _, value = c.partition("=")
-                        driver.add_cookie({
-                            "name": name.strip(),
-                            "value": value.strip(),
-                            "domain": domain,
-                        })
-
-            driver.get(url)
-            time.sleep(wait_seconds)
-
-            html = driver.page_source
-            title = driver.title
-
-        except Exception as e:
-            return tool_result(error=f"Browser fetch failed: {e}")
-
-        return tool_result(data={"url": url, "html": html, "title": title})
 
 
 @register_tool('www_query')

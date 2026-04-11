@@ -4,6 +4,23 @@ import json
 import time
 import functools
 
+# Hard cap on total serialized tool result size fed back to the LLM.
+# Prevents runaway context explosions from large tool outputs.
+_MAX_RESULT_CHARS = 12_000
+
+
+def _cap(data) -> tuple:
+    """Serialize data, truncate if over cap, return (possibly_truncated_data, was_truncated)."""
+    try:
+        serialized = json.dumps(data)
+    except Exception:
+        serialized = str(data)
+    if len(serialized) <= _MAX_RESULT_CHARS:
+        return data, False
+    # Return truncated string with a marker so the model knows
+    truncated = serialized[:_MAX_RESULT_CHARS]
+    return truncated + f"\n[TRUNCATED: result was {len(serialized)} chars, capped at {_MAX_RESULT_CHARS}]", True
+
 
 def tool_result(data=None, error: str = "") -> dict:
     """Return a standardized result dict.
@@ -20,7 +37,11 @@ def tool_result(data=None, error: str = "") -> dict:
     """
     if error:
         return {"status": "error", "data": None, "error": error}
-    return {"status": "success", "data": data, "error": ""}
+    capped_data, truncated = _cap(data)
+    result = {"status": "success", "data": capped_data, "error": ""}
+    if truncated:
+        result["truncated"] = True
+    return result
 
 
 # Status codes that should NOT be retried (client errors — the request itself is wrong)

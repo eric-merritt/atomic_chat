@@ -40,19 +40,23 @@ _SYSTEM_BASE = """You are a helpful, friendly assistant. You're great at convers
 
 
 
-Before calling any tool, call get_params(tool_name) to learn its parameters. Never guess parameters.
-
 PRIMARY MCP SERVER: https://tools.eric-merritt.com
 
 RULES:
 - Once a user's message is received, the goal is to begin responding within 3 seconds. You don't have to have the answer already, but it's polite to let the user know that you are working on their defined task.
 - Only call tools from the list above. Never invent tool names.
 - Read the user message carefully for details, parameters, URLs, names, and constraints. Use exact values — never use placeholders like "example.com" or "path/to/file".
-- Chain tool calls when needed. Use the output of one call to inform the next.
+- Call one tool at a time. Wait for the result before calling the next tool. Never batch multiple tool calls together.
+- Web workflow: use www_extract(url) to fetch and extract in one call. If you don't know the selector, omit it — you'll get page structure back. Then call www_extract(url, selector) with the right selector.
 - If a tool returns the same result twice, stop retrying and work with what you have.
 - When stuck on a tool flow, ask the user — show your plan up to the sticking point.
-- A [TASK LIST] may appear below the message. It shows current task state but is not a source of parameters.
 
+EXAMPLES:
+<example>Fetch and extract: call www_extract(url, selector="span.titleline") to get titles in one shot. If unsure of selector, call www_extract(url) first to see page structure, then call www_extract(url, selector) with the right selector.</example>
+<example>Search: call www_ddg(query). Receive results list. Summarize or follow up with www_fetch on a result URL.</example>
+<example>Find file: call fs_find(path, name="*.py"). Receive file list. Call fs_read(path) on specific files as needed.</example>
+<example>Edit file: call fs_read to see current content. Call fs_replace(path, old, new) for targeted changes. Never rewrite entire files blindly.</example>
+<example>Task list: work tasks top to bottom. Call one tool per task, report result, move to next. Do not batch all tasks into one tool call.</example>
 
 TOOLS:
 {tool_ref}
@@ -130,7 +134,7 @@ def health():
 @login_required
 def list_workflows():
   """List available workflow groups with full tool metadata."""
-  meta_by_name = {t["name"]: t for t in TOOL_REGISTRY}
+  meta_by_name = {t["name"]: t for t in TOOL_REGISTRY if t is not None}
   groups = []
   for name, group in WORKFLOW_GROUPS.items():
     group_tools = []
@@ -393,6 +397,9 @@ def chat_stream():
 
     qwen_messages = history + [{"role": "user", "content": augmented_msg}]
 
+    import sys as _sys
+    def _log(msg): print(msg, file=_sys.stderr, flush=True)
+
     cancelled = False
     try:
       prev_content = ""
@@ -408,24 +415,35 @@ def chat_stream():
 
         if role == "assistant":
           if fn_call:
-            # Tool is being invoked — emit tool_call event once per new call
             fn_calls_so_far = [
               r for r in responses
               if r.get("role") == "assistant" and r.get("function_call")
             ]
             if len(fn_calls_so_far) > seen_fn_count:
               for fc in fn_calls_so_far[seen_fn_count:]:
-                fc_info = fc.get("function_call", {})
+                fc_info = fc.get("function_call") or {}
+                if hasattr(fc_info, "name"):
+                  tool_name = fc_info.name or ""
+                  tool_args = fc_info.arguments or ""
+                else:
+                  tool_name = fc_info.get("name", "")
+                  tool_args = fc_info.get("arguments", "")
+                _log(f"[TOOL_CALL] {tool_name}({tool_args[:200]})")
                 yield json.dumps({
                   "tool_call": {
-                    "tool": fc_info.get("name", ""),
-                    "input": fc_info.get("arguments", ""),
+                    "tool": tool_name,
+                    "input": tool_args,
                   }
                 }) + "\n"
               seen_fn_count = len(fn_calls_so_far)
           else:
             # Streaming text — emit new tokens only
-            new_text = content[len(prev_content):]
+            if not content.startswith(prev_content):
+              _log(f"[STREAM_RESET] prev={len(prev_content)} new={len(content)} snippet={content[:60]!r}")
+              new_text = content
+              prev_content = ""
+            else:
+              new_text = content[len(prev_content):]
             if new_text:
               full_response = content
               yield json.dumps({"chunk": new_text}) + "\n"
@@ -434,10 +452,11 @@ def chat_stream():
         elif role == "function":
           fn_name = last.get("name", "")
           fn_content = content
-          # Clean HTML noise before context is stored
           cleaned = _clean_tool_result(
             fn_content if isinstance(fn_content, str) else json.dumps(fn_content)
           )
+          status = "error" if '"status": "error"' in cleaned[:100] else "ok"
+          _log(f"[TOOL_RESULT] {fn_name} → {status} ({len(cleaned)} chars) | {cleaned[:120]!r}")
           yield json.dumps({
             "tool_result": {
               "tool": fn_name,
@@ -455,8 +474,11 @@ def chat_stream():
       cancelled = True
       return
     except Exception as e:
+      _log(f"[STREAM_ERROR] {e}")
       yield json.dumps({"error": str(e)}) + "\n"
       return
+
+    _log(f"[DONE] response={len(full_response)} chars, tool_calls={seen_fn_count}")
 
     if cancelled:
       return

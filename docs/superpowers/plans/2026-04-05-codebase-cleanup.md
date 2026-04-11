@@ -230,7 +230,7 @@ uv run pytest tests/test_task_extractor.py tests/test_tool_curator.py tests/test
 ```
 Expected: All pass with no import errors.
 
-- [ ] **Step 8: Commit**
+- [✓] **Step 8: Commit**
 
 ```bash
 git add -A
@@ -247,7 +247,7 @@ git commit -m "refactor: move pipeline modules into pipeline/ package"
 - Move: `client_bridge.py` → `atomic_client/bridge.py`
 - Create: `atomic_client/__init__.py`
 
-- [ ] **Step 1: Move credentials**
+- [✓] **Step 1: Move credentials**
 
 ```bash
 git mv credentials.py auth/credentials.py
@@ -260,7 +260,7 @@ grep -r "import credentials" --include="*.py" .
 ```
 Update any found imports from `credentials` to `auth.credentials`.
 
-- [ ] **Step 2: Create atomic_client and move stubs**
+- [✓] **Step 2: Create atomic_client and move stubs**
 
 ```bash
 mkdir -p atomic_client

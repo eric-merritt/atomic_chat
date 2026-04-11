@@ -67,7 +67,7 @@ export function ChatInput({ onSend, onCancel, onClear, streaming, disabled }: Ch
         historyIndex.current -= 1;
         setText(historyRef.current[historyIndex.current]);
       }
-    } else if (e.key === 'Enter' && !streaming) {
+    } else if (e.key === 'Enter') {
       if (disabled) {
         setShowTooltip(true);
         if (tooltipTimer.current) clearTimeout(tooltipTimer.current);
@@ -95,11 +95,8 @@ export function ChatInput({ onSend, onCancel, onClear, streaming, disabled }: Ch
         )}
       </div>
       <Button variant="ghost" onClick={onClear}>Clear</Button>
-      {streaming ? (
-        <Button variant="danger" onClick={onCancel}>Stop</Button>
-      ) : (
-        <Button variant="primary" onClick={handleSend} disabled={disabled || !text.trim()}>Send</Button>
-      )}
+      {streaming && <Button variant="danger" onClick={onCancel}>Stop</Button>}
+      <Button variant="primary" onClick={handleSend} disabled={disabled || !text.trim()}>Send</Button>
     </>
   );
 }

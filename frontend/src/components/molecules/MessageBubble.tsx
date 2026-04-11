@@ -1,5 +1,8 @@
 // frontend/src/components/molecules/MessageBubble.tsx
 import { useState } from 'react'
+import type React from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { Message } from '../../atoms/message'
 import { ToolCallBlock } from './ToolCallBlock'
 import { FilePreviewModal } from '../atoms/FilePreviewModal'
@@ -14,6 +17,20 @@ const roleClasses: Record<string, string> = {
   error:     'self-center bg-transparent text-[var(--danger)] text-center',
 }
 
+const mdComponents = {
+  a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+    const text = String(children ?? '')
+    const display = (!text || text === 'Link') ? (href ?? '') : text
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer" className="underline text-[var(--accent)] hover:brightness-125">
+        {display}
+      </a>
+    )
+  }
+}
+
+const mdProps = { remarkPlugins: [remarkGfm], components: mdComponents }
+
 export function MessageBubble({ message }: Props) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
@@ -25,27 +42,38 @@ export function MessageBubble({ message }: Props) {
         <div
           className={[
             'overflow-y-auto max-w-[75%] px-4 py-3 rounded-xl text-sm leading-relaxed',
-            'whitespace-pre-wrap break-words font-mono font-light',
-            'text-[var(--accent)] animate-[msgIn_0.25s_ease-out] relative',
+            'break-words text-[var(--accent)] animate-[msgIn_0.25s_ease-out] relative',
             roleClasses[message.role] ?? '',
             message.role === 'assistant'
               ? isExpanded ? 'max-h-[800px]' : 'max-h-[250px]'
               : '',
           ].join(' ')}
         >
-          {message.role === 'assistant' && message.toolPairs.map((pair, i) => (
-            <ToolCallBlock
-              key={i}
-              pair={pair}
-              bubbleHeightPx={400}
-              onFileClick={(path) => {
-                setPreviewPath(path)
-                setPreviewResult(pair.result)
-              }}
-            />
-          ))}
-
-          {message.content}
+          {message.role === 'assistant' ? (() => {
+            const sorted = [...message.toolPairs].sort((a, b) => a.contentOffset - b.contentOffset)
+            const nodes: React.ReactNode[] = []
+            let cursor = 0
+            sorted.forEach((pair, i) => {
+              const offset = pair.contentOffset
+              if (offset > cursor) {
+                const slice = message.content.slice(cursor, offset)
+                nodes.push(<div key={`text-${i}`} className="prose-md"><ReactMarkdown {...mdProps}>{slice}</ReactMarkdown></div>)
+              }
+              nodes.push(
+                <ToolCallBlock
+                  key={`tool-${i}`}
+                  pair={pair}
+                  bubbleHeightPx={400}
+                  onFileClick={(path) => { setPreviewPath(path); setPreviewResult(pair.result) }}
+                />
+              )
+              cursor = offset
+            })
+            if (cursor < message.content.length) {
+              nodes.push(<div key="text-tail" className="prose-md"><ReactMarkdown {...mdProps}>{message.content.slice(cursor)}</ReactMarkdown></div>)
+            }
+            return nodes
+          })() : <div className="prose-md"><ReactMarkdown {...mdProps}>{message.content}</ReactMarkdown></div>}
 
           {message.role === 'assistant' && (message.toolPairs.length > 0 || message.content.length > 300) && (
             <button

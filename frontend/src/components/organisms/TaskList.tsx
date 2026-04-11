@@ -17,7 +17,7 @@ function ChecklistIcon({ className }: { className?: string }) {
       strokeLinecap="round"
       strokeLinejoin="round"
       className={className}
-      style={{ width: '60%', maxWidth: '4rem' }}
+      style={{ width: '3.1rem', height: '2.5rem', flexShrink: 0, margin: '-0.2rem 0' }}
     >
       {/* Row 1: checked — bright green */}
       <rect x="3" y="3" width="8" height="8" rx="0" stroke="#00ff40" />
@@ -52,6 +52,101 @@ interface TaskListProps {
   sidebarExpanded: boolean;
   style: CSSProperties;
 }
+
+const TEST_TASKS = [
+  `Use a javascript capable  web fetch method to go to https://gayporntube.com with the following cookies set:{
+        "name": "kt_rt_rtaoverlay",
+        "value": "hid_rtaOverlay",
+        "domain": "www.gayporntube.com",
+        "hostOnly": true,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1807343348,
+        "storeId": null},{"name": "kt_rt_user",
+        "value": "true",
+        "domain": "www.gayporntube.com",
+        "hostOnly": true,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1777121378.891,
+        "storeId": null
+    },{"name": "kt_member",
+        "value": "0a74b6ff1ccfecc2ca658240fee5e211",
+        "domain": ".gayporntube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": "lax",
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1778399378.89,
+        "storeId": null
+    },{"name": "kt_remote_ips",
+        "value": "%2C50.246.208.70%7C%7Ce52525d84fc17cc6ce453fe08e7e3a4d",
+        "domain": ".gayporntube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": "lax",
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1775811021.608,
+        "storeId": null
+    },{"name": "kt_rt_adv_player_vast_count",
+        "value": "3",
+        "domain": "www.gayporntube.com",
+        "hostOnly": true,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": null,
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1775810983,
+        "storeId": null
+    },{"name": "kt_tcookie",
+        "value": "1",
+        "domain": "www.gayporntube.com",
+        "hostOnly": true,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": "lax",
+        "session": false,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "expirationDate": 1776412183,
+        "storeId": null
+    },{"name": "PHPSESSID",
+        "value": "38d6v8kp3534ol28tg248tjnk1",
+        "domain": ".gayporntube.com",
+        "hostOnly": false,
+        "path": "/",
+        "secure": false,
+        "httpOnly": false,
+        "sameSite": "lax",
+        "session": true,
+        "firstPartyDomain": "",
+        "partitionKey": null,
+        "storeId": null }]`,
+  "Extract all of the img.lazyloaded elements, gathering the href from the a element that wraps them. (lazy-loaded so wait for dom to load).",
+  "Use the list of href values to navigate to video pages and download videos to ~/agent_downloads (be sure to not download videos we already have (list that dir first so you knoow what to filter out)"
+]
 
 export function TaskList({sidebarExpanded, style }: TaskListProps) {
   const { conversationId, streaming, loadConversation } = useChat();
@@ -170,11 +265,16 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
   return (
     <div style={style}
       ref={popoverRef}
-      className="relative flex items-center flex-1 m-1 bg-[var(--glass-bg-solid)] border border-[var(--glass-border)] rounded-xl z-10 w-[var(`${}`)]"
+      className="relative flex items-center flex-1 bg-[var(--glass-bg-solid)] border border-[var(--accent)] rounded-xl z-10 w-full"
     >
       {/* Click target bar */}
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          setOpen(o => {
+            if (!o) setDrafts(['']);
+            return !o;
+          });
+        }}
         className={`flex items-center justify-center gap-2 w-full px-1 py-1 rounded-xl transition-colors cursor-pointer hover:brightness-110
           ${open ? 'brightness-110' : ''}`}
         title={taskCount > 0 ? `${taskCount} tasks (${doneCount} done)` : 'Add a task'}
@@ -213,12 +313,13 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
       {/* Popover */}
       {open && (
         <div
-          className="absolute bottom-full left-[33%] mb-1 min-w-[20rem] max-w-[28rem]
+          className="absolute bottom-full left-[33%] mb-1
             rounded-xl overflow-hidden flex flex-col
             backdrop-blur-xl border border-[var(--glass-border)]
             shadow-[0_8px_32px_rgba(0,0,0,0.3)] z-50
             animate-[msgIn_0.15s_ease-out]"
           style={{
+            width: '318px',
             height: '22vh',
             opacity: 0.95,
             backgroundColor: 'rgba(211,211,211,0.2)',
@@ -243,7 +344,7 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
           </div>
 
           {/* Body — scrollable task list */}
-          <div className="flex-1 min-h-0 overflow-y-auto flex">
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex">
             <div className="w-8 shrink-0" />
             <div className="flex-1" style={{ borderLeft: '1px solid #ff2020' }}>
             {tasks.map((t, idx) => {
@@ -267,11 +368,11 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
                     setDragIdx(null);
                     setDragOverIdx(null);
                   }}
-                  className={`flex flex-col gap-0.5 pt-1 pl-2 pr-4 border-b border-[var(--glass-border)] cursor-grab active:cursor-grabbing transition-opacity border-l border-l-[#ff2020] ml-[-1px]
+                  className={`group/task flex flex-col gap-0.5 pt-1 pl-2 pr-2 border-b border-[var(--glass-border)] cursor-grab active:cursor-grabbing transition-opacity border-l border-l-[#ff2020] ml-[-1px]
                     ${dragIdx === idx ? 'opacity-40' : ''}
                     ${dragOverIdx === idx && dragIdx !== idx ? 'border-t-2 border-t-[var(--accent)]' : ''}`}
                 >
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 overflow-hidden">
                     <span
                       className="shrink-0 font-mono"
                       style={{ color: t.status === 'done' ? 'var(--accent)' : isBlocked ? 'var(--danger, #ef4444)' : 'var(--text-muted)', fontSize: '10px' }}
@@ -298,35 +399,42 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
                           className="flex-1 bg-transparent outline-none font-mono text-[var(--accent)]"
                           style={{ fontSize: '10px' }}
                         />
-                        <button type="submit" className="shrink-0 text-[var(--text-muted)] hover:text-[#00ff40] cursor-pointer transition-colors" style={{ fontSize: '12px' }} title="Save">&#x2713;</button>
-                        <button type="button" onClick={() => setEditingId(null)} className="shrink-0 text-[var(--text-muted)] hover:text-[#ff2020] cursor-pointer transition-colors" style={{ fontSize: '12px' }} title="Cancel">&#x2717;</button>
+                        <button type="submit" className="shrink-0 text-[#00ff40] hover:brightness-150 cursor-pointer transition-all" style={{ fontSize: '12px' }} title="Save">&#x2713;</button>
+                        <button type="button" onClick={() => setEditingId(null)} className="shrink-0 text-[#ff2020] hover:brightness-150 cursor-pointer transition-all" style={{ fontSize: '12px' }} title="Cancel">&#x2717;</button>
                       </form>
                     ) : (
                       <>
                         <span
-                          className="flex-1 font-mono text-[var(--text-primary)]"
-                          style={{ opacity: t.status === 'done' ? 0.5 : 1, fontSize: '10px' }}
+                          className="flex-1 overflow-hidden whitespace-nowrap min-w-0 group/marquee"
+                          style={{ opacity: t.status === 'done' ? 0.5 : 1 }}
                         >
-                          {t.title}
+                          <span
+                            className="inline-block font-mono text-[var(--text-primary)] group-hover/marquee:animate-[marquee_2.7s_linear_1.2s_infinite]"
+                            style={{ fontSize: '10px' }}
+                          >
+                            {t.title}
+                          </span>
                         </span>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); startEditing(t); }}
-                          className="shrink-0 text-[var(--text-muted)] opacity-50 hover:text-[#ffdd00] hover:opacity-100 cursor-pointer transition-all"
-                          style={{ fontSize: '12px' }}
-                          title="Edit task"
-                        >
-                          &#x270E;
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }}
-                          className="shrink-0 text-[var(--text-muted)] opacity-50 hover:text-[#ff2020] hover:opacity-100 cursor-pointer transition-all"
-                          style={{ fontSize: '12px' }}
-                          title="Delete task"
-                        >
-                          &#x2717;
-                        </button>
+                        <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover/task:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); startEditing(t); }}
+                            className="text-[#ffdd00] hover:brightness-150 cursor-pointer transition-all"
+                            style={{ fontSize: '12px' }}
+                            title="Edit task"
+                          >
+                            &#x270E;
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); deleteTask(t.id); }}
+                            className="text-[#ff2020] hover:brightness-150 cursor-pointer transition-all"
+                            style={{ fontSize: '12px' }}
+                            title="Delete task"
+                          >
+                            &#x2717;
+                          </button>
+                        </div>
                       </>
                     )}
                   </div>
@@ -350,37 +458,55 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
 
             {/* Draft rows */}
             {drafts.map((draft, di) => (
-              <div key={`draft-${di}`} className="flex items-center gap-2 pt-1 pl-2 pr-4 border-b border-[var(--glass-border)] ml-[-1]">
-                  <span className="shrink-0 font-mono text-[var(--text-muted)]" style={{ fontSize: '10px' }}>
+              <div key={`draft-${di}`} className="flex items-start gap-1 pt-1 pl-2 pr-2 border-b border-[var(--glass-border)] ml-[-1]">
+                  <span className="shrink-0 font-mono text-[var(--text-muted)] mt-[1px]" style={{ fontSize: '10px' }}>
                     {taskCount + di + 1}.
                   </span>
                   <form
-                    className="flex-1"
+                    className="flex-1 min-w-0"
                     onSubmit={async (e) => {
                       e.preventDefault();
                       submitDraft(di, draft);
                     }}
                   >
-                    <input
-                      ref={(el) => { if (el) draftRefs.current.set(di, el); else draftRefs.current.delete(di); }}
-                      type="text"
+                    <textarea
+                      ref={(el) => { if (el) draftRefs.current.set(di, el as unknown as HTMLInputElement); else draftRefs.current.delete(di); }}
                       autoFocus={di === drafts.length - 1}
                       value={draft}
-                      onChange={(e) => setDrafts(d => d.map((v, i) => i === di ? e.target.value : v))}
+                      rows={1}
+                      onChange={(e) => {
+                        e.target.style.height = 'auto';
+                        e.target.style.height = e.target.scrollHeight + 'px';
+                        setDrafts(d => d.map((v, i) => i === di ? e.target.value : v));
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === 'Escape') {
                           setDrafts(d => d.filter((_, i) => i !== di));
+                        } else if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          const trimmed = draft.trim();
+                          if (trimmed) {
+                            ensureConversation().then(cid => {
+                              if (!cid) return;
+                              createConversationTask(cid, trimmed).then(() => load(cid));
+                            });
+                          }
+                          setDrafts(d => {
+                            const next = [...d];
+                            next[di] = '';
+                            return next;
+                          });
                         }
                       }}
                       placeholder="New task..."
-                      className="w-full bg-transparent outline-none font-mono text-[var(--accent)] placeholder:text-[var(--text-muted)]"
-                      style={{ fontSize: '10px' }}
+                      className="w-full bg-transparent outline-none font-mono text-[var(--accent)] placeholder:text-[var(--text-muted)] resize-none overflow-hidden"
+                      style={{ fontSize: '10px', padding: 0, lineHeight: '1.4' }}
                     />
                   </form>
                   <button
                     type="button"
                     onClick={() => submitDraft(di, draft)}
-                    className="shrink-0 text-[var(--text-muted)] hover:text-[#00ff40] cursor-pointer transition-colors"
+                    className="shrink-0 text-[#00ff40] hover:brightness-150 cursor-pointer transition-all"
                     style={{ fontSize: '12px' }}
                     title="Submit task"
                   >
@@ -389,7 +515,7 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
                   <button
                     type="button"
                     onClick={() => setDrafts(d => d.filter((_, i) => i !== di))}
-                    className="shrink-0 text-[var(--text-muted)] hover:text-[#ff2020] cursor-pointer transition-colors"
+                    className="shrink-0 text-[#ff2020] hover:brightness-150 cursor-pointer transition-all"
                     style={{ fontSize: '12px' }}
                     title="Cancel"
                   >
@@ -404,12 +530,25 @@ export function TaskList({sidebarExpanded, style }: TaskListProps) {
           {/* Footer — always visible add button */}
           <div className="flex flex-none relative z-10">
             <div className="w-8 shrink-0" />
-            <div className="flex-1 flex items-center justify-center py-1" style={{ borderLeft: '1px solid #ff2020' }}>
+            <div className="flex-1 flex items-center justify-center gap-2 py-1" style={{ borderLeft: '1px solid #ff2020' }}>
               <div
                 className="flex items-center justify-center w-fit cursor-pointer rounded-lg border border-[var(--glass-border)] hover:bg-[var(--accent)] hover:text-[var(--bg-base)] transition-colors px-2 py-0.5 group z-20"
                 onClick={() => setDrafts(d => [...d, ''])}
               >
                 <span className="font-mono text-[var(--accent)] group-hover:text-[var(--bg-base)] transition-colors" style={{ fontSize: '12px' }}>+ Add a task...</span>
+              </div>
+              <div
+                className="flex items-center justify-center w-fit cursor-pointer rounded-lg border border-[var(--glass-border)] hover:bg-[var(--accent)] hover:text-[var(--bg-base)] transition-colors px-2 py-0.5 group z-20"
+                onClick={async () => {
+                  const cid = await ensureConversation();
+                  if (!cid) return;
+                  for (const title of TEST_TASKS) {
+                    await createConversationTask(cid, title);
+                  }
+                  load(cid);
+                }}
+              >
+                <span className="font-mono text-[var(--accent)] group-hover:text-[var(--bg-base)] transition-colors" style={{ fontSize: '12px' }}>+7</span>
               </div>
             </div>
             <div className="w-8 shrink-0" />

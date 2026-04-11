@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
-import type { UsageStatus } from '../../atoms/stream';
+interface UsageStatus {
+  percent: number;
+}
 
 const THRESHOLDS = [75, 80, 85, 90, 95, 99];
 

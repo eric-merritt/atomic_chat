@@ -37,7 +37,7 @@ const CATEGORY_RULES: [RegExp, string][] = [
   [/^fa_/, 'Accounting'],
 ];
 
-export function getSubcategory(name: string): string | undefined {
+export function getSubcategory(_name: string): string | undefined {
   // Subcategories are no longer needed with prefixed tool names
   return undefined;
 }

@@ -19,13 +19,3 @@ def test_config_max_retries():
     assert MAX_RETRIES >= 0
 
 
-def test_config_task_extractor_model_default():
-    from config import TASK_EXTRACTOR_MODEL
-    assert isinstance(TASK_EXTRACTOR_MODEL, str)
-    assert len(TASK_EXTRACTOR_MODEL) > 0
-
-
-def test_config_tool_curator_model_default():
-    from config import TOOL_CURATOR_MODEL
-    assert isinstance(TOOL_CURATOR_MODEL, str)
-    assert len(TOOL_CURATOR_MODEL) > 0

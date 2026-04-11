@@ -3,8 +3,9 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import { ToolWorkspace } from '../ToolWorkspace';
 import { WorkspaceContext } from '../../../providers/WorkspaceProvider';
 import type { LayoutState } from '../../../providers/WorkspaceProvider';
+import type { WorkflowGroup } from '../../../api/workflowGroups';
 
-const GROUPS = [
+const GROUPS: WorkflowGroup[] = [
   {
     name: 'Filesystem',
     tooltip: 'File ops',

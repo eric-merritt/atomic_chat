@@ -15,20 +15,16 @@ class WorkflowGroup:
 
 WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
     "Filesystem": WorkflowGroup(
-        tools=["fs_read", "fs_info", "fs_ls", "fs_tree", "fs_write", "fs_append",
+        tools=["fs_read", "fs_info", "fs_ls", "fs_ls_dir", "fs_tree", "fs_write", "fs_append",
                "fs_replace", "fs_insert_at_line", "fs_delete", "fs_copy", "fs_move",
-               "fs_create_directory"],
-        tooltip="File reading, writing, and directory operations",
-    ),
-    "Code Search": WorkflowGroup(
-        tools=["cs_grep", "cs_find", "cs_def"],
-        tooltip="Search code by pattern, filename, or symbol",
+               "fs_make_dir", "fs_grep", "fs_find", "fs_find_def"],
+        tooltip="File reading, writing, and directory operations, and codesearch functions like fs_find_def to find function definitions",
     ),
     "Web Tools": WorkflowGroup(
-        tools=["www_ddg", "www_fetch", "www_scrape", "www_cookies",
-               "www_find_all", "www_find_dl", "www_find_routes",
-               "www_browse", "www_query", "www_click"],
-        tooltip="Web scraping, search, and navigation",
+        tools=["www_ddg", "www_extract", "www_cookies",
+               "www_find_dl", "www_find_routes",
+               "www_query", "www_click"],
+        tooltip="Web search, fetch-and-extract, and browser navigation",
     ),
     "Ecommerce": WorkflowGroup(
         tools=["ec_search", "ec_enrich"],
@@ -46,7 +42,7 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="Torrent search, download, and management",
     ),
     "MCP": WorkflowGroup(
-        tools=["mcp_connect"],
+        tools=["mcp_init_conn","mcp_call_tool"],
         tooltip="Connect to external MCP tool servers",
     ),
     "Accounting": WorkflowGroup(
@@ -68,31 +64,29 @@ TOOL_REF: dict[str, str] = {
     # Filesystem
     "fs_read":             "read file",
     "fs_info":             "file info",
-    "fs_ls":               "list directory",
+    "fs_ls":               "list directory with glob filter",
+    "fs_ls_dir":           "list directory with lsd — returns structured JSON with metadata",
     "fs_tree":             "directory tree",
     "fs_write":            "write file",
-    "fs_append":           "append file",
+    "fs_append":           "append to file",
     "fs_replace":          "find replace",
-    "fs_insert_at_line":   "insert lines",
+    "fs_insert_at_line":   "insert at line",
     "fs_delete":           "delete file",
     "fs_copy":             "copy file",
     "fs_move":             "move file",
-    "fs_create_directory": "make directory",
+    "fs_make_dir":         "make directory",
     # Code Search
-    "cs_grep":             "search code",
-    "cs_find":             "find file",
-    "cs_def":              "find definition",
+    "fs_grep":             "search file for string",
+    "fs_find":             "find file",
+    "fs_find_def":         "find function definition",
     # Web
-    "www_ddg":          "web search",
-    "www_cookies":         "set cookies",
-    "www_fetch":           "fetch url",
-    "www_scrape":          "scrape page",
-    "www_find_all":        "find elements",
-    "www_find_dl":         "find downloads",
-    "www_find_routes":     "find routes",
-    "www_browse":          "selenium browse",
-    "www_query":           "query page",
-    "www_click":           "click element",
+    "www_ddg":             "web search via DuckDuckGo",
+    "www_cookies":         "set cookies for a domain",
+    "www_extract":         "fetch url + extract via CSS selector in one call — omit selector to get page structure first",
+    "www_find_dl":         "find media download links in page by url",
+    "www_find_routes":     "fetch robots.txt allowed routes",
+    "www_query":           "querySelectorAll on current browser page",
+    "www_click":           "click element on current browser page",
     # Ecommerce
     "ec_search":           "search listings (ebay/amazon/cl)",
     "ec_enrich":           "enrich data",
@@ -110,7 +104,8 @@ TOOL_REF: dict[str, str] = {
     "bt_add":              "add torrent",
     "bt_active":           "active downloads",
     # MCP
-    "mcp_connect":         "connect server",
+    "mcp_init_conn":       "initialize connection",
+    "mcp_call_tool":       "call tool using MCP",
     # Accounting
     "fa_ledger":           "create ledger",
     "fa_new_acct":         "create account",

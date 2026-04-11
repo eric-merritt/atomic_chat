@@ -48,16 +48,14 @@ def test_workflows_includes_tool_metadata(client):
 def test_select_group_activates_tools(client):
     resp = client.post(
         "/api/tools/select-group",
-        json={"group": "Code Search", "active": True},
+        json={"group": "Filesystem", "active": True},
         content_type="application/json",
     )
     assert resp.status_code == 200
     data = resp.get_json()
     assert data["ok"] is True
     assert "selected" in data
-    assert "grep" in data["selected"]
-    assert "find" in data["selected"]
-    assert "definition" in data["selected"]
+    assert "fs_read" in data["selected"]
 
 
 def test_select_group_unknown_returns_404(client):

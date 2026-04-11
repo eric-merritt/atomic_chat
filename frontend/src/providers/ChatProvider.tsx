@@ -147,7 +147,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setMessages(prev => {
               const msgs = [...prev]
               const last = msgs[msgs.length - 1]
-              const pair = { tool: ev.tool, params, result: null, status: 'streaming' as const }
+              const pair = { tool: ev.tool, params, result: null, status: 'streaming' as const, contentOffset: last?.role === 'assistant' ? last.content.length : 0 }
               if (last?.role === 'assistant') {
                 return [...msgs.slice(0, -1), { ...last, toolPairs: [...last.toolPairs, pair] }]
               }

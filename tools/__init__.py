@@ -12,7 +12,6 @@ _BUILTIN_TOOLS = set(TOOL_REGISTRY.keys())
 
 # Import each module to trigger @register_tool side effects
 import tools.filesystem  # noqa: F401
-import tools.codesearch  # noqa: F401
 import tools.web  # noqa: F401
 import tools.ecommerce  # noqa: F401
 import tools.onlyfans  # noqa: F401

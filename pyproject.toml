@@ -26,4 +26,5 @@ dependencies = [
     "json5>=0.13.0",
     "soundfile>=0.13.1",
     "python-dateutil>=2.9.0.post0",
+    "ddgs>=9.13.0",
 ]

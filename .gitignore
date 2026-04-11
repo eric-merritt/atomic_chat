@@ -22,6 +22,13 @@ wheels/
 
 # Logs
 *.log
+logs/
+
+# Local files
+auth/auth.db
+image.txt
+replTab.py
+tmp
 
 # Frontend
 frontend/node_modules/

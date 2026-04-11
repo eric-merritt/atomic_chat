@@ -215,6 +215,14 @@ Language detection: extension map in Python (`{'.py': 'python', '.ts': 'typescri
 
 ---
 
+## Scroll Behavior
+
+Auto-scroll follows the stream by default. User scrolling up cancels it — stream continues growing out of view. Re-engages when the user either scrolls back to the bottom naturally or clicks a **"Jump to current"** button that appears while auto-scroll is suspended. Button disappears once re-engaged.
+
+Implementation: track a `isUserScrolling` flag. Set it `true` on manual scroll-up (detected via `onScroll` comparing `scrollTop + clientHeight < scrollHeight - threshold`). Set it `false` when user reaches the bottom or clicks the button. Auto-scroll only fires when `isUserScrolling` is `false`.
+
+---
+
 ## What's Not In Scope
 
 - Workspace file explorer (separate spec)

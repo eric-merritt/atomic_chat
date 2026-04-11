@@ -9,13 +9,14 @@ from qwen_agent.tools.base import TOOL_REGISTRY
 
 # ── Registration tests ────────────────────────────────────────────────────────
 
-def test_all_12_tools_registered():
-    """Import triggers @register_tool; all 12 names must appear in the registry."""
+def test_all_15_tools_registered():
+    """Import triggers @register_tool; all fs_ names must appear in the registry."""
     import tools.filesystem  # noqa: F401 — side-effect: registers tools
     expected = {
-        'read', 'info', 'ls', 'tree',
-        'write', 'append', 'replace', 'insert_at_line',
-        'delete', 'copy', 'move', 'create_directory',
+        'fs_read', 'fs_info', 'fs_ls', 'fs_tree',
+        'fs_write', 'fs_append', 'fs_replace', 'fs_insert_at_line',
+        'fs_delete', 'fs_copy', 'fs_move', 'fs_make_dir',
+        'fs_grep', 'fs_find', 'fs_find_def',
     }
     for name in expected:
         assert name in TOOL_REGISTRY, f"Tool '{name}' not found in TOOL_REGISTRY"
