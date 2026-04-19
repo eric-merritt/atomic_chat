@@ -1,7 +1,7 @@
 import { createContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import type { Message } from '../atoms/message';
 import { createMessage } from '../atoms/message';
-import { cancelChat, respondToRecommendation } from '../api/chat';
+import { cancelChat, respondToRecommendation, summarizeContext as apiSummarize } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
@@ -24,6 +24,9 @@ interface ChatContextValue {
   recommendation: Recommendation | null;
   acceptRecommendation: () => void;
   dismissRecommendation: () => void;
+  contextPct: number;
+  summarizing: boolean;
+  summarizeContext: () => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -33,6 +36,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
+  const [contextPct, setContextPct] = useState(0);
+  const [summarizing, setSummarizing] = useState(false);
   const streamingRef = useRef(false);
   const lastEventRef = useRef(0);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -182,6 +187,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           case 'recommendation':
             setRecommendation({ groups: ev.groups, reason: ev.reason });
             break;
+          case 'context_pct':
+            setContextPct(ev.pct);
+            break;
           case 'error':
             setMessages((prev) => [...prev, createMessage('error', ev.message)]);
             break;
@@ -191,6 +199,17 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setStreaming(false);
         streamingRef.current = false;
         if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; }
+        // Auto-summarize when context hits the 75% threshold
+        setContextPct((pct) => {
+          if (pct >= 75 && conversationId) {
+            setSummarizing(true);
+            apiSummarize(conversationId)
+              .then((r) => setContextPct(r.context_pct))
+              .catch(console.error)
+              .finally(() => setSummarizing(false));
+          }
+          return pct;
+        });
       },
       onError: (error) => {
         setMessages((prev) => [...prev, createMessage('error', error)]);
@@ -212,7 +231,20 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     await apiClearHistory();
     setMessages([]);
     setConversationId(null);
+    setContextPct(0);
   }, []);
+
+  const summarizeContext = useCallback(() => {
+    if (!conversationId || summarizing || streaming) return;
+    setSummarizing(true);
+    apiSummarize(conversationId)
+      .then((r) => {
+        setContextPct(r.context_pct);
+        return loadConversation(conversationId);
+      })
+      .catch(console.error)
+      .finally(() => setSummarizing(false));
+  }, [conversationId, summarizing, streaming, loadConversation]);
 
   const acceptRecommendation = useCallback(async () => {
     if (!recommendation || !conversationId) return;
@@ -231,6 +263,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
       recommendation, acceptRecommendation, dismissRecommendation,
+      contextPct, summarizing, summarizeContext,
     }}>
       {children}
     </ChatContext.Provider>

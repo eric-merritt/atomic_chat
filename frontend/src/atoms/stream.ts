@@ -5,7 +5,8 @@ export type StreamEvent =
   | { type: 'image'; src: string; filename: string; sizeKb: number }
   | { type: 'error'; message: string }
   | { type: 'meta'; conversationId: string | null }
-  | { type: 'recommendation'; groups: string[]; reason: string };
+  | { type: 'recommendation'; groups: string[]; reason: string }
+  | { type: 'context_pct'; pct: number };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
@@ -44,6 +45,9 @@ export function parseStreamLine(raw: any): StreamEvent | null {
   }
   if ('error' in raw) {
     return { type: 'error', message: raw.error };
+  }
+  if ('context_pct' in raw) {
+    return { type: 'context_pct', pct: raw.context_pct };
   }
   return null;
 }

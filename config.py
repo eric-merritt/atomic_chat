@@ -20,6 +20,10 @@ RATE_LIMITS = {
 MAX_RETRIES = 2
 
 
+SUMMARIZE_MODEL = os.environ.get("SUMMARIZE_MODEL", "qwen2.5:1.5b")
+CONTEXT_SUMMARIZE_THRESHOLD = float(os.environ.get("CONTEXT_SUMMARIZE_THRESHOLD", "0.75"))
+
+
 def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
   """Build a qwen-agent LLM config pointing at the local Ollama instance."""
   return {

@@ -14,7 +14,7 @@ _BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
 
 import tools  # triggers @register_tool side-effects for all tool modules
 from tools.web import _strip_html_noise
-from config import qwen_llm_cfg
+from config import qwen_llm_cfg, OLLAMA_NUM_CTX, SUMMARIZE_MODEL
 from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF
 from context import build_history, serialize_user_message, serialize_assistant_message, serialize_tool_result
 from auth.conversations import Conversation, ConversationMessage
@@ -43,6 +43,8 @@ _SYSTEM_BASE = """You are a helpful, friendly assistant. You're great at convers
 PRIMARY MCP SERVER: https://tools.eric-merritt.com
 
 RULES:
+- All downloaded files go to $HOME/agent_downloads and must be saved with their Title as their filename (with applicable extension).
+- If the user asks you to search a specific site, some common URIs for searching include: /search/videos (add to URL of site if searching for videos. use hyphens to represent spaces) or /q=$userQuery
 - Once a user's message is received, the goal is to begin responding within 3 seconds. You don't have to have the answer already, but it's polite to let the user know that you are working on their defined task.
 - Only call tools from the list above. Never invent tool names.
 - Read the user message carefully for details, parameters, URLs, names, and constraints. Use exact values — never use placeholders like "example.com" or "path/to/file".
@@ -308,6 +310,19 @@ TOOL_REGISTRY = [_tool_meta(cls) for cls in QW_TOOL_REGISTRY.values()
 # STREAMING CHAT
 # ─────────────────────────────────────────────────────────────
 
+def _estimate_tokens(messages: list) -> int:
+    """Rough token estimate: ~4 chars per token."""
+    total = 0
+    for msg in messages:
+        content = msg.get("content") or ""
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict):
+                    total += len(str(part.get("text") or part.get("content") or ""))
+        else:
+            total += len(str(content))
+    return total // 4
+
 @app.route("/api/chat/stream", methods=["POST"])
 @login_required
 def chat_stream():
@@ -396,6 +411,9 @@ def chat_stream():
     )
 
     qwen_messages = history + [{"role": "user", "content": augmented_msg}]
+
+    context_pct = round(min(_estimate_tokens(qwen_messages) / OLLAMA_NUM_CTX * 100, 100), 1)
+    yield json.dumps({"context_pct": context_pct}) + "\n"
 
     import sys as _sys
     def _log(msg): print(msg, file=_sys.stderr, flush=True)
@@ -534,6 +552,63 @@ def chat_stream():
     },
   )
 
+
+@app.route("/api/chat/summarize", methods=["POST"])
+@login_required
+def summarize_context():
+  """Summarize conversation history using a small model, compressing context."""
+  data = request.get_json(force=True) or {}
+  conv_id = data.get("conversation_id")
+  if not conv_id:
+    return jsonify({"error": "conversation_id required"}), 400
+
+  db = get_db()
+  conv = db.query(Conversation).filter_by(id=conv_id, user_id=current_user.id).first()
+  if not conv:
+    return jsonify({"error": "Conversation not found"}), 404
+
+  rows = (
+    db.query(ConversationMessage)
+    .filter_by(conversation_id=conv_id)
+    .order_by(ConversationMessage.created_at.asc())
+    .all()
+  )
+  if not rows:
+    return jsonify({"context_pct": 0}), 200
+
+  lines = []
+  for r in rows:
+    content = (r.content or "").strip()
+    if content:
+      lines.append(f"{r.role.upper()}: {content[:3000]}")
+  transcript = "\n\n".join(lines)
+
+  prompt = (
+    "Summarize the following conversation concisely, preserving all important facts, "
+    "decisions, file paths, tool results, and context needed to continue the work. "
+    "Output only the summary — no preamble.\n\n" + transcript
+  )
+
+  try:
+    resp = ollama_client.chat(
+      model=SUMMARIZE_MODEL,
+      messages=[{"role": "user", "content": prompt}],
+    )
+    summary = resp["message"]["content"].strip()
+  except Exception as e:
+    return jsonify({"error": f"Summarization failed: {e}"}), 500
+
+  db.query(ConversationMessage).filter_by(conversation_id=conv_id).delete()
+  db.add(ConversationMessage(
+    conversation_id=conv_id,
+    role="user",
+    content=f"[Context Summary — conversation compressed by assistant]\n{summary}",
+    tool_calls=[],
+  ))
+  db.commit()
+
+  new_pct = round(min(len(summary) // 4 / OLLAMA_NUM_CTX * 100, 100), 1)
+  return jsonify({"context_pct": new_pct, "summary": summary})
 
 
 # ── Models ───────────────────────────────────────────────────────────────────
