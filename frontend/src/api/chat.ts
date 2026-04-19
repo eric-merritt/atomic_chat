@@ -21,6 +21,17 @@ export async function cancelChat(): Promise<void> {
   await fetch('/api/chat/cancel', { method: 'POST', credentials: 'include' });
 }
 
+export async function summarizeContext(conversationId: string): Promise<{ context_pct: number }> {
+  const resp = await fetch('/api/chat/summarize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conversation_id: conversationId }),
+    credentials: 'include',
+  });
+  if (!resp.ok) throw new Error(`Summarize failed: ${resp.status}`);
+  return resp.json();
+}
+
 export async function respondToRecommendation(
   conversationId: string,
   acceptedGroups: string[],
