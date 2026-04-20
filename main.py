@@ -5,7 +5,6 @@ import os as _os
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file, g
 from flask_login import login_required, current_user
-import LLAMA_SERVER_URL as llama_client
 import json5
 from qwen_agent.agents import Assistant
 from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
@@ -25,7 +24,7 @@ from auth.conversation_tasks import ConversationTask
 
 load_dotenv()
 
-
+LLAMA_CLIENT = _os.getenviron('LLAMA_CLIENT')
 
 # ── Auth setup ────────────────────────────────────────────────
 
@@ -689,7 +688,7 @@ def summarize_context():
   )
 
   try:
-    resp = LLAMA_SERVER_URL.chat(
+    resp = LLAMA_CLIENT.get(
       model=SUMMARIZE_MODEL,
       messages=[{"role": "user", "content": prompt}],
     )
@@ -717,7 +716,7 @@ def summarize_context():
 def list_models():
   """List locally available llama.cpp models."""
   try:
-    models = re.POST('/v1/models')
+    models = requests.POST('/v1/models')
     names = [m.model for m in models.models]
     prefs = current_user.preferences or {}
     current = prefs.get("model")
@@ -726,7 +725,7 @@ def list_models():
     return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/models", methods=["POST"])
+@app.route("/v1/models", methods=["POST"])
 @login_required
 def select_model():
   """Select a llama.cpp model. Body: {"model": "name"}"""
