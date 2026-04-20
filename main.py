@@ -2,10 +2,10 @@ import json
 import logging
 from datetime import datetime, timezone
 import os as _os
+import requests
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file, g
 from flask_login import login_required, current_user
-import ollama as ollama_client
 import json5
 from qwen_agent.agents import Assistant
 from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
@@ -14,7 +14,7 @@ _BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
 
 import tools  # triggers @register_tool side-effects for all tool modules
 from tools.web import _strip_html_noise
-from config import qwen_llm_cfg, OLLAMA_NUM_CTX, SUMMARIZE_MODEL
+from config import qwen_llm_cfg, LLAMA_ARG_CTX_SIZE, SUMMARIZE_MODEL
 from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF
 from context import build_history, serialize_user_message, serialize_assistant_message, serialize_tool_result
 from auth.conversations import Conversation, ConversationMessage
@@ -24,6 +24,8 @@ from auth.db import init_db, SessionLocal, get_db
 from auth.conversation_tasks import ConversationTask
 
 load_dotenv()
+
+LLAMA_CPP_BASE_URL = _os.environ.get('LLAMA_CPP_BASE_URL', 'http://localhost:8080')
 
 
 
@@ -412,7 +414,7 @@ def chat_stream():
 
     qwen_messages = history + [{"role": "user", "content": augmented_msg}]
 
-    context_pct = round(min(_estimate_tokens(qwen_messages) / OLLAMA_NUM_CTX * 100, 100), 1)
+    context_pct = round(min(_estimate_tokens(qwen_messages) / LLAMA_ARG_CTX_SIZE * 100, 100), 1)
     yield json.dumps({"context_pct": context_pct}) + "\n"
 
     import sys as _sys
@@ -590,11 +592,16 @@ def summarize_context():
   )
 
   try:
-    resp = ollama_client.chat(
-      model=SUMMARIZE_MODEL,
-      messages=[{"role": "user", "content": prompt}],
+    resp = requests.post(
+      f"{LLAMA_CPP_BASE_URL}/v1/chat/completions",
+      json={
+        "model": SUMMARIZE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+      },
     )
-    summary = resp["message"]["content"].strip()
+    resp.raise_for_status()
+    summary = resp.json()["choices"][0]["message"]["content"].strip()
   except Exception as e:
     return jsonify({"error": f"Summarization failed: {e}"}), 500
 
@@ -607,7 +614,7 @@ def summarize_context():
   ))
   db.commit()
 
-  new_pct = round(min(len(summary) // 4 / OLLAMA_NUM_CTX * 100, 100), 1)
+  new_pct = round(min(len(summary) // 4 / LLAMA_ARG_CTX_SIZE * 100, 100), 1)
   return jsonify({"context_pct": new_pct, "summary": summary})
 
 
@@ -616,10 +623,12 @@ def summarize_context():
 @app.route("/api/models", methods=["GET"])
 @login_required
 def list_models():
-  """List locally available Ollama models."""
+  """List locally available llama.cpp models."""
   try:
-    models = ollama_client.list()
-    names = [m.model for m in models.models]
+    resp = requests.get(f"{LLAMA_CPP_BASE_URL}/v1/models")
+    resp.raise_for_status()
+    data = resp.json()
+    names = [m["id"] for m in data.get("data", [])]
     prefs = current_user.preferences or {}
     current = prefs.get("model")
     return jsonify({"models": names, "current": current})
@@ -630,7 +639,7 @@ def list_models():
 @app.route("/api/models", methods=["POST"])
 @login_required
 def select_model():
-  """Select an Ollama model. Body: {"model": "name"}"""
+  """Select a llama.cpp model. Body: {"model": "name"}"""
   data = request.get_json(force=True)
   model = data.get("model")
   if not model:
@@ -676,8 +685,10 @@ def main():
 
 def cli_model_picker():
   try:
-    models = ollama_client.list()
-    names = [m.model for m in models.models]
+    resp = requests.get(f"{LLAMA_CPP_BASE_URL}/v1/models")
+    resp.raise_for_status()
+    data = resp.json()
+    names = [m["id"] for m in data.get("data", [])]
   except Exception as e:
     print(f"Error listing models: {e}")
     return None

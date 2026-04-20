@@ -1,37 +1,4 @@
-# Python-generated files
+```
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-.client-venv
-
-# Git worktrees
-.worktrees/
-
-# Environment secrets
-.env
-.env.client
-
-# Git worktrees
-.worktrees/
-
-# Logs
-*.log
-logs/
-
-# Local files
-auth/auth.db
-image.txt
-replTab.py
-tmp
-*.mp4
-*.png
-
-# Frontend
-frontend/node_modules/
-frontend/dist/
+*.pyc
+```
