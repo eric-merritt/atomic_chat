@@ -698,12 +698,9 @@ def summarize_context():
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
       },
-    resp = LLAMA_SERVER_URL.chat(
-      model=SUMMARIZE_MODEL,
-      messages=[{"role": "user", "content": prompt}],
-    )
     resp.raise_for_status()
     summary = resp.json()["choices"][0]["message"]["content"].strip()
+    )
   except Exception as e:
     return jsonify({"error": f"Summarization failed: {e}"}), 500
 
