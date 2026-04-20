@@ -29,7 +29,7 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
   return {
   'model': model or os.environ.get('CHAT_MODEL', 'qwen3:8b'),
   'model_type': 'oai',
-  'model_server': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434') + '/v1',
+  'model_server': os.environ.get('LLAMA_SERVER_URL', 'http://localhost:11505') + '/v1',
   'api_key': 'EMPTY',
   'generate_cfg': {
     'max_input_tokens': num_ctx or OLLAMA_NUM_CTX,

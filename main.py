@@ -38,27 +38,26 @@ tool_ref = tools.ALL_TOOLS
 
 _SYSTEM_BASE = """You are a helpful, friendly assistant. You're great at conversation, explanation, and reasoning — and you also have access to tools when you need them.
 
-
-
 PRIMARY MCP SERVER: https://tools.eric-merritt.com
 
 RULES:
-- All downloaded files go to $HOME/agent_downloads and must be saved with their Title as their filename (with applicable extension).
-- If the user asks you to search a specific site, some common URIs for searching include: /search/videos (add to URL of site if searching for videos. use hyphens to represent spaces) or /q=$userQuery
-- Once a user's message is received, the goal is to begin responding within 3 seconds. You don't have to have the answer already, but it's polite to let the user know that you are working on their defined task.
-- Only call tools from the list above. Never invent tool names.
-- Read the user message carefully for details, parameters, URLs, names, and constraints. Use exact values — never use placeholders like "example.com" or "path/to/file".
-- Call one tool at a time. Wait for the result before calling the next tool. Never batch multiple tool calls together.
-- Web workflow: use www_extract(url) to fetch and extract in one call. If you don't know the selector, omit it — you'll get page structure back. Then call www_extract(url, selector) with the right selector.
-- If a tool returns the same result twice, stop retrying and work with what you have.
-- When stuck on a tool flow, ask the user — show your plan up to the sticking point.
+- Always respond to the user's latest message immediately. It takes priority over the task list.
+- If the user says stop, STOP IMMEDIATELY. Do NOT call any more tools until instructed to do so.
+- Don't be a dick.
+- Don't be a fucking idiot.
+- Just because one tool call didn't solve the users problem, doesn't mean it was a waste and you need to start over using alternative methods. You are likely closer to the goal, you need to STOP, THINK, and react.
+- Malformed data on your behalf is NOT an excuse to move on to another task. Correct your shit data formatting. I don't care if it takes you 10,000 tries, you need to get it RIGHT.
+
+TASK LIST:
+- The [TASK LIST] block appears ONCE, on the first user message after a list exists. After that, only [Task Added] notifications appear when new tasks are introduced. The absence of the block means the list has not changed — do NOT restart from task 1.
+- Call tl_ref when (and only when) you need to look up task ids or see current state.
+- Mark tasks done with tl_done(id). Add tasks with tl_add(title[, between]).
 
 EXAMPLES:
-<example>Fetch and extract: call www_extract(url, selector="span.titleline") to get titles in one shot. If unsure of selector, call www_extract(url) first to see page structure, then call www_extract(url, selector) with the right selector.</example>
-<example>Search: call www_ddg(query). Receive results list. Summarize or follow up with www_fetch on a result URL.</example>
+<example>Navigate to a page and search for videos to download: call www_extract(url, selector="span.titleline") to get titles in one shot. If unsure of selector, call www_extract(url) first to see page structure, then call www_extract(url, selector) with the right selector.</example>
+<example>Use a Search Engine to Find Posts Across the Internet For A User Query: call www_ddg(query). Receive results list. Summarize or follow up with www_fetch on a result URL.</example>
 <example>Find file: call fs_find(path, name="*.py"). Receive file list. Call fs_read(path) on specific files as needed.</example>
-<example>Edit file: call fs_read to see current content. Call fs_replace(path, old, new) for targeted changes. Never rewrite entire files blindly.</example>
-<example>Task list: work tasks top to bottom. Call one tool per task, report result, move to next. Do not batch all tasks into one tool call.</example>
+<example>Edit this code to utilize beautiful soup instead of a custom parser: call fs_find_def to get line numbers for where classes and functions are defined. Infer and read the pertinent subsections of the file to identify what needs to be replaced. Call fs_replace(path, old, new) for targeted changes. Never read or rewrite entire files blindly.</example>
 
 TOOLS:
 {tool_ref}
@@ -175,7 +174,7 @@ def serve_frontend(path):
   return "Frontend not built. Run: cd frontend && npm run build", 404
 
 # ─────────────────────────────────────────────────────────────
-# INTERNAL TOOLS (mark_task_done / unmark_task_done)
+# INTERNAL TOOLS
 # Registered as qwen-agent tools so Assistant handles them natively.
 # ─────────────────────────────────────────────────────────────
 
@@ -231,74 +230,159 @@ class ListToolsTool(BaseTool):
         "tooltip": group.tooltip,
         "tools": group.tools,
       }
-  # Add internal tools
     groups["Internal"] = {
       "tooltip": "Task management",
-      "tools": ["mark_task_done", "unmark_task_done", "list_tools"],
+      "tools": ["tl_add", "tl_ref", "tl_done", "list_tools", "get_params"],
     }
     return tool_result(data=groups)
 
 
-@register_tool('mark_task_done')
-class MarkTaskDoneTool(BaseTool):
-  description = 'Mark a task as done by its 1-based number from the [TASK LIST].'
-  parameters = {
-  'type': 'object',
-  'properties': {
-    'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
-  },
-  'required': ['task_number'],
-  }
-
-  def call(self, params: str, **kwargs) -> dict:
-    return _update_task_status(params, 'done')
-
-
-@register_tool('unmark_task_done')
-class UnmarkTaskDoneTool(BaseTool):
-  description = 'Revert a done task back to pending by its 1-based number from the [TASK LIST].'
-  parameters = {
-  'type': 'object',
-  'properties': {
-    'task_number': {'type': 'integer', 'description': '1-based task number from [TASK LIST].'},
-  },
-  'required': ['task_number'],
-  }
-
-  def call(self, params: str, **kwargs) -> dict:
-    return _update_task_status(params, 'pending')
-
-
-def _update_task_status(params_str: str, new_status: str) -> dict:
-  """Shared implementation for mark/unmark task tools."""
+def _ordered_tasks_for_current_conv():
+  """Return tasks for the current conversation, ordered by created_at."""
   from auth.db import SessionLocal
   from auth.conversation_tasks import ConversationTask
-  from tools._output import tool_result
-  try:
-    p = json5.loads(params_str)
-    task_number = int(p.get('task_number', 0))
-    conversation_id = g.get('conversation_id', '')
-    db = SessionLocal()
-    try:
-      ordered = (
-      db.query(ConversationTask)
-      .filter_by(conversation_id=conversation_id)
-      .order_by(ConversationTask.created_at.asc())
-      .all()
-      )
+  conversation_id = g.get('conversation_id', '')
+  db = SessionLocal()
+  return db, (
+    db.query(ConversationTask)
+    .filter_by(conversation_id=conversation_id)
+    .order_by(ConversationTask.created_at.asc())
+    .all()
+  )
 
-      if 1 <= task_number <= len(ordered):
-        task = ordered[task_number - 1]
-        task.status = new_status
-        db.commit()
-        verb = 'marked done' if new_status == 'done' else 'reverted to pending'
-        return tool_result(data=f'Task {task_number} {verb}: {task.title}')
-      return tool_result(error=f'Invalid task number {task_number}. Valid range: 1-{len(ordered)}')
+
+def _task_dto(idx: int, task) -> dict:
+  return {
+    "number": idx,
+    "id": task.id,
+    "title": task.title,
+    "status": task.status,
+  }
+
+
+@register_tool('tl_ref')
+class TaskListRefTool(BaseTool):
+  description = "Reference the current task list. Returns each task's id, 1-based number, title, and status. Call only when you need to look up task ids or inspect current state."
+  parameters = {'type': 'object', 'properties': {}, 'required': []}
+
+  def call(self, params: str, **kwargs) -> dict:
+    from tools._output import tool_result
+    db, ordered = _ordered_tasks_for_current_conv()
+    try:
+      return tool_result(data={
+        "tasks": [_task_dto(i, t) for i, t in enumerate(ordered, 1)],
+      })
     finally:
       db.close()
-  except Exception as e:
-    from tools._output import tool_result as tr
-    return tr(error=str(e))
+
+
+@register_tool('tl_add')
+class TaskListAddTool(BaseTool):
+  description = "Add a task to the current conversation's task list. Pass `between: [id_a, id_b]` to insert between two existing tasks; otherwise the task is appended."
+  parameters = {
+    'type': 'object',
+    'properties': {
+      'title': {'type': 'string', 'description': 'Task title.'},
+      'between': {
+        'type': 'array',
+        'items': {'type': 'string'},
+        'description': 'Optional 2-element list of task ids [before_id, after_id]. New task is inserted between them.',
+      },
+      'depends_on': {'type': 'string', 'description': 'Optional id of another task this one depends on.'},
+    },
+    'required': ['title'],
+  }
+
+  def call(self, params: str, **kwargs) -> dict:
+    from auth.conversation_tasks import ConversationTask
+    from tools._output import tool_result
+    try:
+      p = json5.loads(params)
+    except Exception as e:
+      return tool_result(error=f"Malformed JSON input: {e}")
+    title = (p.get('title') or '').strip()
+    if not title:
+      return tool_result(error="'title' is required")
+    conversation_id = g.get('conversation_id', '')
+    if not conversation_id:
+      return tool_result(error="No active conversation")
+
+    between = p.get('between')
+    depends_on = p.get('depends_on')
+
+    db, ordered = _ordered_tasks_for_current_conv()
+    try:
+      by_id = {t.id: t for t in ordered}
+      created_at = None
+      if between is not None:
+        if not (isinstance(between, list) and len(between) == 2):
+          return tool_result(error="'between' must be a 2-element list of task ids")
+        before_id, after_id = between
+        before = by_id.get(before_id)
+        after = by_id.get(after_id)
+        if not before or not after:
+          return tool_result(error="One or both ids in 'between' were not found in this conversation")
+        if before.created_at >= after.created_at:
+          return tool_result(error="'between' ids must be in current list order: [before_id, after_id]")
+        delta = (after.created_at - before.created_at) / 2
+        created_at = before.created_at + delta
+
+      kwargs_ = {
+        'conversation_id': conversation_id,
+        'title': title,
+        'depends_on': depends_on,
+      }
+      if created_at is not None:
+        kwargs_['created_at'] = created_at
+      task = ConversationTask(**kwargs_)
+      db.add(task)
+      db.commit()
+      return tool_result(data={
+        "id": task.id,
+        "title": task.title,
+        "status": task.status,
+      })
+    finally:
+      db.close()
+
+
+@register_tool('tl_done')
+class TaskListDoneTool(BaseTool):
+  description = "Mark a task as done by its id (as returned from tl_add or tl_ref)."
+  parameters = {
+    'type': 'object',
+    'properties': {
+      'id': {'type': 'string', 'description': 'Task id.'},
+    },
+    'required': ['id'],
+  }
+
+  def call(self, params: str, **kwargs) -> dict:
+    from auth.conversation_tasks import ConversationTask
+    from tools._output import tool_result
+    try:
+      p = json5.loads(params)
+    except Exception as e:
+      return tool_result(error=f"Malformed JSON input: {e}")
+    task_id = (p.get('id') or '').strip()
+    if not task_id:
+      return tool_result(error="'id' is required")
+    conversation_id = g.get('conversation_id', '')
+    from auth.db import SessionLocal
+    db = SessionLocal()
+    try:
+      task = (
+        db.query(ConversationTask)
+        .filter_by(id=task_id, conversation_id=conversation_id)
+        .first()
+      )
+      if not task:
+        return tool_result(error=f"Task {task_id!r} not found in this conversation")
+      task.status = 'done'
+      db.commit()
+      return tool_result(data={"id": task.id, "title": task.title, "status": task.status})
+    finally:
+      db.close()
 
 
 # Populate TOOL_REGISTRY now that all tools (including internal) are registered
@@ -380,13 +464,32 @@ def chat_stream():
   function_list = [n for n in QW_TOOL_REGISTRY if n not in _BUILTIN_TOOL_NAMES]
   print(f"[CHAT] {len(function_list)} tools available", flush=True)
 
-  # --- Append conversation tasks to user message ---
+  # --- Compute task-list augmentation ---
+  # First presentation: full [TASK LIST] block. Subsequent adds: single
+  # [Task Added] lines per new task. Once all tasks are notified, no
+  # augmentation at all — keeps the agent on the user's current message.
   conv_tasks = (
     db.query(ConversationTask)
     .filter_by(conversation_id=conversation_id)
     .order_by(ConversationTask.created_at.asc())
     .all()
   )
+  task_augmentation = ""
+  if conv_tasks:
+    unnotified = [t for t in conv_tasks if t.notified_at is None]
+    if unnotified:
+      if len(unnotified) == len(conv_tasks):
+        lines = [f"  {i}. [{t.status}] id={t.id} — {t.title}"
+                 for i, t in enumerate(conv_tasks, 1)]
+        task_augmentation = "\n\n[TASK LIST]\n" + "\n".join(lines)
+      else:
+        lines = [f"[Task Added] id={t.id} — {t.title}" for t in unnotified]
+        task_augmentation = "\n\n" + "\n".join(lines)
+      now = datetime.now(timezone.utc)
+      for t in unnotified:
+        t.notified_at = now
+      db.commit()
+
   def generate():
     full_response = ""
     ordered_messages = []
@@ -398,11 +501,7 @@ def chat_stream():
     tool_ref_text = "\n".join(tool_ref_lines) if tool_ref_lines else "(none)"
     system_prompt = _SYSTEM_BASE.format(tool_ref=tool_ref_text)
 
-    # Build augmented message: task list only (tools are in system prompt)
-    augmented_msg = user_msg
-    if conv_tasks:
-      task_lines = [f"  {i}. [{ct.status}] {ct.title}" for i, ct in enumerate(conv_tasks, 1)]
-      augmented_msg += "\n\n[TASK LIST]\n" + "\n".join(task_lines)
+    augmented_msg = user_msg + task_augmentation
 
     assistant = Assistant(
       llm=qwen_llm_cfg(model_name),
@@ -478,7 +577,7 @@ def chat_stream():
           yield json.dumps({
             "tool_result": {
               "tool": fn_name,
-              "output": cleaned[:500],
+              "output": cleaned[:12000],
             }
           }) + "\n"
           ordered_messages.append(("tool_result", {

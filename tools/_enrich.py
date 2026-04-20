@@ -21,7 +21,7 @@ def enrich_data(data: str, goal: str, max_iterations: int = 5, eval_model: str =
         from qwen_agent.llm import get_chat_model
         llm = get_chat_model({
             'model': f'ollama/{eval_model}',
-            'model_server': 'http://localhost:11434/v1',
+            'model_server': 'http://localhost:11505/v1',
             'api_key': 'ollama',
             'generate_cfg': {'temperature': 0, 'max_input_tokens': OLLAMA_NUM_CTX},
         })
