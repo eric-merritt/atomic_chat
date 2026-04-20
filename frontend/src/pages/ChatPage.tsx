@@ -9,6 +9,8 @@ import { MessageList } from '../components/organisms/MessageList';
 import { InputBar } from '../components/organisms/InputBar';
 import { TaskList } from '../components/organisms/TaskList';
 import { ToolWorkspace } from '../components/organisms/ToolWorkspace';
+import { ApGallery } from '../components/organisms/ApGallery';
+import { Icon } from '../components/atoms/Icon';
 import { ChatPopover } from '../components/molecules/ChatPopover';
 import { Lightbox } from '../components/organisms/Lightbox';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
@@ -16,7 +18,7 @@ import { useTheme } from '../hooks/useTheme';
 
 export function ChatPage() {
   const { theme } = useTheme();
-  const { layout } = useWorkspace();
+  const { layout, galleryPayload, clearGallery } = useWorkspace();
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; caption: string } | null>(null);
   const [chatPopoverOpen, setChatPopoverOpen] = useState(false);
@@ -71,7 +73,23 @@ export function ChatPage() {
           </ErrorBoundary>
         ) : (
           <ErrorBoundary>
-            <ToolWorkspace />
+            {galleryPayload ? (
+              <div className="h-full overflow-y-auto p-3 bg-[var(--bg-base)]">
+                <div className="flex items-center justify-between mb-2 px-1">
+                  <span className="text-xs text-[var(--text-muted)]">Gallery workspace</span>
+                  <button
+                    onClick={clearGallery}
+                    className="text-[var(--text-muted)] hover:text-[var(--accent)] cursor-pointer"
+                    title="Close gallery"
+                  >
+                    <Icon name="close" size={16} />
+                  </button>
+                </div>
+                <ApGallery payload={galleryPayload} columns={6} onSubmitSent={clearGallery} />
+              </div>
+            ) : (
+              <ToolWorkspace />
+            )}
           </ErrorBoundary>
         )}
 

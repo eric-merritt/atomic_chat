@@ -1,11 +1,13 @@
 import { ChatInput } from '../molecules/ChatInput';
+import { ContextRing } from '../atoms/ContextRing';
 import { useChat } from '../../hooks/useChat';
 
 export function InputBar() {
-  const { sendMessage, cancelStream, clearHistory, streaming, ready, recommendation, acceptRecommendation, dismissRecommendation } = useChat();
+  const { sendMessage, cancelStream, clearHistory, streaming, ready, recommendation, acceptRecommendation, dismissRecommendation, contextPct, summarizing, summarizeContext } = useChat();
 
   return (
     <div className="flex flex-1 flex-shrink w-full items-center gap-2 px-3 py-3 m-2 bg-[var(--glass-bg-solid)] backdrop-blur-xl border border-[var(--accent)] rounded-xl z-10">
+      <ContextRing contextPct={contextPct} summarizing={summarizing} onSummarize={summarizeContext} />
       <ChatInput
         onSend={sendMessage}
         onCancel={cancelStream}
