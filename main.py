@@ -698,7 +698,7 @@ def summarize_context():
         "messages": [{"role": "user", "content": prompt}],
         "stream": False,
       },
-    resp.raise_for_status()
+    resp.raise_for_status(),
     summary = resp.json()["choices"][0]["message"]["content"].strip()
     )
   except Exception as e:
