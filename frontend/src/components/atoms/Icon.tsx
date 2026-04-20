@@ -53,6 +53,19 @@ const icons = {
       <line x1="1" y1="1" x2="23" y2="23" />
     </>
   ),
+  grid3: (
+    <>
+      <rect x="3"  y="3"  width="5" height="5" rx="1" />
+      <rect x="10" y="3"  width="5" height="5" rx="1" />
+      <rect x="17" y="3"  width="5" height="5" rx="1" />
+      <rect x="3"  y="10" width="5" height="5" rx="1" />
+      <rect x="10" y="10" width="5" height="5" rx="1" />
+      <rect x="17" y="10" width="5" height="5" rx="1" />
+      <rect x="3"  y="17" width="5" height="5" rx="1" />
+      <rect x="10" y="17" width="5" height="5" rx="1" />
+      <rect x="17" y="17" width="5" height="5" rx="1" />
+    </>
+  ),
 } as const;
 
 export type IconName = keyof typeof icons;

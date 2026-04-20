@@ -6,6 +6,7 @@ import re
 import json5
 
 from tools._output import tool_result
+from main import CHAT_MODEL
 
 
 def enrich_data(data: str, goal: str, max_iterations: int = 5, eval_model: str = 'qwen3:4b') -> dict:

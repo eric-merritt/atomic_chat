@@ -655,7 +655,7 @@ class EnrichmentPipelineTool(BaseTool):
             'data': {'type': 'string', 'description': 'Input data to enrich. JSON string from a prior tool call, or raw text. Must be non-empty.'},
             'goal': {'type': 'string', 'description': 'Natural language description of enrichment dimensions to add.'},
             'max_iterations': {'type': 'integer', 'description': 'Maximum loop iterations. Range: 1-10. Default: 5.'},
-            'eval_model': {'type': 'string', 'description': 'Ollama model name for evaluation. Default: qwen3:4b.'},
+            'eval_model': {'type': 'string', 'description': 'LLAMA_ARG_CTX_SIZE model name for evaluation. Default: qwen3:4b.'},
         },
         'required': ['data', 'goal'],
     }

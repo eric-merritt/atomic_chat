@@ -1,11 +1,13 @@
-// frontend/src/components/molecules/MessageBubble.tsx
 import { useState } from 'react'
 import type React from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { Message } from '../../atoms/message'
+import type { Message, ToolCallPair } from '../../atoms/message'
 import { ToolCallBlock } from './ToolCallBlock'
 import { FilePreviewModal } from '../atoms/FilePreviewModal'
+import { ApGallery, type ApGalleryPayload } from '../organisms/ApGallery'
+import { Icon } from '../atoms/Icon'
+import { useWorkspace } from '../../hooks/useWorkspace'
 
 interface Props {
   message: Message
@@ -31,59 +33,131 @@ const mdComponents = {
 
 const mdProps = { remarkPlugins: [remarkGfm], components: mdComponents }
 
+function InlineGallery({ payload }: { payload: ApGalleryPayload }) {
+  const { showGallery } = useWorkspace()
+  return (
+    <div className="my-2 self-start max-w-[75%]">
+      <ApGallery
+        payload={payload}
+        columns={3}
+        leftRail={
+          <button
+            onClick={() => showGallery(payload)}
+            title="Open in workspace"
+            className="text-[var(--text-muted)] hover:text-[var(--accent)] cursor-pointer p-1"
+          >
+            <Icon name="grid3" size={18} />
+          </button>
+        }
+      />
+    </div>
+  )
+}
+
+function galleryPayload(pair: ToolCallPair): ApGalleryPayload | null {
+  const result = pair.result as { data?: { type?: string; items?: unknown; caption?: string } } | null
+  const data = result?.data
+  if (!data || data.type !== 'ap_gallery' || !Array.isArray(data.items)) return null
+  return { items: data.items as ApGalleryPayload['items'], caption: data.caption }
+}
+
+function TextBubble({
+  role,
+  content,
+  showExpand,
+}: {
+  role: Message['role']
+  content: string
+  showExpand: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  if (!content.trim()) return null
+  return (
+    <div
+      className={[
+        'overflow-y-auto max-w-[75%] px-4 py-3 rounded-xl text-sm leading-relaxed mt-1',
+        'break-words text-[var(--accent)] animate-[msgIn_0.25s_ease-out] relative',
+        roleClasses[role] ?? '',
+        role === 'assistant'
+          ? expanded ? 'max-h-[800px]' : 'max-h-[250px]'
+          : '',
+      ].join(' ')}
+    >
+      <div className="prose-md">
+        <ReactMarkdown {...mdProps}>{content}</ReactMarkdown>
+      </div>
+      {showExpand && (
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          className="absolute top-2 right-2 text-sm text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer"
+        >
+          {expanded ? '▼' : '▲'}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export function MessageBubble({ message }: Props) {
-  const [isExpanded, setIsExpanded] = useState(false)
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<unknown>(null)
 
+  // Walk all tool pairs in contentOffset order and interleave with text.
+  // Each pair is rendered AFTER the text that was streamed before it was called
+  // (a tool call sits below the reasoning that produced it, not above).
+  const sortedPairs = [...message.toolPairs].sort(
+    (a, b) => a.contentOffset - b.contentOffset
+  )
+
+  type Segment =
+    | { kind: 'text'; content: string }
+    | { kind: 'gallery'; payload: ApGalleryPayload }
+    | { kind: 'tool'; pair: ToolCallPair }
+
+  const segments: Segment[] = []
+  let cursor = 0
+  for (const pair of sortedPairs) {
+    const offset = Math.min(pair.contentOffset, message.content.length)
+    if (offset > cursor) {
+      segments.push({ kind: 'text', content: message.content.slice(cursor, offset) })
+    }
+    const payload = galleryPayload(pair)
+    if (payload) segments.push({ kind: 'gallery', payload })
+    else segments.push({ kind: 'tool', pair })
+    cursor = offset
+  }
+  if (cursor < message.content.length) {
+    segments.push({ kind: 'text', content: message.content.slice(cursor) })
+  } else if (segments.length === 0 && message.content.length > 0) {
+    segments.push({ kind: 'text', content: message.content })
+  }
+
   return (
     <>
-      <div className="px-4 py-3">
-        <div
-          className={[
-            'overflow-y-auto max-w-[75%] px-4 py-3 rounded-xl text-sm leading-relaxed',
-            'break-words text-[var(--accent)] animate-[msgIn_0.25s_ease-out] relative',
-            roleClasses[message.role] ?? '',
-            message.role === 'assistant'
-              ? isExpanded ? 'max-h-[800px]' : 'max-h-[250px]'
-              : '',
-          ].join(' ')}
-        >
-          {message.role === 'assistant' ? (() => {
-            const sorted = [...message.toolPairs].sort((a, b) => a.contentOffset - b.contentOffset)
-            const nodes: React.ReactNode[] = []
-            let cursor = 0
-            sorted.forEach((pair, i) => {
-              const offset = pair.contentOffset
-              if (offset > cursor) {
-                const slice = message.content.slice(cursor, offset)
-                nodes.push(<div key={`text-${i}`} className="prose-md"><ReactMarkdown {...mdProps}>{slice}</ReactMarkdown></div>)
-              }
-              nodes.push(
-                <ToolCallBlock
-                  key={`tool-${i}`}
-                  pair={pair}
-                  bubbleHeightPx={400}
-                  onFileClick={(path) => { setPreviewPath(path); setPreviewResult(pair.result) }}
-                />
-              )
-              cursor = offset
-            })
-            if (cursor < message.content.length) {
-              nodes.push(<div key="text-tail" className="prose-md"><ReactMarkdown {...mdProps}>{message.content.slice(cursor)}</ReactMarkdown></div>)
-            }
-            return nodes
-          })() : <div className="prose-md"><ReactMarkdown {...mdProps}>{message.content}</ReactMarkdown></div>}
-
-          {message.role === 'assistant' && (message.toolPairs.length > 0 || message.content.length > 300) && (
-            <button
-              onClick={() => setIsExpanded(e => !e)}
-              className="absolute top-2 right-2 text-sm text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer"
-            >
-              {isExpanded ? '▼' : '▲'}
-            </button>
-          )}
-        </div>
+      <div className="px-4 py-1">
+        {segments.map((seg, i) => {
+          if (seg.kind === 'gallery') {
+            return <InlineGallery key={`seg-${i}`} payload={seg.payload} />
+          }
+          if (seg.kind === 'tool') {
+            return (
+              <ToolCallBlock
+                key={`seg-${i}`}
+                pair={seg.pair}
+                bubbleHeightPx={400}
+                onFileClick={(path) => { setPreviewPath(path); setPreviewResult(seg.pair.result) }}
+              />
+            )
+          }
+          return (
+            <TextBubble
+              key={`seg-${i}`}
+              role={message.role}
+              content={seg.content}
+              showExpand={message.role === 'assistant' && seg.content.length > 300}
+            />
+          )
+        })}
       </div>
 
       {previewPath && (

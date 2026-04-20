@@ -27,7 +27,7 @@ CONTEXT_SUMMARIZE_THRESHOLD = float(os.environ.get("CONTEXT_SUMMARIZE_THRESHOLD"
 def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
   """Build a qwen-agent LLM config pointing at the local llama.cpp server."""
   return {
-  'model': model or os.environ.get('CHAT_MODEL', 'qwen3:8b'),
+  'model': model or os.environ.get('CHAT_MODEL', 'Qwen3.5-9B'),
   'model_type': 'oai',
   'model_server': os.environ.get('LLAMA_CPP_BASE_URL', 'http://localhost:8080') + '/v1',
   'api_key': 'EMPTY',
