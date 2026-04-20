@@ -18,9 +18,11 @@ import tools.onlyfans  # noqa: F401
 import tools.torrent  # noqa: F401
 import tools.mcp  # noqa: F401
 import tools.accounting  # noqa: F401
+import tools.presentation  # noqa: F401
 
 # Build ALL_TOOLS as instantiated tool objects (only our custom tools)
 ALL_TOOLS = []
 for name, cls in TOOL_REGISTRY.items():
     if name not in _BUILTIN_TOOLS:
-        ALL_TOOLS.append(cls())
+        ALL_TOOLS.append(cls)
+

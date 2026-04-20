@@ -27,7 +27,7 @@ def _db_row_to_qwen(row: dict) -> dict:
   if role == "tool":
     truncated = content[:TOOL_RESULT_MAX_CHARS] if content else ""
     tool_name = tool_calls[0]["name"] if tool_calls else "unknown"
-  return {"role": "function", "name": tool_name, "content": truncated}
+    return {"role": "function", "name": tool_name, "content": truncated}
 
   return {"role": "user", "content": content}
 
