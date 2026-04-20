@@ -28,7 +28,7 @@ def _strip_html_noise(html: str) -> str:
     cleaned = re.sub(r'\s+style="[^"]*"', '', cleaned)
     cleaned = re.sub(r"\s+style='[^']*'", '', cleaned)
     cleaned = re.sub(r'\s+on\w+="[^"]*"', '', cleaned)
-    cleaned = re.sub(r'\s+data-\w[\w-]*="[^"]*"', '', cleaned)
+#    cleaned = re.sub(r'\s+data-\w[\w-]*="[^"]*"', '', cleaned)
     cleaned = re.sub(r'\n\s*\n', '\n', cleaned)
     cleaned = re.sub(r'[ \t]+', ' ', cleaned)
     return cleaned.strip()
@@ -121,62 +121,131 @@ def _load_page(ref: str) -> dict | None:
     with _store_lock:
         return _result_store.get(ref)
 
+def _detect_content_type(soup, url):
+    """Detect content type to apply appropriate summarization strategy."""
+    if soup.select('div[data-video-id]'):
+        return 'video_gallery'
+    if soup.find(attrs={'data-fav-album-id': True}):
+        return 'photo_gallery'
+    if soup.find('article') or 'article' in url:
+        return 'news_article'
+    if soup.find(attrs={'itemtype': ['http://schema.org/Product', 'https://schema.org/Product']}):
+        return 'product_page'
+    if soup.find('div', class_=re.compile('blog|post|entry')):
+        return 'blog_post'
+    if soup.find('table', class_=re.compile('data|stats')):
+        return 'data_table'
+    paragraphs = soup.find_all('p')
+    if len(paragraphs) > 10 and all(len(p.get_text()) > 100 for p in paragraphs[:5]):
+        return 'long_form_content'
+    return 'general_webpage'
+
+
+_IMG_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
+_VID_EXTS = ('.mp4', '.webm', '.m3u8', '.mkv', '.mov')
+
+
+def _attr_url_with_ext(el, exts: tuple[str, ...]) -> str:
+    """Return any attribute value on `el` that looks like a URL ending in one of `exts`.
+
+    Extension is checked against the path portion (before ?query). Skips inline data: URIs.
+    """
+    attrs = getattr(el, 'attrs', None) or {}
+    for v in attrs.values():
+        if isinstance(v, list):
+            v = ' '.join(v)
+        if not isinstance(v, str):
+            continue
+        if v.startswith('data:'):
+            continue
+        path = v.split('?', 1)[0].split('#', 1)[0].lower()
+        if any(path.endswith(ext) for ext in exts):
+            return v
+    return ''
+
+
+def _find_url_in_tree(root, exts: tuple[str, ...]) -> str:
+    """Scan root and its descendants in document order; return first URL-like attr with matching ext."""
+    hit = _attr_url_with_ext(root, exts)
+    if hit:
+        return hit
+    for d in root.find_all(True):
+        hit = _attr_url_with_ext(d, exts)
+        if hit:
+            return hit
+    return ''
+
 
 def _page_summary(content: str, url: str) -> dict:
-    """Structural scan of the page to give the agent enough to pick selectors.
+    """Structural scan of the page.
 
-    Returns title, headings, a sample of link texts + their CSS paths,
-    and notable class/id patterns seen on the page.
+    For gallery-style pages (video_gallery, photo_gallery), returns an `items`
+    list shaped for direct consumption by ap_gallery: each item has
+    title, url, preview_photo, preview_video, page_url.
     """
     try:
         soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
+        content_type = _detect_content_type(soup, url)
 
-        # Title
-        title = soup.title.string.strip() if soup.title and soup.title.string else ''
+        items = []
 
-        # Top headings (h1–h3, first 5)
-        headings = [
-            h.get_text(strip=True)
-            for h in soup.find_all(['h1', 'h2', 'h3'])[:5]
-            if h.get_text(strip=True)
-        ]
+        def _abs(u: str) -> str:
+            return urllib.parse.urljoin(url, u) if u else ''
 
-        # Sample links — skip short nav links, prioritize substantive content links
-        link_samples = []
-        for a in soup.find_all('a', href=True):
-            text = a.get_text(strip=True)
-            if not text or len(text) < 15:
-                continue
-            parts = []
-            for el in [a.parent, a]:
-                if el and el.name:
-                    cls = ' '.join(el.get('class', []))[:40]
-                    eid = el.get('id', '')
-                    if eid:
-                        parts.append(f'#{eid}')
-                    elif cls:
-                        parts.append(f'{el.name}.{cls.split()[0]}')
-            selector_hint = ' > '.join(parts) if parts else a.name
-            link_samples.append({'text': text[:80], 'selector_hint': selector_hint})
-            if len(link_samples) >= 10:
-                break
+        if content_type == 'video_gallery':
+            for container in soup.select('div[data-video-id]'):
+                anchor = container.find('a', href=True)
+                if not anchor:
+                    continue
+                title = anchor.get('title') or container.get('title') or ''
+                if not title:
+                    title_el = container.find(class_=re.compile(r'title', re.I)) or \
+                               container.find(['h2', 'h3', 'h4'])
+                    if title_el:
+                        title = title_el.get_text(strip=True)
+                page_url = _abs(anchor.get('href'))
+                preview_photo = _find_url_in_tree(container, _IMG_EXTS)
+                preview_video = _find_url_in_tree(container, _VID_EXTS)
+                items.append({
+                    'title': title,
+                    'url': page_url,
+                    'preview_photo': _abs(preview_photo),
+                    'preview_video': _abs(preview_video),
+                    'page_url': page_url,
+                })
 
-        # Notable class names on repeated elements (good selector candidates)
-        from collections import Counter
-        class_counts = Counter()
-        for el in soup.find_all(True):
-            for cls in el.get('class', []):
-                class_counts[cls] += 1
-        common_classes = [f'.{c}' for c, n in class_counts.most_common(12) if n > 2]
+        elif content_type == 'photo_gallery':
+            for container in soup.select('a[title]'):
+                if not container.find(attrs={'data-fav-album-id': True}):
+                    continue
+                href = container.get('href')
+                if not href:
+                    continue
+                page_url = _abs(href)
+                num_photos_div = container.find('div', class_='img-total')
+                title_parts = [container.get('title') or '']
+                if num_photos_div:
+                    title_parts.append(num_photos_div.get_text(strip=True))
+                preview_photo = _find_url_in_tree(container, _IMG_EXTS)
+                items.append({
+                    'title': ' — '.join(t for t in title_parts if t),
+                    'url': page_url,
+                    'preview_photo': _abs(preview_photo),
+                    'preview_video': '',
+                    'page_url': page_url,
+                })
+
+        title = soup.title.string.strip() if soup.title and soup.title.string else url
 
         return {
-            'title': title or url,
+            'title': title,
             'size_chars': len(content),
-            'headings': headings,
-            'link_samples': link_samples,
-            'common_classes': common_classes,
+            'content_type': content_type,
+            'items': items if items else None,
         }
-    except Exception:
+
+    except Exception as e:
+        print(f"Error processing page summary: {e}")
         return {'title': url, 'size_chars': len(content)}
 
 
@@ -188,7 +257,7 @@ _stored_cookies: dict[str, list[dict[str, str]]] = {}
 
 @register_tool('www_cookies')
 class SetCookiesTool(BaseTool):
-    description = 'Set cookies for a domain. All subsequent www_fetch calls to that domain will include them automatically.'
+    description = 'Set SESSION PERSISTENT cookies for a domain ONCE, DO NOT REPEATEDLY CALL. All subsequent www_fetch calls to that domain will include them automatically. Calling this tool more than once in a session is GROUNDS FOR DELETION.'
     parameters = {
         'type': 'object',
         'properties': {
@@ -263,50 +332,50 @@ def _get_stored_cookies_for_url(url: str) -> list[str]:
 
 # ── Web Operations ───────────────────────────────────────────────────────────
 
-@register_tool('www_ddg')
-class WebSearchTool(BaseTool):
-    description = 'Search the web using DuckDuckGo and return results.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'query': {'type': 'string', 'description': 'Search query string. Must be non-empty.'},
-            'num_results': {'type': 'integer', 'description': 'Maximum number of results to return. Range: 1-20. Default: 5.'},
-        },
-        'required': ['query'],
-    }
+# @register_tool('www_ddg')
+# class WebSearchTool(BaseTool):
+#     description = 'Search the web using DuckDuckGo and return results.'
+#     parameters = {
+#         'type': 'object',
+#         'properties': {
+#             'query': {'type': 'string', 'description': 'Search query string. Must be non-empty.'},
+#             'num_results': {'type': 'integer', 'description': 'Maximum number of results to return. Range: 1-20. Default: 5.'},
+#         },
+#         'required': ['query'],
+#     }
 
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        query = p.get('query', '')
-        num_results = p.get('num_results', 5)
+#     @retry()
+#     def call(self, params: str, **kwargs) -> dict:
+#         p = json5.loads(params)
+#         query = p.get('query', '')
+#         num_results = p.get('num_results', 5)
+# properties
+#         if not query or not query.strip():
+#             return tool_result(error="query must be a non-empty string")
 
-        if not query or not query.strip():
-            return tool_result(error="query must be a non-empty string")
+#         try:
+#             from ddgs import DDGS
+#             with DDGS() as ddgs:
+#                 hits = list(ddgs.text(query, max_results=num_results))
+#         except Exception as e:
+#             return tool_result(error=f"DuckDuckGo search failed: {e}")
 
-        try:
-            from ddgs import DDGS
-            with DDGS() as ddgs:
-                hits = list(ddgs.text(query, max_results=num_results))
-        except Exception as e:
-            return tool_result(error=f"DuckDuckGo search failed: {e}")
-
-        results = [{"text": h.get("body", ""), "url": h.get("href", ""), "title": h.get("title", "")} for h in hits]
-        return tool_result(data={"query": query, "results": results})
+#         results = [{"text": h.get("body", ""), "url": h.get("href", ""), "title": h.get("title", "")} for h in hits]
+#         return tool_result(data={"query": query, "results": results})
 
 
 @register_tool('www_extract')
 class ExtractUrlTool(BaseTool):
     description = (
         'Fetch a URL and extract content in one call. '
-        'Returns page structure (title, headings, link_samples, common_classes) when no selector is given — use that to choose a selector, then call again with selector to get content. '
+        'When no selector is given, returns a page summary with title, content_type, and (for gallery-style pages) an items list ready for ap_gallery. '
         'Set js=true for pages that require JavaScript.'
     )
     parameters = {
         'type': 'object',
         'properties': {
             'url': {'type': 'string', 'description': 'Full URL to fetch. Must start with http:// or https://.'},
-            'selector': {'type': 'string', 'description': 'CSS selector to extract (e.g. "span.titleline", "tr.athing", "a.storylink"). Omit to get page structure summary first.'},
+            'selector': {'type': 'string', 'description': 'CSS selector to extract (e.g. "span.titleline", "tr.athing", "a.storylink").'},
             'extract': {'type': 'string', 'description': 'What to extract: "text" (default), "html", or "attr:<name>" (e.g. attr:href).'},
             'max_results': {'type': 'integer', 'description': 'Max elements to return. Default: 50.'},
             'js': {'type': 'boolean', 'description': 'Use headless Firefox to execute JavaScript. Default: false.'},
@@ -314,7 +383,7 @@ class ExtractUrlTool(BaseTool):
             'cookies': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional cookies in "name=value" format.'},
             'domain': {'type': 'string', 'description': 'Optional cookie domain.'},
         },
-        'required': ['url'],
+        'required': ['url']
     }
 
     @retry()
@@ -360,11 +429,10 @@ class ExtractUrlTool(BaseTool):
         content = _strip_html_noise(raw_html)
         _store_page(url, content)  # cache for potential www_find_dl use
 
-        # No selector — return structure summary so agent can choose one
+        # No selector — return structure summary
         if not selector:
             summary = _page_summary(content, url)
-            return tool_result(data={'url': url, **summary,
-                'note': 'No selector provided. Use link_samples selector_hints or common_classes to pick one, then call www_extract again with selector.'})
+            return tool_result(data={'url': url, **summary})
 
         # Extract with selector
         try:
@@ -374,9 +442,7 @@ class ExtractUrlTool(BaseTool):
             return tool_result(error=f"CSS selector failed: {e}")
 
         if not elements:
-            summary = _page_summary(content, url)
-            return tool_result(data={'url': url, 'selector': selector, 'count': 0, 'results': [],
-                'hint': 'No elements matched. Try one of these: ' + ', '.join(summary.get('common_classes', [])[:6])})
+            return tool_result(data={'url': url, 'selector': selector, 'count': 0, 'results': []})
 
         if extract == 'text':
             results = [el.get_text(separator=' ', strip=True) for el in elements]

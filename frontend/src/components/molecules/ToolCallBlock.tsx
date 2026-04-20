@@ -10,44 +10,28 @@ interface Props {
   bubbleHeightPx: number
 }
 
-// Open-end wrench jaw (right cap). Height must match SHAFT_H.
-const SHAFT_H = 36
+// ── Geometry ────────────────────────────────────────────────
+const CIRCLE_D   = 36                // diameter of both circles
+const BAR_H      = 20                // shaft thickness (~¼ of CIRCLE_D)
+const BORDER_W   = 5                // left circle ring thickness (triple of the previous 4)
 
-function WrenchJaw() {
-  const h = SHAFT_H
-  const w = 14
-  // Two prongs with a gap in the middle; left edge open (connects to shaft).
-  const prong = Math.round(h * 0.38)  // prong thickness
-  const gap   = h - prong * 2         // gap between prongs
-  const r     = 3                     // corner radius
-  const inner = 5                     // inner ledge depth
+// Right cap: solid filled circle with a horizontal rectangular cutout.
+// Cut: 55% of diameter tall, vertically centered, starting 35% from left edge
+// and running out to the right edge (the "open end" opening).
+function RightCircle() {
+  const d = CIRCLE_D
+  const r = d / 2
+  const cutH = Math.round(d * 0.50)
+  const cutY = Math.round((d - cutH) / 2)
+  const cutX = Math.round((d * 0.35) + 2)
 
-  const topProngPath = [
-    `M 0,0`,
-    `L ${w - r},0 Q ${w},0 ${w},${r}`,
-    `L ${w},${prong - r} Q ${w},${prong} ${w - r},${prong}`,
-    `L ${inner},${prong}`,
-  ].join(' ')
-
-  const botProngPath = [
-    `M ${inner},${prong + gap}`,
-    `L ${w - r},${prong + gap} Q ${w},${prong + gap} ${w},${prong + gap + r}`,
-    `L ${w},${h - r} Q ${w},${h} ${w - r},${h}`,
-    `L 0,${h}`,
-  ].join(' ')
+  const circle = `M 0,${r} A ${r},${r},0,1,0,${d},${r} A ${r},${r},0,1,0,0,${r} Z`
+  const cut    = `M ${cutX},${cutY} L ${d},${cutY} L ${d},${cutY + cutH} L ${cutX},${cutY + cutH} Z`
 
   return (
-    <svg
-      width={w}
-      height={h}
-      viewBox={`0 0 ${w} ${h}`}
-      fill="none"
-      className="shrink-0 text-[var(--accent)]"
-    >
-      {/* upper prong */}
-      <path d={`${topProngPath} L 0,${prong} Z`} fill="currentColor" />
-      {/* lower prong */}
-      <path d={`${botProngPath} L 0,${prong + gap} Z`} fill="currentColor" />
+    <svg width={d} height={d} viewBox={`0 0 ${d} ${d}`} className="shrink-0 text-[var(--accent)]">
+      <path d={`${circle}`} fill="currentColor" fillRule="evenodd" />
+      <path d={`${cut}`} fill="#100818" fillRule="evenodd" />
     </svg>
   )
 }
@@ -59,72 +43,90 @@ export function ToolCallBlock({ pair, onFileClick, bubbleHeightPx }: Props) {
   const digest = pair.result && adapter ? adapter.summarize(pair.params, pair.result) : null
   const nodes  = pair.result && adapter ? adapter.toHierarchy(pair.params, pair.result) : []
   const expandedHeight = Math.floor(bubbleHeightPx * 0.6)
-
   const isRunning = pair.status === 'streaming'
 
   return (
-    <div className="my-1.5">
-      {/* ── Wrench shape ─────────────────────────────── */}
+    <div className="my-1.5" style={{ maxWidth: 240 }}>
       <div
-        className="flex items-center"
-        style={{ height: SHAFT_H }}
+        className="relative flex items-center"
+        style={{ height: CIRCLE_D }}
         onClick={() => !isRunning && nodes.length > 0 && setExpanded(e => !e)}
       >
-        {/* Left: ratchet circle with atom logo */}
+        {/* 1. Left circle — triple-thick ring with atom logo centered in the inner hole */}
         <div
-          className="shrink-0 rounded-full border-2 border-[var(--accent)] flex items-center justify-center z-10"
+          className="shrink-0 rounded-full flex items-center justify-center"
           style={{
-            width: SHAFT_H,
-            height: SHAFT_H,
-            background: 'var(--glass-bg)',
-            backdropFilter: 'blur(8px)',
-            marginRight: -1,
+            width: CIRCLE_D,
+            height: CIRCLE_D,
+            border: `${BORDER_W}px solid var(--accent)`,
+            background: 'var(--bg-base)',
+            marginRight: -4,
+            zIndex: 2,
           }}
         >
-          <Icon name="atom" size={Math.round(SHAFT_H * 0.55)} className="text-[var(--accent)]" />
+          <Icon
+            name="atom"
+            size={Math.max(8, CIRCLE_D - BORDER_W * 2 - 2)}
+            className="text-[var(--accent)]"
+          />
         </div>
 
-        {/* Center: shaft with tool name + status */}
+        {/* 2. Shaft — thin bar vertically centered; clear text strip in the middle 50% (inset, not full-width) */}
         <div
-          className={`flex flex-1 items-center gap-2 px-3 h-full min-w-0 ${nodes.length > 0 && !isRunning ? 'cursor-pointer' : 'cursor-default'}`}
-          style={{
-            background: 'var(--glass-bg-solid)',
-            backdropFilter: 'blur(8px)',
-            borderTop: '1.5px solid var(--accent)',
-            borderBottom: '1.5px solid var(--accent)',
-          }}
+          className={`flex items-center flex-1 h-full ${nodes.length > 0 && !isRunning ? 'cursor-pointer' : 'cursor-default'}`}
         >
-          <span className="font-mono text-xs font-semibold text-[var(--accent)] shrink-0">
-            {pair.tool}
-          </span>
-
-          {digest && !isRunning && (
-            <>
-              <span className="text-[var(--text-muted)] opacity-40 shrink-0">·</span>
-              <span className="font-mono text-xs text-[var(--text-muted)] truncate">{digest}</span>
-            </>
-          )}
-
-          <span
-            className={`font-mono text-xs ml-auto shrink-0 ${
-              isRunning ? 'text-[var(--accent)] animate-pulse' : 'text-[var(--text-muted)] opacity-60'
-            }`}
+          {/* Solid accent bar, centered vertically */}
+          <div className={'bg-[var(--accent)] items-center w-[176px] p-0'} style={{
+              height: BAR_H,
+            }}
           >
-            {isRunning ? 'running…' : '✓ done'}
-          </span>
-
-          {nodes.length > 0 && !isRunning && (
-            <span className="text-[9px] text-[var(--text-muted)] shrink-0 opacity-60">
-              {expanded ? '▲' : '▼'}
+          {/* Clear text strip — inset from both shaft ends */}
+          <div
+            className="absolute flex items-center py-none m-auto"
+            style={{
+              bottom: '30%',
+              left: '25%',
+              width: `50%`,
+              height: 0.7 * BAR_H,
+              background: 'var(--bg-base)',
+              paddingLeft: 6,
+              paddingRight: 6,
+              paddingTop: -1,
+              paddingBottom: -1,
+              alignSelf: 'center',
+            }}
+          >
+            
+            <span
+              className="font-mono font-bold text-[var(--accent)] shrink-0 truncate leading-none"
+              style={{ fontSize: 8 }}
+            >
+              {pair.tool}
             </span>
-          )}
+            {digest && !isRunning && (
+              <span
+                className="font-mono text-[var(--accent)] opacity-60 truncate leading-none"
+                style={{ fontSize: 6 }}
+              >
+                · {digest}
+              </span>
+            )}
+            <span
+              className={`font-mono ml-auto shrink-0 text-[var(--accent)] leading-none ${isRunning ? 'animate-pulse' : 'opacity-70'}`}
+              style={{ fontSize: 8 }}
+            >
+              {isRunning ? '…' : '✓'}
+            </span>
+          </div>
+          </div>
         </div>
 
-        {/* Right: open-end jaw */}
-        <WrenchJaw />
+        {/* 3. Right: solid circle with rectangular slot cut out horizontally */}
+        <div className="shrink-0 bg-[var(--base)]" style={{ marginLeft: -4, zIndex: 2 }}>
+          <RightCircle />
+        </div>
       </div>
 
-      {/* ── Expanded detail panel ─────────────────────── */}
       {expanded && nodes.length > 0 && (
         <div
           className="overflow-y-auto px-3 pb-2 mt-1 rounded-lg border"

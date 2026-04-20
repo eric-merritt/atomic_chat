@@ -106,6 +106,10 @@ TOOL_REF: dict[str, str] = {
     # MCP
     "mcp_init_conn":       "initialize connection",
     "mcp_call_tool":       "call tool using MCP",
+    # Task List
+    "tl_ref":              "reference the current task list (returns ids, numbers, titles, statuses)",
+    "tl_add":              "add a task; optional between=[id_a, id_b] inserts between two existing tasks",
+    "tl_done":             "mark a task done by id",
     # Accounting
     "fa_ledger":           "create ledger",
     "fa_new_acct":         "create account",

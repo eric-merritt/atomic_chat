@@ -6,7 +6,7 @@ import functools
 
 # Hard cap on total serialized tool result size fed back to the LLM.
 # Prevents runaway context explosions from large tool outputs.
-_MAX_RESULT_CHARS = 12_000
+_MAX_RESULT_CHARS = 15_000
 
 
 def _cap(data) -> tuple:

@@ -1171,7 +1171,7 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
 
     Args:
         model: Ollama model name. Defaults to env or 'qwen3:8b'.
-        num_ctx: Context window size. Defaults to OLLAMA_NUM_CTX.
+        num_ctx: Context window size. Defaults to LLAMA_ARG_CTX_SIZE.
 
     Returns:
         Dict suitable for qwen-agent Assistant(llm=...).
@@ -1179,10 +1179,10 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
     return {
         'model': model or os.environ.get('CHAT_MODEL', 'qwen3:8b'),
         'model_type': 'oai',
-        'model_server': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434') + '/v1',
+        'model_server': os.environ.get('LLAMA_SERVER_URL', 'http://localhost:11434') + '/v1',
         'api_key': 'EMPTY',
         'generate_cfg': {
-            'max_input_tokens': num_ctx or OLLAMA_NUM_CTX,
+            'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
         },
     }
 
@@ -1192,7 +1192,7 @@ def qwen_curation_llm_cfg(model: str = "") -> dict:
     return {
         'model': model or TASK_EXTRACTOR_MODEL,
         'model_type': 'oai',
-        'model_server': os.environ.get('OLLAMA_BASE_URL', 'http://localhost:11434') + '/v1',
+        'model_server': os.environ.get('LLAMA_SERVER_URL', 'http://localhost:11434') + '/v1',
         'api_key': 'EMPTY',
         'generate_cfg': {
             'max_input_tokens': OLLAMA_CURATION_NUM_CTX,
