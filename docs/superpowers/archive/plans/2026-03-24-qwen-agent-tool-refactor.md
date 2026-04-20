@@ -1171,7 +1171,7 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
 
     Args:
         model: Ollama model name. Defaults to env or 'qwen3:8b'.
-        num_ctx: Context window size. Defaults to OLLAMA_NUM_CTX.
+        num_ctx: Context window size. Defaults to LLAMA_ARG_CTX_SIZE.
 
     Returns:
         Dict suitable for qwen-agent Assistant(llm=...).
@@ -1182,7 +1182,7 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
         'model_server': os.environ.get('LLAMA_SERVER_URL', 'http://localhost:11434') + '/v1',
         'api_key': 'EMPTY',
         'generate_cfg': {
-            'max_input_tokens': num_ctx or OLLAMA_NUM_CTX,
+            'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
         },
     }
 

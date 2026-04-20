@@ -6,7 +6,7 @@ import os
 DEFAULT_WORKSPACE = os.environ.get("DEFAULT_WORKSPACE", os.path.expanduser("~/workspace"))
 
 # Context window size (tokens)
-OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "32768"))
+LLAMA_ARG_CTX_SIZE = int(os.environ.get("LLAMA_ARG_CTX_SIZE", "32768"))
 
 # Seconds between requests to the same platform
 RATE_LIMITS = {
@@ -25,14 +25,14 @@ CONTEXT_SUMMARIZE_THRESHOLD = float(os.environ.get("CONTEXT_SUMMARIZE_THRESHOLD"
 
 
 def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
-  """Build a qwen-agent LLM config pointing at the local Ollama instance."""
+  """Build a qwen-agent LLM config pointing at the local llama.cpp instance."""
   return {
-  'model': model or os.environ.get('CHAT_MODEL', 'qwen3:8b'),
+  'model': model or os.environ.get('CHAT_MODEL', 'Qwen3.5-9B'),
   'model_type': 'oai',
   'model_server': os.environ.get('LLAMA_SERVER_URL', 'http://localhost:11505') + '/v1',
   'api_key': 'EMPTY',
   'generate_cfg': {
-    'max_input_tokens': num_ctx or OLLAMA_NUM_CTX,
+    'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
   },
   }
 
