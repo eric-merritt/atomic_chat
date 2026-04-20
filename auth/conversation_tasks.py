@@ -36,6 +36,7 @@ class ConversationTask(Base):
         nullable=True,
     )
     created_at = Column(DateTime(timezone=True), default=_now)
+    notified_at = Column(DateTime(timezone=True), nullable=True)
 
     conversation = relationship("Conversation")
     dependency = relationship("ConversationTask", remote_side="ConversationTask.id")

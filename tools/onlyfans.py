@@ -152,7 +152,7 @@ class SaveMediaTool(BaseTool):
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         url = p['url']
-        file_path = p['file_path']
+        file_path = os.path.expanduser(p['file_path'])
         if not url.startswith(("http://", "https://")):
             return tool_result(error="url must start with http:// or https://")
         try:
@@ -179,7 +179,7 @@ class ExtractImagesAndVideosTool(BaseTool):
     @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        save_dir = p['save_dir']
+        save_dir = os.path.expanduser(p['save_dir'])
         try:
             driver = _get_driver()
             os.makedirs(save_dir, exist_ok=True)
@@ -235,7 +235,7 @@ class ExtractMediaTool(BaseTool):
     @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        save_dir = p['save_dir']
+        save_dir = os.path.expanduser(p['save_dir'])
         try:
             driver = _get_driver()
             os.makedirs(save_dir, exist_ok=True)

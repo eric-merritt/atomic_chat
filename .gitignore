@@ -29,6 +29,8 @@ auth/auth.db
 image.txt
 replTab.py
 tmp
+*.mp4
+*.png
 
 # Frontend
 frontend/node_modules/
