@@ -2,10 +2,10 @@ import json
 import logging
 from datetime import datetime, timezone
 import os as _os
+import requests
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify, Response, stream_with_context, send_file, g
 from flask_login import login_required, current_user
-import LLAMA_SERVER_URL as llama_client
 import json5
 from qwen_agent.agents import Assistant
 from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
@@ -24,6 +24,8 @@ from auth.db import init_db, SessionLocal, get_db
 from auth.conversation_tasks import ConversationTask
 
 load_dotenv()
+
+LLAMA_CPP_BASE_URL = _os.environ.get('LLAMA_CPP_BASE_URL', 'http://localhost:8080')
 
 
 
@@ -689,11 +691,19 @@ def summarize_context():
   )
 
   try:
+    resp = requests.post(
+      f"{LLAMA_CPP_BASE_URL}/v1/chat/completions",
+      json={
+        "model": SUMMARIZE_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+      },
     resp = LLAMA_SERVER_URL.chat(
       model=SUMMARIZE_MODEL,
       messages=[{"role": "user", "content": prompt}],
     )
-    summary = resp["message"]["content"].strip()
+    resp.raise_for_status()
+    summary = resp.json()["choices"][0]["message"]["content"].strip()
   except Exception as e:
     return jsonify({"error": f"Summarization failed: {e}"}), 500
 
@@ -717,6 +727,10 @@ def summarize_context():
 def list_models():
   """List locally available llama.cpp models."""
   try:
+    resp = requests.get(f"{LLAMA_CPP_BASE_URL}/v1/models")
+    resp.raise_for_status()
+    data = resp.json()
+    names = [m["id"] for m in data.get("data", [])]
     models = re.POST('/v1/models')
     names = [m.model for m in models.models]
     prefs = current_user.preferences or {}
@@ -775,8 +789,10 @@ def main():
 
 def cli_model_picker():
   try:
-    models = requests.get(LLAMA_SERVER_URL/v1/models).list()
-    names = [m.model for m in models.models]
+    resp = requests.get(f"{LLAMA_CPP_BASE_URL}/v1/models")
+    resp.raise_for_status()
+    data = resp.json()
+    names = [m["id"] for m in data.get("data", [])]
   except Exception as e:
     print(f"Error listing models: {e}")
     return None
