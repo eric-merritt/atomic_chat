@@ -6,6 +6,7 @@ import re
 import json5
 
 from tools._output import tool_result
+from main import CHAT_MODEL
 
 
 def enrich_data(data: str, goal: str, max_iterations: int = 5, eval_model: str = 'qwen3:4b') -> dict:
@@ -17,16 +18,15 @@ def enrich_data(data: str, goal: str, max_iterations: int = 5, eval_model: str =
         return tool_result(error="Empty data input.")
 
     try:
-        from config import OLLAMA_NUM_CTX
+        from config import LLAMA_ARG_CTX_SIZE
         from qwen_agent.llm import get_chat_model
         llm = get_chat_model({
-            'model': f'ollama/{eval_model}',
-            'model_server': 'http://localhost:11434/v1',
-            'api_key': 'ollama',
-            'generate_cfg': {'temperature': 0, 'max_input_tokens': OLLAMA_NUM_CTX},
+            'model': f'{CHAT_MODEL}',
+            'model_server': 'http://localhost:11505/',
+            'generate_cfg': {'temperature': 0, 'max_input_tokens': LLAMA_ARG_CTX_SIZE},
         })
     except Exception as e:
-        return tool_result(error=f"Failed to initialize eval model '{eval_model}': {e}. Run: ollama pull {eval_model}")
+        return tool_result(error=f"Failed to initialize eval model '{eval_model}': {e}. Run: LLAMA_ARG_CTX_SIZE pull {eval_model}")
 
     system_prompt = """You are a data enrichment engine. Your job is to iteratively add new dimensions/considerations to data until the goal is fully satisfied.
 
@@ -140,7 +140,7 @@ Iteration {iteration} of {max_iterations}. Add the next enrichment dimension, or
 _ENRICH_PARAMS = {
     'enrich_goal':       {'type': 'string',  'description': 'If set, pipe tool output through an LLM enrichment loop toward this goal.'},
     'enrich_iterations': {'type': 'integer', 'description': 'Max enrichment iterations. Default: 5.'},
-    'enrich_model':      {'type': 'string',  'description': 'Ollama model for enrichment. Default: qwen3:4b.'},
+    'enrich_model':      {'type': 'string',  'description': 'LLAMA_ARG_CTX_SIZE model for enrichment. Default: qwen3:4b.'},
 }
 
 
