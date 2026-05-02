@@ -39,7 +39,7 @@ jobs:
 
       - name: Build MSI
         working-directory: installer
-        run: wix build atomic-chat.wxs -o atomic-chat-setup.msi
+        run: wix build atomic-chat.wxs -ext WixToolset.UI.wixext -o atomic-chat-setup.msi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
