@@ -7,6 +7,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 LOGDIR="$DIR/logs"
 mkdir -p "$LOGDIR"
 
+[[ -f "$DIR/.env" ]] && { set -a; source "$DIR/.env"; set +a; }
+
 # PID tracking
 PIDFILE_LLAMA="$LOGDIR/llama.pid"
 PIDFILE_LLAMA_SUMMARY="$LOGDIR/llama_summary.pid"

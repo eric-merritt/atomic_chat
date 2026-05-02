@@ -22,6 +22,7 @@ PUBLIC_PATHS = frozenset({
     "/api/auth/oauth/google/callback",
     "/api/auth/cli/initiate",
     "/api/auth/cli/poll",
+    "/api/bridge/pubkey",
 })
 
 # Static IP auto-auth is disabled for now per user request.
@@ -44,6 +45,7 @@ def load_user_from_request(req):
         db = get_db()
         sess = db.query(UserSession).get(session_id)
         if sess and sess.expires_at > datetime.now(timezone.utc):
+            g.auth_via_api_key = False
             return sess.user
 
     # 2. API key (Authorization: Bearer or X-API-Key)
@@ -56,7 +58,6 @@ def load_user_from_request(req):
 
     if api_key:
         db = get_db()
-        # Check against all non-revoked keys — bcrypt compare
         keys = db.query(ApiKey).filter_by(revoked=False).filter(
             ApiKey.key_prefix == api_key[:8]
         ).all()
@@ -64,8 +65,10 @@ def load_user_from_request(req):
             if bcrypt.checkpw(api_key.encode(), k.key_hash.encode()):
                 k.last_used = datetime.now(timezone.utc)
                 db.commit()
+                g.auth_via_api_key = True
                 return k.user
 
+    g.auth_via_api_key = False
     return None
 
 

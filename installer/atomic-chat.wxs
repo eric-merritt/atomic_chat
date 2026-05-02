@@ -22,7 +22,7 @@
 
     <ComponentGroup Id="AgentBinary" Directory="INSTALLFOLDER">
       <Component Id="AgentExe" Guid="*">
-        <File Source="..\dist\atomic-chat-agent.exe" KeyPath="yes" />
+        <File Source="dist\atomic-chat-agent.exe" KeyPath="yes" />
       </Component>
     </ComponentGroup>
 

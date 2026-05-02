@@ -1,55 +1,271 @@
 #!/usr/bin/env python3
 """
-Client agent for agent.eric-merritt.com
+Atomic Chat — client agent bridge
 
-Connects to the server via WebSocket. The server runs the LLM; when it
-needs to call a tool (read_file, grep, etc.) the call is sent here for
-local execution on YOUR machine, and the result is returned to the server
-so the LLM can continue reasoning.
+Connects to the server, authenticates, then serves filesystem and bash
+tool calls on behalf of the logged-in user.
 
-Usage:
-    python client_agent.py                          # interactive chat
-    python client_agent.py --message "read my code" # one-shot
-    python client_agent.py --server ws://localhost:5000/api/chat/ws
-
-Environment:
-    AGENT_API_KEY   — your external API key (or pass --key)
-    AGENT_SERVER    — WebSocket URL (default: wss://agent.eric-merritt.com/api/chat/ws)
+Environment (loaded from .env.client):
+    AGENT_SERVER   — WebSocket URL for the bridge endpoint
+    ATOMIC_HOST    — Base HTTP URL for the server (pubkey, auth)
+    AGENT_API_KEY  — Optional; session auth is used if absent
 """
 
 import argparse
+import base64
 import json
 import os
+import shutil
+import stat as stat_mod
+import subprocess
 import sys
+import tempfile
+import time
+from pathlib import Path
 
+import requests
 from websockets.sync.client import connect as ws_connect
+from dotenv import load_dotenv
+
+_IS_FROZEN = getattr(sys, "frozen", False)
+
+
+def _find_env_file() -> Path | None:
+    home_cfg = Path.home() / ".atomic_chat" / ".env.client"
+    if _IS_FROZEN:
+        candidates = [
+            Path(os.environ.get("APPDATA", "")) / "AtomicChat" / ".env.client",
+            home_cfg,
+            Path(sys.executable).parent / ".env.client",
+        ]
+    else:
+        candidates = [Path(__file__).parent / ".env.client", home_cfg]
+    return next((p for p in candidates if p.exists()), None)
+
+
+_env_file = _find_env_file()
+if _env_file:
+    load_dotenv(_env_file, override=True)
+
+# ── Config ────────────────────────────────────────────────────────────────────
+ATOMIC_HOST  = os.environ.get("ATOMIC_HOST",  "https://agent.eric-merritt.com")
+AGENT_SERVER = os.environ.get("AGENT_SERVER", "wss://agent.eric-merritt.com/api/bridge/connect")
+ALLOWED_PATHS = [
+    Path(p.strip()).expanduser().resolve()
+    for p in os.environ.get("ALLOWED_PATHS", str(Path.home())).split(",")
+    if p.strip()
+]
+
+
+def _config_dir() -> Path:
+    if _IS_FROZEN and sys.platform == "win32":
+        return Path(os.environ.get("APPDATA", Path.home())) / "AtomicChat"
+    return Path.home() / ".config" / "atomic_chat"
+
+
+_CONFIG_DIR     = _config_dir()
+CREDS_PATH      = _CONFIG_DIR / "credentials.json"
+DISCLAIMER_PATH = _CONFIG_DIR / "bash_disclaimer_accepted"
+
+
+# ── Credentials / session auth ────────────────────────────────────────────────
+
+def _load_creds() -> dict:
+    try:
+        return json.loads(CREDS_PATH.read_text()) if CREDS_PATH.exists() else {}
+    except Exception:
+        return {}
+
+
+def _save_creds(creds: dict):
+    CREDS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # 0o600: credentials must not be world-readable
+    fd = os.open(CREDS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(creds, indent=2))
+
+
+def _check_session(session_id: str) -> bool:
+    try:
+        r = requests.get(
+            f"{ATOMIC_HOST}/api/auth/me",
+            cookies={"session_id": session_id},
+            timeout=8,
+        )
+        return r.ok
+    except Exception:
+        return False
+
+
+def _browser_auth() -> str | None:
+    """Open browser approval flow, return session_id or None."""
+    try:
+        resp = requests.post(f"{ATOMIC_HOST}/api/auth/cli/initiate", timeout=8)
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"[error] Could not reach server: {e}", file=sys.stderr)
+        return None
+
+    token = resp.json()["token"]
+    url   = f"{ATOMIC_HOST}/cli-auth?token={token}"
+    print(f"\nOpen this URL to authenticate:\n  {url}\n")
+    try:
+        if sys.platform == "win32":
+            os.startfile(url)  # noqa: S606
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", url])
+        else:
+            subprocess.Popen(["xdg-open", url])
+    except Exception:
+        pass
+
+    deadline = time.time() + 300
+    print("Waiting for browser approval", end="", flush=True)
+    while time.time() < deadline:
+        time.sleep(3)
+        print(".", end="", flush=True)
+        try:
+            data = requests.get(
+                f"{ATOMIC_HOST}/api/auth/cli/poll",
+                params={"token": token},
+                timeout=8,
+            ).json()
+        except Exception:
+            continue
+        status = data.get("status")
+        if status == "approved":
+            print(" approved!")
+            return data["session_id"]
+        if status in ("denied", "expired"):
+            print(f" {status}.")
+            return None
+    print(" timed out.")
+    return None
+
+
+def ensure_session() -> str:
+    """Return a valid session_id, triggering browser auth if needed."""
+    creds = _load_creds()
+    if sid := creds.get("session_id"):
+        if _check_session(sid):
+            return sid
+
+    sid = _browser_auth()
+    if not sid:
+        print("[error] Authentication failed.", file=sys.stderr)
+        sys.exit(1)
+
+    _save_creds({"session_id": sid})
+    return sid
+
+
+# ── Challenge-response ────────────────────────────────────────────────────────
+
+def do_challenge_response(ws) -> bool:
+    from cryptography.hazmat.primitives import serialization, hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    try:
+        pubkey_pem = requests.get(f"{ATOMIC_HOST}/api/bridge/pubkey", timeout=8).text
+        public_key = serialization.load_pem_public_key(pubkey_pem.encode())
+    except Exception as e:
+        print(f"[error] Could not fetch server public key: {e}", file=sys.stderr)
+        return False
+
+    raw = ws.recv()
+    msg = json.loads(raw)
+    if msg.get("type") != "challenge":
+        print(f"[error] Expected challenge, got: {msg.get('type')}", file=sys.stderr)
+        return False
+
+    encrypted = public_key.encrypt(
+        msg["nonce"].encode(),
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None,
+        ),
+    )
+    ws.send(json.dumps({
+        "type": "challenge_response",
+        "blob": base64.b64encode(encrypted).decode(),
+    }))
+
+    raw = ws.recv()
+    msg = json.loads(raw)
+    if msg.get("type") == "authenticated":
+        return True
+    print(f"[error] Auth failed: {msg.get('message', msg)}", file=sys.stderr)
+    return False
+
+
+# ── Bash disclaimer ───────────────────────────────────────────────────────────
+
+def _ensure_bash_disclaimer():
+    if DISCLAIMER_PATH.exists():
+        return
+    print("\n" + "=" * 60)
+    print("  NOTICE — Bash Tool")
+    print("=" * 60)
+    print(
+        "\nThe agent can generate and execute shell commands on YOUR machine.\n"
+        "\n  • Commands run as YOUR user account\n"
+        "  • Back up important files before proceeding\n"
+        "  • Review each command before approving it\n"
+        "  • Anthropic/Eric are not responsible for agent-generated commands\n"
+    )
+    try:
+        answer = input("I understand and accept [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer != "y":
+        print("Bash tool disabled. Re-run the agent to reconsider.")
+        sys.exit(0)
+    DISCLAIMER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    DISCLAIMER_PATH.touch()
+    print("Bash tool enabled.\n")
+
+
+# ── Path guard ────────────────────────────────────────────────────────────────
+
+def _get_path(params: dict, default: str = "") -> str:
+    """Expand and validate a path param against ALLOWED_PATHS."""
+    path = os.path.expanduser(params.get("path", default))
+    try:
+        target = Path(path).resolve()
+    except Exception:
+        raise PermissionError(f"Invalid path: {path!r}")
+    if not any(target == ap or target.is_relative_to(ap) for ap in ALLOWED_PATHS):
+        allowed = ", ".join(str(p) for p in ALLOWED_PATHS)
+        raise PermissionError(
+            f"Path {str(target)!r} is outside ALLOWED_PATHS ({allowed}). "
+            "Edit ALLOWED_PATHS in .env.client to grant access."
+        )
+    return path
 
 
 # ── Local tool implementations ────────────────────────────────────────────────
-# Only safe, read-heavy tools are executed client-side.  Write tools require
-# explicit --allow-writes flag.
 
-def _tool_read_file(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
+def _tool_fs_read(params: dict) -> str:
+    path  = _get_path(params)
     start = params.get("start_line", 0)
-    end = params.get("end_line", -1)
+    end   = params.get("end_line", -1)
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         lines = f.readlines()
-    subset = lines[start:None if end == -1 else end]
+    subset   = lines[start:None if end == -1 else end]
     numbered = [f"{i:>6}  {line.rstrip()}" for i, line in enumerate(subset, start=start + 1)]
     return "\n".join(numbered)
 
 
-def _tool_file_info(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    stat = os.stat(path)
+def _tool_fs_info(params: dict) -> str:
+    path = _get_path(params)
+    st   = os.stat(path)
     info = {
-        "path": os.path.abspath(path),
-        "exists": True,
-        "size_bytes": stat.st_size,
-        "modified": stat.st_mtime,
-        "is_file": os.path.isfile(path),
-        "is_dir": os.path.isdir(path),
+        "path":       os.path.abspath(path),
+        "size_bytes": st.st_size,
+        "modified":   st.st_mtime,
+        "is_file":    stat_mod.S_ISREG(st.st_mode),
+        "is_dir":     stat_mod.S_ISDIR(st.st_mode),
     }
     if info["is_file"]:
         try:
@@ -60,21 +276,9 @@ def _tool_file_info(params: dict) -> str:
     return json.dumps(info, indent=2)
 
 
-def _tool_list_dir(params: dict) -> str:
-    import glob as glob_mod
-    path = os.path.expanduser(params.get("path", "."))
-    recursive = params.get("recursive", False)
-    pattern = params.get("pattern", "*")
-    if recursive:
-        entries = sorted(glob_mod.glob(os.path.join(path, "**", pattern), recursive=True))
-    else:
-        entries = sorted(glob_mod.glob(os.path.join(path, pattern)))
-    return "\n".join(entries)
-
-
-def _tool_tree(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", "."))
-    max_depth = params.get("max_depth", 3)
+def _tool_fs_tree(params: dict) -> str:
+    path        = _get_path(params, ".")
+    max_depth   = params.get("max_depth", 3)
     show_hidden = params.get("show_hidden", False)
     lines = []
 
@@ -88,37 +292,33 @@ def _tool_tree(params: dict) -> str:
             return
         if not show_hidden:
             entries = [e for e in entries if not e.startswith(".")]
-        dirs = [e for e in entries if os.path.isdir(os.path.join(dir_path, e))]
-        files = [e for e in entries if os.path.isfile(os.path.join(dir_path, e))]
-        for f in files:
-            lines.append(f"{prefix}{f}")
-        for d in dirs:
-            lines.append(f"{prefix}{d}/")
-            _walk(os.path.join(dir_path, d), prefix + "  ", depth + 1)
+        for e in entries:
+            full = os.path.join(dir_path, e)
+            if os.path.isdir(full):
+                lines.append(f"{prefix}{e}/")
+                _walk(full, prefix + "  ", depth + 1)
+            else:
+                lines.append(f"{prefix}{e}")
 
     lines.append(f"{os.path.basename(os.path.abspath(path))}/")
     _walk(path, "  ", 1)
     return "\n".join(lines)
 
 
-def _tool_grep(params: dict) -> str:
-    import re
-    import glob as glob_mod
-    pattern = params.get("pattern", "")
-    path = os.path.expanduser(params.get("path", "."))
-    file_pattern = params.get("file_pattern", "*")
-    ignore_case = params.get("ignore_case", False)
-    context = params.get("context", 0)
+def _tool_fs_grep(params: dict) -> str:
+    import re, glob as glob_mod
+    pattern     = params.get("pattern", "")
+    path        = _get_path(params, ".")
+    ignore_case = params.get("case_sensitive", False) is False
+    context     = params.get("context", 0)
     max_results = params.get("max_results", 50)
 
     flags = re.IGNORECASE if ignore_case else 0
     regex = re.compile(pattern, flags)
     results = []
 
-    if os.path.isfile(path):
-        files = [path]
-    else:
-        files = sorted(glob_mod.glob(os.path.join(path, "**", file_pattern), recursive=True))
+    files = [path] if os.path.isfile(path) else \
+            sorted(glob_mod.glob(os.path.join(path, "**", "*"), recursive=True))
 
     for filepath in files:
         if not os.path.isfile(filepath):
@@ -130,284 +330,177 @@ def _tool_grep(params: dict) -> str:
             continue
         for i, line in enumerate(lines):
             if regex.search(line):
-                start = max(0, i - context)
-                end = min(len(lines), i + context + 1)
-                snippet = []
-                for j in range(start, end):
-                    marker = ">" if j == i else " "
-                    snippet.append(f"  {marker} {j + 1:>5}  {lines[j].rstrip()}")
-                results.append(f"{filepath}:{i + 1}\n" + "\n".join(snippet))
+                s = max(0, i - context)
+                e = min(len(lines), i + context + 1)
+                snippet = [f"  {'>' if j == i else ' '} {j+1:>5}  {lines[j].rstrip()}" for j in range(s, e)]
+                results.append(f"{filepath}:{i+1}\n" + "\n".join(snippet))
                 if len(results) >= max_results:
-                    return "\n\n".join(results) + f"\n... (truncated at {max_results} results)"
-
-    if not results:
-        return f"No matches for /{pattern}/ in {path}"
-    return "\n\n".join(results)
+                    return "\n\n".join(results) + f"\n... (truncated at {max_results})"
+    return "\n\n".join(results) if results else f"No matches for /{pattern}/ in {path}"
 
 
-def _tool_find_files(params: dict) -> str:
-    import glob as glob_mod
-    path = os.path.expanduser(params.get("path", "."))
-    name = params.get("name", "") or params.get("pattern", "")
-    extension = params.get("extension", "")
-    contains = params.get("contains", "")
-    max_results = params.get("max_results", 50)
-
-    pat = name if name else "*"
-    if extension:
-        if not extension.startswith("."):
-            extension = "." + extension
-        pat = f"*{extension}" if not name else pat
-
-    matches = sorted(glob_mod.glob(os.path.join(path, "**", pat), recursive=True))
-    matches = [m for m in matches if os.path.isfile(m)]
-
-    if extension and name:
-        matches = [m for m in matches if m.endswith(extension)]
-
-    if contains:
-        filtered = []
-        for m in matches:
-            try:
-                with open(m, "r", encoding="utf-8", errors="replace") as f:
-                    if contains in f.read():
-                        filtered.append(m)
-            except (PermissionError, OSError):
-                continue
-        matches = filtered
-
-    return "\n".join(matches[:max_results])
-
-
-def _tool_find_definition(params: dict) -> str:
+def _tool_fs_find_def(params: dict) -> str:
     import re
-    symbol = params.get("symbol", "")
-    path = params.get("path", ".")
-    file_pattern = params.get("file_pattern", "*.py")
+    symbol = params.get("symbol", "") or params.get("name", "")
     patterns = [
         rf"^\s*(def|class)\s+{re.escape(symbol)}\b",
         rf"^\s*(export\s+)?(function|const|let|var|class)\s+{re.escape(symbol)}\b",
         rf"^{re.escape(symbol)}\s*=",
     ]
-    combined = "|".join(f"({p})" for p in patterns)
-    return _tool_grep({
-        "pattern": combined,
-        "path": path,
-        "file_pattern": file_pattern,
-        "context": 3,
+    return _tool_fs_grep({"pattern": "|".join(f"({p})" for p in patterns),
+                          "path": params.get("path", "."), "context": 3})
+
+
+def _tool_fs_write(params: dict) -> str:
+    path    = _get_path(params)
+    content = params.get("content", "")
+    mode    = params.get("mode", "append")
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    with open(path, "w" if mode == "overwrite" else "a", encoding="utf-8") as f:
+        written = f.write(content)
+    return f"{'Wrote' if mode == 'overwrite' else 'Appended'} {written} bytes to {os.path.abspath(path)}"
+
+
+def _tool_fs_replace(params: dict) -> str:
+    path        = _get_path(params)
+    start_line  = params.get("start_line", 1)
+    end_line    = params.get("end_line", 1)
+    replacement = params.get("replacement", "")
+    with open(path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    s = start_line - 1
+    e = len(lines) if end_line == -1 else end_line
+    new_line = replacement if replacement.endswith("\n") else replacement + "\n"
+    lines = lines[:s] + [new_line] + lines[e:]
+    # write to temp then rename so a mid-write crash doesn't truncate the original
+    with tempfile.NamedTemporaryFile("w", dir=Path(path).parent, delete=False, encoding="utf-8") as tmp:
+        tmp.writelines(lines)
+        tmp_path = tmp.name
+    shutil.move(tmp_path, path)
+    return f"Replaced lines {start_line}-{end_line} in {os.path.abspath(path)}"
+
+
+def _tool_bash(params: dict) -> str:
+    _ensure_bash_disclaimer()
+    command     = (params.get("command") or "").strip()
+    description = (params.get("description") or "").strip()
+    if not command:
+        return "ERROR: command is required"
+
+    print(f"\n[bash] {description}")
+    print(f"  $ {command}")
+    try:
+        answer = input("Run? [y/N]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer != "y":
+        return "User declined."
+
+    try:
+        result = subprocess.run(command, shell=True, text=True, capture_output=True, timeout=120)
+    except subprocess.TimeoutExpired:
+        return json.dumps({"stdout": None, "stderr": "Command timed out after 120s", "returncode": -1})
+    return json.dumps({
+        "stdout": (result.stdout or "")[:1_000_000] or None,
+        "stderr": (result.stderr or "")[:100_000] or None,
+        "returncode": result.returncode,
     })
 
 
-# ── Write tools (gated behind --allow-writes) ────────────────────────────────
+# ── Tool registry ─────────────────────────────────────────────────────────────
 
-def _tool_write_file(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    content = params.get("content", "")
-    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        written = f.write(content)
-    return f"Wrote {written} bytes to {os.path.abspath(path)}"
-
-
-def _tool_append_file(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    content = params.get("content", "")
-    with open(path, "a", encoding="utf-8") as f:
-        written = f.write(content)
-    return f"Appended {written} bytes to {os.path.abspath(path)}"
-
-
-def _tool_replace_in_file(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    old = params.get("old", "")
-    new = params.get("new", "")
-    count = params.get("count", 1)
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-    if old not in content:
-        return f"ERROR: String not found in {path}"
-    occurrences = content.count(old)
-    if count == 0:
-        new_content = content.replace(old, new)
-        replaced = occurrences
-    else:
-        new_content = content.replace(old, new, count)
-        replaced = min(count, occurrences)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    return f"Replaced {replaced} occurrence(s) in {os.path.abspath(path)}"
-
-
-def _tool_insert_at_line(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    line_number = params.get("line_number", 1)
-    content = params.get("content", "")
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    if not content.endswith("\n"):
-        content += "\n"
-    lines.insert(line_number - 1, content)
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    return f"Inserted at line {line_number} in {os.path.abspath(path)}"
-
-
-def _tool_delete_lines(params: dict) -> str:
-    path = os.path.expanduser(params.get("path", ""))
-    start = params.get("start", 1)
-    end = params.get("end", 1)
-    with open(path, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-    removed = lines[start - 1:end]
-    del lines[start - 1:end]
-    with open(path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    return f"Deleted lines {start}-{end} ({len(removed)} lines) from {os.path.abspath(path)}"
-
-
-# ── Tool registry ────────────────────────────────────────────────────────────
-
-READ_TOOLS = {
-    "read": _tool_read_file,
-    "info": _tool_file_info,
-    "ls": _tool_list_dir,
-    "tree": _tool_tree,
-    "grep": _tool_grep,
-    "find": _tool_find_files,
-    "definition": _tool_find_definition,
-}
-
-WRITE_TOOLS = {
-    "write": _tool_write_file,
-    "append": _tool_append_file,
-    "replace": _tool_replace_in_file,
-    "insert": _tool_insert_at_line,
-    "delete": _tool_delete_lines,
+TOOLS: dict[str, callable] = {
+    "fs_read":     _tool_fs_read,
+    "fs_info":     _tool_fs_info,
+    "fs_tree":     _tool_fs_tree,
+    "fs_grep":     _tool_fs_grep,
+    "fs_find_def": _tool_fs_find_def,
+    "fs_write":    _tool_fs_write,
+    "fs_replace":  _tool_fs_replace,
+    "bash":        _tool_bash,
 }
 
 
-def execute_tool(name: str, params: dict, allow_writes: bool) -> str:
-    """Execute a tool by name, returning the result string."""
-    if name in READ_TOOLS:
-        return READ_TOOLS[name](params)
-
-    if name in WRITE_TOOLS:
-        if not allow_writes:
-            return f"REFUSED: write tool '{name}' blocked (run with --allow-writes to enable)"
-        return WRITE_TOOLS[name](params)
-
-    return f"UNSUPPORTED: tool '{name}' is not available on this client"
+def execute_tool(name: str, params: dict) -> dict:
+    fn = TOOLS.get(name)
+    if fn is None:
+        return {"status": "error", "data": None, "error": f"Tool '{name}' not available on this client"}
+    try:
+        output = fn(params)
+        return {"status": "success", "data": output, "error": None}
+    except Exception as e:
+        return {"status": "error", "data": None, "error": str(e)}
 
 
-# ── WebSocket client loop ────────────────────────────────────────────────────
+# ── Bridge daemon ─────────────────────────────────────────────────────────────
 
-def chat_session(server_url: str, api_key: str, message: str, allow_writes: bool):
-    """Connect to the server, send a message, handle tool calls, print response."""
-    print(f"\033[90mConnecting to {server_url}...\033[0m")
+def run_bridge(session_id: str, server_url: str, reconnect: bool = True):
+    headers = {"Cookie": f"session_id={session_id}"}
 
-    with ws_connect(server_url) as ws:
-        # Send auth + message
-        ws.send(json.dumps({"api_key": api_key, "message": message}))
-
-        while True:
-            try:
-                raw = ws.recv()
-            except Exception:
-                break
-
-            if raw is None:
-                break
-
-            try:
-                event = json.loads(raw)
-            except json.JSONDecodeError:
-                print(f"\033[31m[bad frame] {raw[:200]}\033[0m")
-                continue
-
-            if "token" in event:
-                print(event["token"], end="", flush=True)
-
-            elif "tool_call" in event:
-                tc = event["tool_call"]
-                tool_name = tc["tool"]
-                tool_params = tc.get("params", {})
-                tool_id = tc.get("id", "")
-
-                print(f"\n\033[33m[tool] {tool_name}({json.dumps(tool_params, indent=None)})\033[0m")
-
-                try:
-                    result = execute_tool(tool_name, tool_params, allow_writes)
-                except Exception as e:
-                    result = f"ERROR: {e}"
-
-                # Show truncated result
-                preview = result[:200] + "..." if len(result) > 200 else result
-                print(f"\033[90m[result] {preview}\033[0m")
-
-                ws.send(json.dumps({
-                    "tool_result": {"id": tool_id, "output": result}
-                }))
-
-            elif "error" in event:
-                print(f"\n\033[31m[error] {event['error']}\033[0m")
-
-            elif event.get("done"):
-                break
-
-    print()  # final newline
-
-
-def interactive_loop(server_url: str, api_key: str, allow_writes: bool):
-    """REPL — enter messages, get responses with local tool execution."""
-    print("Agent client ready. Type 'quit' to exit.\n")
     while True:
+        print(f"[bridge] Connecting to {server_url}...")
         try:
-            msg = input("\033[1mYou:\033[0m ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            break
-        if not msg:
-            continue
-        if msg.lower() in ("quit", "exit"):
-            break
+            with ws_connect(server_url, additional_headers=headers) as ws:
+                if not do_challenge_response(ws):
+                    print("[bridge] Authentication failed — re-authenticating...")
+                    _save_creds({})
+                    return
 
-        print("\033[1mAgent:\033[0m ", end="")
-        try:
-            chat_session(server_url, api_key, msg, allow_writes)
+                print("[bridge] Connected and authenticated. Ready.")
+
+                while True:
+                    try:
+                        raw = ws.recv()
+                    except Exception:
+                        break
+                    if raw is None:
+                        break
+
+                    try:
+                        msg = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                    msg_type = msg.get("type")
+
+                    if msg_type == "tool_call":
+                        call_id   = msg["call_id"]
+                        tool_name = msg["tool"]
+                        args      = msg.get("args", {})
+                        print(f"[tool] {tool_name}({json.dumps(args, separators=(',', ':'))[:80]})")
+                        result = execute_tool(tool_name, args)
+                        ws.send(json.dumps({
+                            "type": "tool_result",
+                            "call_id": call_id,
+                            "result": result,
+                        }))
+                    elif msg_type == "error":
+                        print(f"[bridge] Server error: {msg.get('message')}")
+                    # pong: health-check reply, no action needed
+
+        except KeyboardInterrupt:
+            print("\n[bridge] Stopped.")
+            return
         except Exception as e:
-            print(f"\n\033[31mConnection error: {e}\033[0m")
+            print(f"[bridge] Disconnected: {e}")
 
+        if not reconnect:
+            return
+
+        print("[bridge] Reconnecting in 5s...")
+        time.sleep(5)
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Client agent for agent.eric-merritt.com",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-examples:
-  python client_agent.py
-  python client_agent.py --message "list files in ~/projects"
-  python client_agent.py --allow-writes --message "fix the typo in main.py"
-  AGENT_API_KEY=mykey python client_agent.py
-""",
-    )
-    parser.add_argument("--server", default=os.environ.get("AGENT_SERVER", "wss://agent.eric-merritt.com/api/chat/ws"),
-                        help="WebSocket URL (default: wss://agent.eric-merritt.com/api/chat/ws)")
-    parser.add_argument("--key", default=os.environ.get("AGENT_API_KEY", ""),
-                        help="API key (or set AGENT_API_KEY env var)")
-    parser.add_argument("--message", "-m", default="", help="One-shot message (skip interactive mode)")
-    parser.add_argument("--allow-writes", action="store_true",
-                        help="Allow the agent to write/modify files on your machine")
+    parser = argparse.ArgumentParser(description="Atomic Chat — client agent bridge")
+    parser.add_argument("--server", default=AGENT_SERVER, help="Bridge WebSocket URL")
+    parser.add_argument("--no-reconnect", action="store_true", help="Exit instead of reconnecting on disconnect")
     args = parser.parse_args()
 
-    if not args.key:
-        print("Error: API key required. Set AGENT_API_KEY or pass --key", file=sys.stderr)
-        sys.exit(1)
-
-    if args.message:
-        print("\033[1mAgent:\033[0m ", end="")
-        chat_session(args.server, args.key, args.message, args.allow_writes)
-    else:
-        interactive_loop(args.server, args.key, args.allow_writes)
+    session_id = ensure_session()
+    run_bridge(session_id, server_url=args.server, reconnect=not args.no_reconnect)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,8 @@ from pipeline.workflow_groups import WORKFLOW_GROUPS
 
 tools_bp = Blueprint("tools", __name__, url_prefix="/api")
 
+_VALID_GATES = {"waiver", "age"}
+
 
 @tools_bp.route("/tools/select-group", methods=["POST"])
 @login_required
@@ -19,6 +21,11 @@ def select_group():
     wg = WORKFLOW_GROUPS.get(group_name)
     if not wg:
         return jsonify({"error": f"Unknown group: {group_name}"}), 404
+
+    if wg.gate:
+        prefs = dict(current_user.preferences or {})
+        if not prefs.get(f"gate_{wg.gate}_accepted"):
+            return jsonify({"error": f"Gate '{wg.gate}' not accepted"}), 403
 
     db = get_db()
     prefs = dict(current_user.preferences or {})
@@ -34,3 +41,30 @@ def select_group():
     db.commit()
 
     return jsonify({"ok": True, "selected": prefs["selected_tools"]})
+
+
+@tools_bp.route("/tools/gate/status", methods=["GET"])
+@login_required
+def gate_status():
+    prefs = dict(current_user.preferences or {})
+    return jsonify({
+        gate: bool(prefs.get(f"gate_{gate}_accepted"))
+        for gate in _VALID_GATES
+    })
+
+
+@tools_bp.route("/tools/gate/accept", methods=["POST"])
+@login_required
+def accept_gate():
+    data = request.get_json(force=True)
+    gate = data.get("gate", "")
+    if gate not in _VALID_GATES:
+        return jsonify({"error": f"Unknown gate: {gate}"}), 400
+
+    db = get_db()
+    prefs = dict(current_user.preferences or {})
+    prefs[f"gate_{gate}_accepted"] = True
+    current_user.preferences = prefs
+    db.commit()
+
+    return jsonify({"ok": True, "gate": gate})
