@@ -46,7 +46,7 @@ export function ToolCallBlock({ pair, onFileClick, bubbleHeightPx }: Props) {
   const isRunning = pair.status === 'streaming'
 
   return (
-    <div className="my-1.5" style={{ maxWidth: 240 }}>
+    <div className="my-3" style={{ maxWidth: 240 }}>
       <div
         className="relative flex items-center"
         style={{ height: CIRCLE_D }}

@@ -8,6 +8,7 @@ import json5
 from qwen_agent.tools.base import BaseTool, register_tool
 
 from tools._output import tool_result
+from tools.web import _load_summary, _load_page
 
 _IMG_EXTS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 _VID_EXTS = {'.mp4', '.webm', '.avi', '.mkv', '.3gp'}
@@ -105,44 +106,70 @@ class ApVid(BaseTool):
 
 @register_tool('ap_txt')
 class ApTxt(BaseTool):
-    description = 'Display a block of plain text inline in the chat response. Use for file excerpts, log output, or any preformatted content.'
+    description = (
+        'Display a block of plain text inline in the chat response. '
+        'Pass `page_ref` (returned by www_find_content for non-gallery pages) to render the fetched page text — '
+        'do NOT retype the content; let the server load it. '
+        'Pass `content` for arbitrary text, file excerpts, or log output.'
+    )
     parameters = {
         'type': 'object',
         'properties': {
-            'content': {'type': 'string', 'description': 'Plain text content to display.'},
+            'page_ref': {'type': 'string', 'description': 'Ref handle from www_find_content (non-gallery pages). Server loads the page text; do not retype it.'},
+            'content': {'type': 'string', 'description': 'Plain text content to display directly.'},
             'title': {'type': 'string', 'description': 'Optional title for the text block.'},
         },
-        'required': ['content'],
+        'required': [],
     }
+
+    _MAX_CHARS = 10_000
 
     def call(self, params: str, **kwargs) -> dict:
         try:
             p = json5.loads(params)
         except Exception as e:
             return tool_result(error=f'Malformed JSON input: {e}')
-        if err := _require_str(p, 'content'):
-            return tool_result(error=err)
-        return tool_result({'type': 'ap_txt', 'content': p['content'], 'title': p.get('title', '')})
+
+        page_ref = (p.get('page_ref') or '').strip()
+        content = (p.get('content') or '').strip()
+        title = (p.get('title') or '').strip()
+
+        if page_ref:
+            entry = _load_page(page_ref)
+            if not entry:
+                return tool_result(error=f"page_ref '{page_ref}' not found or expired — re-run www_find_content and use the fresh ref.")
+            import bs4
+            soup = bs4.BeautifulSoup(entry['content'], 'html.parser')
+            content = soup.get_text(separator='\n', strip=True)
+            if not title:
+                title = entry.get('url', '')
+
+        if not content:
+            return tool_result(error="Provide either 'page_ref' (from www_find_content) or non-empty 'content'")
+
+        truncated = len(content) > self._MAX_CHARS
+        display = content[:self._MAX_CHARS] + ('\n…[truncated]' if truncated else '')
+        return tool_result({'type': 'ap_txt', 'content': display, 'title': title})
 
 
-@register_tool('ap_gallery')
+@register_tool('ap_dl_select_gallery')
 class ApGallery(BaseTool):
     description = (
         'Display a selectable gallery grid of results inline. Each item gets a checkbox and a video/photo preview. '
-        'Preferred: pass `summary` — the full data dict from a www_extract page summary (its `items` field is used directly, no re-typing needed). '
+        'Preferred: pass `summary_ref` — the short handle returned by www_find_content for gallery pages. The server loads the items for you; do not re-type them. '
         'Alternate: pass `items` yourself for hand-crafted galleries. '
         'Use this when the user asks to browse or download media — show ALL results, not a handful.'
     )
     parameters = {
         'type': 'object',
         'properties': {
-            'summary': {
-                'type': 'object',
-                'description': "Page summary dict (as returned by www_extract without a selector). Its `items` list is consumed directly. If both `summary` and `items` are given, `items` wins.",
+            'summary_ref': {
+                'type': 'string',
+                'description': "Handle returned by www_find_content for gallery pages (field: `summary_ref`). The server resolves the items and title from this ref.",
             },
             'items': {
                 'type': 'array',
-                'description': 'Gallery items to display (alternative to summary).',
+                'description': 'Gallery items to display (alternative to summary_ref).',
                 'items': {
                     'type': 'object',
                     'properties': {
@@ -157,7 +184,7 @@ class ApGallery(BaseTool):
             },
             'caption': {'type': 'string', 'description': 'Optional label shown above the grid.'},
         },
-        'required': ['summary', 'items']
+        'required': []
     }
 
     def call(self, params: str, **kwargs) -> dict:
@@ -167,17 +194,21 @@ class ApGallery(BaseTool):
             return tool_result(error=f'Malformed JSON input: {e}')
 
         items = p.get('items')
-        summary = p.get('summary')
+        summary_ref = p.get('summary_ref')
         caption = p.get('caption', '')
 
-        if (not items) and isinstance(summary, dict):
+        if (not items) and summary_ref:
+            entry = _load_summary(summary_ref)
+            if not entry:
+                return tool_result(error=f"summary_ref '{summary_ref}' not found or expired. Re-run www_find_content and pass the fresh ref.")
+            summary = entry.get('summary') or {}
             if isinstance(summary.get('items'), list):
                 items = summary['items']
             if not caption:
                 caption = summary.get('title', '')
 
         if not isinstance(items, list) or len(items) == 0:
-            return tool_result(error="Provide either `summary` (with an `items` list) or a non-empty `items` array")
+            return tool_result(error="Provide either `summary_ref` (from www_find_content) or a non-empty `items` array")
 
         validated = []
         for i, item in enumerate(items):

@@ -5,7 +5,7 @@ import { ParamTable } from '../molecules/ParamTable';
 import type { WorkflowTool } from '../../api/workflowGroups';
 
 export function ToolWorkspace() {
-  const { groups, activeGroups, closeGroup, selectedTool, selectTool } = useWorkspace();
+  const { groups, activeGroups, selectedTool, selectTool } = useWorkspace();
   const [interactive, setInteractive] = useState(false);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
 
@@ -30,13 +30,6 @@ export function ToolWorkspace() {
             {/* Group header */}
             <div className="flex items-center px-4 py-2 bg-[var(--glass-bg-solid)]">
               <span className="flex-1 text-sm font-semibold text-[var(--text)]">{g.name}</span>
-              <button
-                className="text-[var(--text-muted)] hover:text-[#ff2020] cursor-pointer transition-colors text-sm"
-                onClick={() => closeGroup(g.name)}
-                title="Close group"
-              >
-                &times;
-              </button>
             </div>
 
             {/* Tool buttons */}

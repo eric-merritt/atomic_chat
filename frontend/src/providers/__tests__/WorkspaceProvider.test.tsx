@@ -29,22 +29,22 @@ describe('WorkspaceProvider', () => {
     expect(result.current.activeGroups).toEqual([]);
   });
 
-  it('opens a group and transitions to workspace layout', async () => {
+  it('toggle activates a group and transitions to workspace layout', async () => {
     const { result } = renderHook(() => useWorkspace(), { wrapper });
     await act(async () => {
-      await result.current.openGroup('Filesystem');
+      await result.current.toggleGroup('Filesystem');
     });
     expect(result.current.layout).toBe('workspace-chat');
     expect(result.current.activeGroups).toContain('Filesystem');
   });
 
-  it('closes all groups and reverts to default', async () => {
+  it('toggle deactivates an active group and reverts to default', async () => {
     const { result } = renderHook(() => useWorkspace(), { wrapper });
     await act(async () => {
-      await result.current.openGroup('Filesystem');
+      await result.current.toggleGroup('Filesystem');
     });
     await act(async () => {
-      await result.current.closeGroup('Filesystem');
+      await result.current.toggleGroup('Filesystem');
     });
     expect(result.current.layout).toBe('default');
     expect(result.current.activeGroups).toEqual([]);

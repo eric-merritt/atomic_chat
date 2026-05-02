@@ -21,10 +21,14 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="File reading, writing, and directory operations, and codesearch functions like fs_find_def to find function definitions",
     ),
     "Web Tools": WorkflowGroup(
-        tools=["www_ddg", "www_extract", "www_cookies",
-               "www_find_dl", "www_find_routes",
-               "www_query", "www_click"],
+        tools=["www_ddg", "www_find_content", "www_set_cookies", "www_set_local_storage",
+               "www_find_dl", "www_dl", "www_dl_status", "www_find_routes",
+               "www_query", "www_click", "www_find_struct"],
         tooltip="Web search, fetch-and-extract, and browser navigation",
+    ),
+    "Presentation": WorkflowGroup(
+        tools=["ap_img", "ap_vid", "ap_gallery", "ap_txt", "ap_md"],
+        tooltip="Display images, videos, galleries, text, and markdown inline in the chat",
     ),
     "Ecommerce": WorkflowGroup(
         tools=["ec_search", "ec_enrich"],
@@ -45,6 +49,10 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tools=["mcp_init_conn","mcp_call_tool"],
         tooltip="Connect to external MCP tool servers",
     ),
+    "Jobs": WorkflowGroup(
+        tools=["jb_search", "jb_fetch"],
+        tooltip="Job posting search (Indeed) and posting detail fetch",
+    ),
     "Accounting": WorkflowGroup(
         tools=["fa_ledger", "fa_new_acct", "fa_ls_accts",
                "fa_acct_bal", "fa_update_acct",
@@ -57,78 +65,68 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
                "fa_stmt"],
         tooltip="Double-entry bookkeeping and financial reports",
     ),
+    "Vision": WorkflowGroup(
+        tools=["vis_desc_img"],
+        tooltip="Image analysis and description via vision model",
+    ),
+    "Bug Bounty": WorkflowGroup(
+        tools=["bb_h1_programs", "bb_h1_disclosures", "bb_h1_company",
+               "bb_bc_programs", "bb_bc_disclosures",
+               "bb_inti_programs", "bb_ywh_programs", "bb_synack_programs",
+               "bb_search", "bb_vuln_types"],
+        tooltip="Bug bounty program discovery and vulnerability research across HackerOne, Bugcrowd, Intigriti, YesWeHack, Synack",
+    ),
+    "Exploit": WorkflowGroup(
+        tools=["xp_sinj", "xp_xss", "xp_ssrf", "xp_cmdi", "xp_trav", "xp_rce", "xp_scan", "xp_gen"],
+        tooltip="Payload generation and vulnerability testing for SQLi, XSS, SSRF, command injection, path traversal, RCE",
+    ),
 }
 
 
-TOOL_REF: dict[str, str] = {
-    # Filesystem
-    "fs_read":             "read file",
-    "fs_info":             "file info",
-    "fs_ls":               "list directory with glob filter",
-    "fs_ls_dir":           "list directory with lsd — returns structured JSON with metadata",
-    "fs_tree":             "directory tree",
-    "fs_write":            "write file",
-    "fs_append":           "append to file",
-    "fs_replace":          "find replace",
-    "fs_insert_at_line":   "insert at line",
-    "fs_delete":           "delete file",
-    "fs_copy":             "copy file",
-    "fs_move":             "move file",
-    "fs_make_dir":         "make directory",
-    # Code Search
-    "fs_grep":             "search file for string",
-    "fs_find":             "find file",
-    "fs_find_def":         "find function definition",
-    # Web
-    "www_ddg":             "web search via DuckDuckGo",
-    "www_cookies":         "set cookies for a domain",
-    "www_extract":         "fetch url + extract via CSS selector in one call — omit selector to get page structure first",
-    "www_find_dl":         "find media download links in page by url",
-    "www_find_routes":     "fetch robots.txt allowed routes",
-    "www_query":           "querySelectorAll on current browser page",
-    "www_click":           "click element on current browser page",
-    # Ecommerce
-    "ec_search":           "search listings (ebay/amazon/cl)",
-    "ec_enrich":           "enrich data",
-    # OnlyFans
-    "of_extract":          "extract media",
-    "of_extract_all":      "extract all",
-    "of_scroll_convos":    "scroll conversations",
-    "of_scroll_msgs":      "scroll messages",
-    "of_save_media":       "save media file",
-    # Torrent
-    "bt_search":           "search torrents",
-    "bt_download":         "download torrent",
-    "bt_plugins":          "list plugins",
-    "bt_toggle_plugin":    "toggle plugin",
-    "bt_add":              "add torrent",
-    "bt_active":           "active downloads",
-    # MCP
-    "mcp_init_conn":       "initialize connection",
-    "mcp_call_tool":       "call tool using MCP",
-    # Task List
-    "tl_ref":              "reference the current task list (returns ids, numbers, titles, statuses)",
-    "tl_add":              "add a task; optional between=[id_a, id_b] inserts between two existing tasks",
-    "tl_done":             "mark a task done by id",
-    # Accounting
-    "fa_ledger":           "create ledger",
-    "fa_new_acct":         "create account",
-    "fa_ls_accts":         "list accounts",
-    "fa_acct_bal":         "account balance",
-    "fa_update_acct":      "update account",
-    "fa_tx_new":           "journalize transaction",
-    "fa_tx_search":        "search journal",
-    "fa_tx_void":          "void transaction",
-    "fa_acct_det":         "account history",
-    "fa_new_item":         "register item",
-    "fa_receive":          "receive inventory",
-    "fa_ls_items":         "list items",
-    "fa_rm_item":          "remove item",
-    "fa_tx_sale":          "inventory sale (FIFO/LIFO)",
-    "fa_value":            "inventory value",
-    "fa_close":            "close period",
-    "fa_stmt":             "financial statement",
-}
+class _LazyToolRef:
+    """Dict-like view of tool descriptions built from QW_TOOL_REGISTRY on first access.
+
+    Single source of truth: edit the tool class description — TOOL_REF stays in sync.
+    """
+    _cache: 'dict[str, str] | None' = None
+
+    def _build(self) -> 'dict[str, str]':
+        if self._cache is None:
+            from qwen_agent.tools.base import TOOL_REGISTRY
+            self._cache = {
+                name: (getattr(cls, 'description', '') or '').split('\n')[0].strip()
+                for name, cls in TOOL_REGISTRY.items()
+                if getattr(cls, 'description', None)
+            }
+        return self._cache
+
+    def get(self, key: str, default: str = '') -> str:
+        return self._build().get(key, default)
+
+    def items(self):
+        return self._build().items()
+
+    def keys(self):
+        return self._build().keys()
+
+    def values(self):
+        return self._build().values()
+
+    def __getitem__(self, key: str) -> str:
+        return self._build()[key]
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._build()
+
+    def __iter__(self):
+        return iter(self._build())
+
+    def __len__(self) -> int:
+        return len(self._build())
+
+
+TOOL_REF = _LazyToolRef()
+
 
 
 def tool_ref_for_group(group_name: str) -> str:

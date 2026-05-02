@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom';
 import { AuthProvider } from './providers/AuthProvider';
 import { ThemeProvider } from './providers/ThemeProvider';
 import { ModelProvider } from './providers/ModelProvider';
@@ -10,10 +10,14 @@ import { WorkspaceProvider } from './providers/WorkspaceProvider';
 import { ChatPage } from './pages/ChatPage';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { CliAuthPage } from './pages/CliAuthPage';
 import { useAuth } from './hooks/useAuth';
 
 function AuthGate() {
   const { authenticated, loading } = useAuth();
+  const location = useLocation();
+
+  if (location.pathname === '/cli-auth') return <CliAuthPage />;
 
   if (loading) {
     return (

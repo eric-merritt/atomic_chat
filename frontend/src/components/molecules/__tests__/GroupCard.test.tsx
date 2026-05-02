@@ -9,27 +9,31 @@ const TOOLS = [
 
 describe('GroupCard', () => {
   it('renders group name and tool count', () => {
-    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onOpen={vi.fn()} onClose={vi.fn()} />);
+    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onToggle={vi.fn()} />);
     expect(screen.getByText('Filesystem')).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
   });
 
-  it('calls onOpen when main area is clicked', () => {
-    const onOpen = vi.fn();
-    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onOpen={onOpen} onClose={vi.fn()} />);
+  it('calls onToggle when the card is clicked', () => {
+    const onToggle = vi.fn();
+    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onToggle={onToggle} />);
     fireEvent.click(screen.getByText('Filesystem'));
-    expect(onOpen).toHaveBeenCalledWith('Filesystem');
+    expect(onToggle).toHaveBeenCalledWith('Filesystem');
   });
 
-  it('expands to show tool names when expand button clicked', () => {
-    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onOpen={vi.fn()} onClose={vi.fn()} />);
+  it('calls onToggle when an active card is clicked (toggle off)', () => {
+    const onToggle = vi.fn();
+    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={true} onToggle={onToggle} />);
+    fireEvent.click(screen.getByText('Filesystem'));
+    expect(onToggle).toHaveBeenCalledWith('Filesystem');
+  });
+
+  it('expand button does not trigger onToggle', () => {
+    const onToggle = vi.fn();
+    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={false} onToggle={onToggle} />);
     fireEvent.click(screen.getByTitle('Show tools'));
+    expect(onToggle).not.toHaveBeenCalled();
     expect(screen.getByText('read')).toBeInTheDocument();
     expect(screen.getByText('write')).toBeInTheDocument();
-  });
-
-  it('shows close button when active', () => {
-    render(<GroupCard name="Filesystem" tooltip="File ops" tools={TOOLS} active={true} onOpen={vi.fn()} onClose={vi.fn()} />);
-    expect(screen.getByTitle('Remove group')).toBeInTheDocument();
   });
 });

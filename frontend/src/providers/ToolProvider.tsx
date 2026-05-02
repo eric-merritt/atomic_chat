@@ -20,7 +20,14 @@ export function ToolProvider({ children }: { children: ReactNode }) {
   const [categories, setCategories] = useState<ToolCategory[]>([]);
 
   useEffect(() => {
-    apiFetchTools().then((r) => { if (r.data) setCategories(r.data); }).catch(() => {});
+    apiFetchTools()
+      .then((r) => { if (r.data) setCategories(r.data); })
+      .catch((e: unknown) => {
+        console.error(
+          '[ToolProvider] Failed to load tools from /api/tools — tool list will be empty.',
+          e instanceof Error ? e.message : String(e)
+        );
+      });
   }, []);
 
   const toggleTool = useCallback(async (name: string) => {

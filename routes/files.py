@@ -1,8 +1,12 @@
 """File read and serve endpoints for the frontend file preview modal."""
 
 import os
+import uuid
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import login_required
+
+_UPLOAD_DIR = os.path.join(os.path.expanduser("~"), "workspace", "uploads")
+_ALLOWED_UPLOAD_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.webp'}
 
 files_bp = Blueprint("files", __name__, url_prefix="/api/files")
 
@@ -74,6 +78,23 @@ def read_file():
         "lines_returned": min(len(lines), MAX_LINES),
         "truncated": truncated,
     })
+
+
+@files_bp.route("/upload", methods=["POST"])
+@login_required
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"error": "no file provided"}), 400
+    f = request.files['file']
+    ext = os.path.splitext(f.filename or '')[1].lower()
+    if ext not in _ALLOWED_UPLOAD_EXTS:
+        allowed = ', '.join(sorted(_ALLOWED_UPLOAD_EXTS))
+        return jsonify({"error": f"unsupported type '{ext}', allowed: {allowed}"}), 400
+    os.makedirs(_UPLOAD_DIR, exist_ok=True)
+    filename = f"{uuid.uuid4().hex}{ext}"
+    dest = os.path.join(_UPLOAD_DIR, filename)
+    f.save(dest)
+    return jsonify({"path": dest, "filename": f.filename})
 
 
 @files_bp.route("/serve")

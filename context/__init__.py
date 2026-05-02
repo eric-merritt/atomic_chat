@@ -7,13 +7,6 @@ TOOL_RESULT_MAX_CHARS = 4000
 
 
 def _db_row_to_qwen(row: dict) -> dict:
-  """Convert a DB message dict to a qwen-agent message dict.
-
-  qwen-agent format:
-  - user: {"role": "user", "content": "..."}
-  - assistant: {"role": "assistant", "content": "..."}
-  - tool result: {"role": "function", "name": "tool_name", "content": "..."}
-  """
   role = row["role"]
   content = row.get("content", "")
   tool_calls = row.get("tool_calls", [])
@@ -51,7 +44,7 @@ def serialize_tool_result(tool_name: str, tool_call_id: str, content: str) -> di
   """Serialize a tool result for DB storage."""
   truncated = content[:TOOL_RESULT_MAX_CHARS] if content else ""
   return {
-  "role": "tool",
-  "content": truncated,
-  "tool_calls": [{"name": tool_name, "id": tool_call_id}],
+    "role": "tool",
+    "content": truncated,
+    "tool_calls": [{"name": tool_name, "id": tool_call_id}],
   }

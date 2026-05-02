@@ -1,12 +1,14 @@
 """LLM enrichment loop and @enrichable decorator for tool classes."""
 
 import json
+import os
 import re
 
 import json5
 
 from tools._output import tool_result
-from main import CHAT_MODEL
+
+CHAT_MODEL = os.environ.get('CHAT_MODEL', 'Qwen3.5-9B')
 
 
 def enrich_data(data: str, goal: str, max_iterations: int = 5, eval_model: str = 'qwen3:4b') -> dict:

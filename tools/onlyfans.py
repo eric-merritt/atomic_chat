@@ -138,7 +138,7 @@ class ScrollMessagesTool(BaseTool):
 
 @register_tool('of_save_media')
 class SaveMediaTool(BaseTool):
-    description = 'Download and save a media file from a URL to disk.'
+    description = 'Download and save an OnlyFans media file from a URL to disk.'
     parameters = {
         'type': 'object',
         'properties': {
@@ -150,19 +150,9 @@ class SaveMediaTool(BaseTool):
 
     @retry()
     def call(self, params: str, **kwargs) -> dict:
+        from tools.web import DownloadFileTool
         p = json5.loads(params)
-        url = p['url']
-        file_path = os.path.expanduser(p['file_path'])
-        if not url.startswith(("http://", "https://")):
-            return tool_result(error="url must start with http:// or https://")
-        try:
-            r = requests.get(url, timeout=10)
-            r.raise_for_status()
-            with open(file_path, "wb") as f:
-                f.write(r.content)
-            return tool_result(data={"url": url, "file_path": file_path, "bytes": len(r.content)})
-        except Exception as e:
-            return tool_result(error=str(e))
+        return DownloadFileTool().call(json5.dumps({'url': p['url'], 'dest': p['file_path'], 'wait': True}))
 
 
 @register_tool('of_extract_all')

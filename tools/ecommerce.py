@@ -214,6 +214,7 @@ def _fetch_html(url: str, headers: dict = None) -> str:
 
 
 class _EbaySearchHandler(BaseTool):
+    name = '_ebay_search'
     description = 'Search eBay listings by keyword with optional filters.'
     parameters = {
         'type': 'object',
@@ -249,11 +250,14 @@ class _EbaySearchHandler(BaseTool):
         seen_urls = set()
         all_listings = []
 
+        last_fetch_error = None
         for page_num in range(1, pages + 1):
             url = _ebay_url(query, sort, min_price, max_price, condition, sold, page_num)
             try:
                 html = _fetch_html(url)
-            except Exception:
+                last_fetch_error = None
+            except Exception as e:
+                last_fetch_error = e
                 if page_num < pages:
                     time.sleep(random.uniform(3.0, 6.0))
                 continue
@@ -349,6 +353,7 @@ def _parse_amazon_listings(html: str) -> list[dict]:
 
 
 class _AmazonSearchHandler(BaseTool):
+    name = '_amazon_search'
     description = 'Search Amazon and return parsed product listings.'
     parameters = {
         'type': 'object',
@@ -400,7 +405,18 @@ class _AmazonSearchHandler(BaseTool):
             with urllib.request.urlopen(req, timeout=15) as resp:
                 html = resp.read().decode("utf-8", errors="replace")
         except Exception as e:
-            return tool_result(error=str(e))
+            return tool_result(error=f"Amazon fetch failed: {e}")
+
+        if any(s in html for s in (
+            "Type the characters you see",
+            "Enter the characters you see below",
+            "Sorry, we just need to make sure you",
+            "api-services-support@amazon.com",
+        )):
+            return tool_result(error=(
+                "Amazon is blocking this request with a CAPTCHA — automated search is not available. "
+                "Try eBay or Craigslist instead."
+            ))
 
         listings = _parse_amazon_listings(html)[:max_results]
 
@@ -460,12 +476,14 @@ def _parse_craigslist_listings(html: str, city: str, is_local: bool) -> list[dic
             listing: dict = {"city": city}
             listing["fulfillment"] = "pickup" if is_local else "shipping_required"
 
-            link = re.search(r'href="([^"]+)"[^>]*>(.*?)</a>', block, re.DOTALL)
-            if link:
-                listing["url"] = link.group(1)
-                listing["title"] = re.sub(r"<[^>]+>", "", link.group(2)).strip()
-
+            url_match = re.search(r'href="([^"]+)"', block)
+            title_match = re.search(r'<div class="title">(.*?)</div>', block, re.DOTALL)
             price_match = re.search(r'<div class="price">\s*\$?([\d,]+)', block)
+
+            if url_match:
+                listing["url"] = url_match.group(1)
+            if title_match:
+                listing["title"] = re.sub(r"<[^>]+>", "", title_match.group(1)).strip()
             if price_match:
                 listing["price"] = float(price_match.group(1).replace(",", ""))
                 listing["price_text"] = f"${listing['price']:.0f}"
@@ -531,6 +549,7 @@ def _craigslist_search_city(
 
 
 class _CraigslistSearchHandler(BaseTool):
+    name = '_cl_search'
     description = 'Search Craigslist in one city or across multiple cities.'
     parameters = {
         'type': 'object',

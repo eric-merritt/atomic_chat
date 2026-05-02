@@ -15,10 +15,12 @@ function renderWithContext(activeGroups: string[] = []) {
     setLayout: vi.fn(),
     groups: GROUPS,
     activeGroups,
-    openGroup: vi.fn(),
-    closeGroup: vi.fn(),
+    toggleGroup: vi.fn(),
     selectedTool: null,
     selectTool: vi.fn(),
+    galleryPayload: null,
+    showGallery: vi.fn(),
+    clearGallery: vi.fn(),
   };
   return { ...render(
     <WorkspaceContext.Provider value={ctx}>

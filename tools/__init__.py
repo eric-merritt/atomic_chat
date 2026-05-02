@@ -19,6 +19,13 @@ import tools.torrent  # noqa: F401
 import tools.mcp  # noqa: F401
 import tools.accounting  # noqa: F401
 import tools.presentation  # noqa: F401
+import tools.jobs  # noqa: F401
+import tools.tasklist  # noqa: F401
+import tools.native # noqa: F401
+import tools.bug_bounty # noqa: F401
+import tools.exploit # noqa: F401
+import tools.vision # noqa: F401
+import tools.bash # noqa: F401
 
 # Build ALL_TOOLS as instantiated tool objects (only our custom tools)
 ALL_TOOLS = []

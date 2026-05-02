@@ -16,7 +16,6 @@ interface Props {
 
 export function ApGalleryCard({ item, selected, onToggle }: Props) {
   const [hovering, setHovering] = useState(false)
-  const showVideo = hovering && !!item.preview_video
 
   return (
     <div
@@ -32,27 +31,28 @@ export function ApGalleryCard({ item, selected, onToggle }: Props) {
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
     >
-      <div className="aspect-video bg-[var(--bg-base)] overflow-hidden">
-        {showVideo ? (
+      <div className="relative aspect-video bg-[var(--bg-base)] overflow-hidden">
+        {item.preview_photo ? (
+          <img
+            src={item.preview_photo}
+            alt={item.title}
+            className="absolute inset-0 w-full h-full object-cover"
+            loading="lazy"
+          />
+        ) : !item.preview_video ? (
+          <div className="absolute inset-0 flex items-center justify-center text-[var(--text-muted)] text-xs">
+            no preview
+          </div>
+        ) : null}
+        {hovering && item.preview_video && (
           <video
             src={item.preview_video}
-            className="w-full h-full object-cover"
+            className="absolute inset-0 w-full h-full object-cover"
             autoPlay
             muted
             loop
             playsInline
           />
-        ) : item.preview_photo ? (
-          <img
-            src={item.preview_photo}
-            alt={item.title}
-            className="w-full h-full object-cover"
-            loading="lazy"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)] text-xs">
-            no preview
-          </div>
         )}
       </div>
 

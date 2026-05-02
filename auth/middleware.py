@@ -20,6 +20,8 @@ PUBLIC_PATHS = frozenset({
     "/api/auth/oauth/github/callback",
     "/api/auth/oauth/google",
     "/api/auth/oauth/google/callback",
+    "/api/auth/cli/initiate",
+    "/api/auth/cli/poll",
 })
 
 # Static IP auto-auth is disabled for now per user request.

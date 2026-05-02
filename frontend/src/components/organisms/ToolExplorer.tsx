@@ -3,7 +3,7 @@ import { useWorkspace } from '../../hooks/useWorkspace';
 import { GroupCard } from '../molecules/GroupCard';
 
 export function ToolExplorer() {
-  const { groups, activeGroups, openGroup, closeGroup } = useWorkspace();
+  const { groups, activeGroups, toggleGroup } = useWorkspace();
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -56,8 +56,7 @@ export function ToolExplorer() {
                 tooltip={g.tooltip}
                 tools={g.tools}
                 active={activeGroups.includes(g.name)}
-                onOpen={openGroup}
-                onClose={closeGroup}
+                onToggle={toggleGroup}
               />
             ))}
           </div>

@@ -1,8 +1,10 @@
 import { useContext } from 'react';
-import { ModelContext } from '../providers/ModelProvider';
+import { ModelContext } from '../providers/ModelProvider'; // Ensure this path matches where you saved ModelProvider
 
 export function useModels() {
-  const ctx = useContext(ModelContext);
-  if (!ctx) throw new Error('useModels must be used within ModelProvider');
-  return ctx;
+  const context = useContext(ModelContext);
+  if (!context) {
+    throw new Error('useModels must be used within a ModelProvider');
+  }
+  return context;
 }

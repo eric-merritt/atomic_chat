@@ -11,10 +11,10 @@ interface AuthResponse {
 export async function fetchMe(): Promise<AuthResponse> {
   try {
     const resp = await fetch('/api/auth/me', OPTS);
-    if (!resp.ok) return { error: `${resp.status}` };
+    if (!resp.ok) return { error: `Session check failed (HTTP ${resp.status})` };
     return await resp.json();
   } catch {
-    return { error: 'Network error' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
   }
 }
 
@@ -27,10 +27,10 @@ export async function login(username: string, password: string): Promise<AuthRes
       body: JSON.stringify({ username, password }),
     });
     const data = await resp.json();
-    if (!resp.ok) return { error: data.error || 'Login failed' };
+    if (!resp.ok) return { error: data.error || `Login failed (HTTP ${resp.status})` };
     return data;
   } catch {
-    return { error: 'Network error' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
   }
 }
 
@@ -45,10 +45,10 @@ export async function register(
       body: JSON.stringify({ username, email: email || undefined, password }),
     });
     const data = await resp.json();
-    if (!resp.ok) return { error: data.error || 'Registration failed' };
+    if (!resp.ok) return { error: data.error || `Registration failed (HTTP ${resp.status})` };
     return data;
   } catch {
-    return { error: 'Network error' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
   }
 }
 
