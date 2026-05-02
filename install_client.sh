@@ -1,187 +1,479 @@
 #!/usr/bin/env bash
-# install_client.sh — Set up the client agent for agent.eric-merritt.com
+# install.sh — Atomic Chat Installer
 #
-# Usage:
-#   git clone <repo-url> && cd <repo>
-#   ./install_client.sh
-#
-# What it does:
-#   1. Checks Python >= 3.12
-#   2. Creates a venv and installs the one dependency (websockets)
-#   3. Prompts for your API key and saves it to .env
-#   4. Creates a convenience wrapper: ./agent
-#
-# After install, run:
-#   ./agent                              # interactive chat
-#   ./agent -m "list files in ~/code"    # one-shot
-#   ./agent --allow-writes -m "fix it"   # enable write tools
+# Path 1: Full Local Stack  — self-hosted LLM + backend + frontend, no cloud
+#                             After install: ./start.sh
+# Path 2: Cloud Client Only — agent bridge to agent.eric-merritt.com
+#                             After install: ./agent
 
 set -euo pipefail
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-RESET='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-info()  { echo -e "${GREEN}[+]${RESET} $*"; }
-warn()  { echo -e "${YELLOW}[!]${RESET} $*"; }
-error() { echo -e "${RED}[x]${RESET} $*"; exit 1; }
+info()  { printf "${GREEN}[+]${RESET} %s\n" "$*"; }
+warn()  { printf "${YELLOW}[!]${RESET} %s\n" "$*"; }
+error() { printf "${RED}[x]${RESET} %s\n" "$*" >&2; exit 1; }
+step()  { printf "\n${CYAN}${BOLD}▶ %s${RESET}\n" "$*"; }
 
-# ── Locate project root (directory containing this script) ───────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-echo -e "${BOLD}Agent Client Installer${RESET}"
-echo "======================================"
-echo
+printf "${BOLD}╔══════════════════════════════════╗${RESET}\n"
+printf "${BOLD}║     Atomic Chat  —  Installer    ║${RESET}\n"
+printf "${BOLD}╚══════════════════════════════════╝${RESET}\n\n"
 
-# ── 1. Check Python ─────────────────────────────────────────────────────────
-info "Checking Python..."
+printf "${BOLD}Choose installation type:${RESET}\n"
+printf "  [1] Full Local Stack    — self-hosted LLM + backend + frontend, no cloud\n"
+printf "  [2] Cloud Client Only   — connect your machine to agent.eric-merritt.com\n\n"
+printf "Choice [1/2]: "; read -r PATH_CHOICE
+case "$PATH_CHOICE" in
+    1) INSTALL_PATH="local" ;;
+    2) INSTALL_PATH="cloud" ;;
+    *) error "Enter 1 or 2." ;;
+esac
 
+# ── Python ────────────────────────────────────────────────────────────────────
+step "Checking Python..."
 PYTHON=""
-for cmd in python3.12 python3.13 python3; do
-    if command -v "$cmd" &>/dev/null; then
-        ver=$("$cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)
-        major="${ver%%.*}"
-        minor="${ver##*.}"
-        if [[ "$major" -ge 3 && "$minor" -ge 12 ]]; then
-            PYTHON="$cmd"
-            break
-        fi
+for _cmd in python3.12 python3.13 python3; do
+    if command -v "$_cmd" &>/dev/null; then
+        _ver=$("$_cmd" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)
+        _major="${_ver%%.*}"; _minor="${_ver##*.}"
+        if [[ "$_major" -ge 3 && "$_minor" -ge 12 ]]; then PYTHON="$_cmd"; break; fi
     fi
 done
 
 if [[ -z "$PYTHON" ]]; then
     warn "Python >= 3.12 not found."
-    read -rp "Do you want to install Python 3.12? (Y/N): " answer
-    if [[ "$answer" =~ ^[Yy] ]]; then
-        if [[ "$(uname)" == "Darwin" ]]; then
-            if command -v brew &>/dev/null; then
-                info "Installing Python 3.12 via Homebrew..."
-                brew install python@3.12
-                PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
-            else
-                error "Homebrew not found. Install it first: https://brew.sh\n  Then re-run this script."
-            fi
-        elif command -v apt-get &>/dev/null; then
-            info "Installing Python 3.12 via apt..."
-            sudo apt-get update -qq && sudo apt-get install -y python3.12 python3.12-venv
-            PYTHON="python3.12"
-        elif command -v dnf &>/dev/null; then
-            info "Installing Python 3.12 via dnf..."
-            sudo dnf install -y python3.12
-            PYTHON="python3.12"
-        elif command -v pacman &>/dev/null; then
-            info "Installing Python 3.12 via pacman..."
-            sudo pacman -S --noconfirm python
-            PYTHON="python3"
-        else
-            error "Could not detect package manager. Install Python 3.12 manually:\n  https://www.python.org/downloads/"
-        fi
-
-        # Verify it worked
-        if ! command -v "$PYTHON" &>/dev/null; then
-            error "Python installation failed. Install manually from https://www.python.org/downloads/"
-        fi
-        info "Python installed successfully!"
+    printf "Install Python 3.12? [Y/N]: "; read -r _ans
+    [[ "$_ans" =~ ^[Yy] ]] || error "Python >= 3.12 required."
+    if [[ "$(uname)" == "Darwin" ]]; then
+        command -v brew &>/dev/null || error "Homebrew not found. Install: https://brew.sh"
+        brew install python@3.12
+        PYTHON="$(brew --prefix python@3.12)/bin/python3.12"
+    elif command -v apt-get &>/dev/null; then
+        sudo apt-get update -qq && sudo apt-get install -y python3.12 python3.12-venv
+        PYTHON="python3.12"
+    elif command -v dnf &>/dev/null; then
+        sudo dnf install -y python3.12; PYTHON="python3.12"
+    elif command -v pacman &>/dev/null; then
+        sudo pacman -S --noconfirm python; PYTHON="python3"
     else
-        error "Python >= 3.12 is required. Install it first:\n  Ubuntu/Debian: sudo apt install python3.12\n  macOS: brew install python@3.12\n  Other: https://www.python.org/downloads/"
+        error "Install Python 3.12 manually: https://www.python.org/downloads/"
     fi
 fi
+info "Python: $PYTHON ($("$PYTHON" --version 2>&1))"
 
-info "Using $PYTHON ($("$PYTHON" --version 2>&1))"
+# ── Shared helpers ────────────────────────────────────────────────────────────
+find_free_port() {
+    local _start=$1 _end=$2
+    "$PYTHON" -c "
+import socket, sys
+for p in range($_start, $_end + 1):
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try: s.bind(('', p)); print(p); sys.exit(0)
+        except OSError: pass
+sys.exit(1)
+" || error "No free port found in range $_start-$_end"
+}
 
-# ── 2. Create venv ──────────────────────────────────────────────────────────
-VENV_DIR="$SCRIPT_DIR/.client-venv"
+scan_models() {
+    "$PYTHON" -c "
+from pathlib import Path
+for d in [
+    Path.home()/'models',
+    Path.home()/'.cache/llama.cpp',
+    Path.home()/'.cache/huggingface/hub',
+    Path.home()/'.ollama/models',
+    Path('/opt/models'),
+    Path('/usr/local/share/models'),
+]:
+    if d.exists():
+        for p in sorted(d.rglob('*.gguf')): print(p)
+"
+}
 
-if [[ -d "$VENV_DIR" ]]; then
-    warn "Virtual environment already exists at .client-venv"
-else
-    info "Creating virtual environment..."
-    "$PYTHON" -m venv "$VENV_DIR"
-fi
+detect_gpu() {
+    if [[ "$(uname)" == "Darwin" ]]; then echo "metal"
+    elif command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then echo "cuda"
+    elif command -v rocminfo &>/dev/null && rocminfo &>/dev/null 2>&1; then echo "rocm"
+    else echo "cpu"; fi
+}
 
-info "Installing dependencies..."
-"$VENV_DIR/bin/python" -m pip install --quiet --upgrade pip
-"$VENV_DIR/bin/python" -m pip install --quiet websockets
+# ══════════════════════════════════════════════════════════════════════════════
+# PATH 1 — FULL LOCAL STACK
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$INSTALL_PATH" == "local" ]]; then
 
-# ── 3. API key ──────────────────────────────────────────────────────────────
-ENV_FILE="$SCRIPT_DIR/.env.client"
+# ── llama-server ──────────────────────────────────────────────────────────────
+step "Setting up llama-server..."
 
-if [[ -f "$ENV_FILE" ]]; then
-    warn "Config file .env.client already exists — skipping key setup"
-    warn "Edit .env.client to change your key"
-else
-    echo
-    echo -e "${BOLD}API Key Setup${RESET}"
-    echo "You need an external API key for agent.eric-merritt.com."
-    echo "Contact the server admin to get one."
-    echo
-    read -rp "Paste your API key (or press Enter to skip for now): " api_key
-
-    if [[ -n "$api_key" ]]; then
-        cat > "$ENV_FILE" <<EOF
-AGENT_API_KEY=$api_key
-AGENT_SERVER=wss://agent.eric-merritt.com/api/chat/ws
-EOF
-        chmod 600 "$ENV_FILE"
-        info "Saved to .env.client (mode 600)"
-    else
-        cat > "$ENV_FILE" <<EOF
-AGENT_API_KEY=YOUR_KEY_HERE
-AGENT_SERVER=wss://agent.eric-merritt.com/api/chat/ws
-EOF
-        chmod 600 "$ENV_FILE"
-        warn "Placeholder saved to .env.client — edit it before running"
-    fi
-fi
-
-# ── 4. Create wrapper script ────────────────────────────────────────────────
-WRAPPER="$SCRIPT_DIR/agent"
-
-cat > "$WRAPPER" <<'WRAPPER_EOF'
-#!/usr/bin/env bash
-# Convenience wrapper for client_agent.py
-set -euo pipefail
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-# Load config
-if [[ -f "$SCRIPT_DIR/.env.client" ]]; then
-    set -a
-    source "$SCRIPT_DIR/.env.client"
-    set +a
-fi
-
-exec "$SCRIPT_DIR/.client-venv/bin/python" "$SCRIPT_DIR/client_agent.py" "$@"
-WRAPPER_EOF
-
-chmod +x "$WRAPPER"
-
-# ── 5. Add to .gitignore ───────────────────────────────────────────────────
-GITIGNORE="$SCRIPT_DIR/.gitignore"
-for pattern in ".client-venv" ".env.client"; do
-    if ! grep -qxF "$pattern" "$GITIGNORE" 2>/dev/null; then
-        echo "$pattern" >> "$GITIGNORE"
+LLAMA_BIN=""
+for _cand in llama-server "$HOME/.local/bin/llama-server" llama.cpp/build/bin/llama-server; do
+    if command -v "$_cand" &>/dev/null 2>&1 || [[ -x "$_cand" ]]; then
+        LLAMA_BIN="$(command -v "$_cand" 2>/dev/null || echo "$_cand")"; break
     fi
 done
 
-# ── Done ────────────────────────────────────────────────────────────────────
-echo
-echo -e "${GREEN}=====================================${RESET}"
-echo -e "${GREEN}  Installation complete!${RESET}"
-echo -e "${GREEN}=====================================${RESET}"
-echo
-echo "Quick start:"
-echo "  ./agent                                  # interactive chat"
-echo "  ./agent -m 'list files in ~/projects'    # one-shot"
-echo "  ./agent --allow-writes -m 'fix main.py'  # enable writes"
-echo
-echo "Configuration:  .env.client"
-echo "  AGENT_API_KEY  — your API key"
-echo "  AGENT_SERVER   — server URL (default: wss://agent.eric-merritt.com/api/chat/ws)"
-echo
-if grep -q "YOUR_KEY_HERE" "$ENV_FILE" 2>/dev/null; then
-    warn "Don't forget to set your API key in .env.client!"
+_build_from_source() {
+    GPU_BACKEND="$(detect_gpu)"
+    case "$GPU_BACKEND" in
+        cuda)  CMAKE_FLAGS="-DGGML_CUDA=ON";    info "NVIDIA GPU → CUDA build" ;;
+        rocm)  CMAKE_FLAGS="-DGGML_HIPBLAS=ON"; info "AMD ROCm  → HIP build" ;;
+        metal) CMAKE_FLAGS="-DGGML_METAL=ON";   info "Apple Silicon → Metal build" ;;
+        *)     CMAKE_FLAGS="-DGGML_CUDA=OFF -DGGML_METAL=OFF"; info "CPU-only build (AVX2)" ;;
+    esac
+    BUILD_DIR="$SCRIPT_DIR/.llama-cpp-build"
+    if [[ -d "$BUILD_DIR" ]]; then
+        warn "Reusing existing build dir: $BUILD_DIR"
+    else
+        git clone --depth 1 https://github.com/ggerganov/llama.cpp "$BUILD_DIR"
+    fi
+    cd "$BUILD_DIR"
+    # shellcheck disable=SC2086
+    cmake -B build -DLLAMA_BUILD_SERVER=ON -DCMAKE_BUILD_TYPE=Release \
+        $CMAKE_FLAGS 2>&1 | tail -5
+    cmake --build build --config Release \
+        -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    LLAMA_BIN="$BUILD_DIR/build/bin/llama-server"
+    cd "$SCRIPT_DIR"
+}
+
+if [[ -z "$LLAMA_BIN" ]]; then
+    warn "llama-server not found."
+    printf "\n  [a] Homebrew (macOS)\n  [b] apt (Debian/Ubuntu)\n  [c] Build from source\n  [d] Skip (set manually)\n\n"
+    printf "Choice [a/b/c/d]: "; read -r _llama_choice
+    case "$_llama_choice" in
+        a|A)
+            command -v brew &>/dev/null || error "Homebrew not found. Install: https://brew.sh"
+            info "Installing via Homebrew..."
+            brew install llama.cpp
+            LLAMA_BIN="$(command -v llama-server)"
+            ;;
+        b|B)
+            info "Installing via apt..."
+            if ! (sudo apt-get update -qq && sudo apt-get install -y llama.cpp 2>/dev/null); then
+                warn "apt package unavailable — building from source"
+                _build_from_source
+            else
+                LLAMA_BIN="$(command -v llama-server 2>/dev/null || true)"
+            fi
+            ;;
+        c|C) _build_from_source ;;
+        d|D)
+            warn "Skipping. Set LLAMA_SERVER_BIN in .env before running."
+            LLAMA_BIN="llama-server"
+            ;;
+        *) error "Invalid choice." ;;
+    esac
+else
+    info "Found: $LLAMA_BIN"
 fi
+
+# ── Model setup ───────────────────────────────────────────────────────────────
+step "Model setup..."
+
+DEFAULT_HF_REPO="sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF"
+CHOSEN_MODEL=""
+
+printf "Scan home directory for existing GGUF models? [y/N]: "; read -r _scan_ans
+mapfile -t MODELS < <([[ "${_scan_ans,,}" =~ ^y ]] && scan_models || true)
+
+_hf_download() {
+    local _repo="$1"
+    "$PYTHON" - "$_repo" <<'PYEOF'
+import urllib.request, json, sys, os
+from pathlib import Path
+
+repo = sys.argv[1]
+out_dir = Path.home() / "models" / repo.split("/")[-1]
+out_dir.mkdir(parents=True, exist_ok=True)
+hdrs = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"} if os.environ.get("HF_TOKEN") else {}
+
+def fetch(url):
+    with urllib.request.urlopen(urllib.request.Request(url, headers=hdrs), timeout=20) as r:
+        return r.read()
+
+try:
+    meta = json.loads(fetch(f"https://huggingface.co/api/models/{repo}?expand[]=siblings"))
+except Exception as e:
+    print(f"ERROR fetching repo metadata: {e}", file=sys.stderr); sys.exit(1)
+
+files = [s["rfilename"] for s in meta.get("siblings", []) if s["rfilename"].endswith(".gguf")]
+if not files:
+    print("ERROR: no .gguf files found in repo", file=sys.stderr); sys.exit(1)
+
+if len(files) == 1:
+    fname = files[0]
+else:
+    print(f"\nGGUF files in {repo}:", file=sys.stderr)
+    for i, f in enumerate(files, 1):
+        print(f"  [{i}] {f}", file=sys.stderr)
+    raw = input("Select [1]: ").strip()
+    idx = (int(raw) - 1) if raw.isdigit() else 0
+    fname = files[max(0, min(idx, len(files) - 1))]
+
+dest = out_dir / fname
+if dest.exists():
+    print(f"Already downloaded: {dest}", file=sys.stderr)
+    print(str(dest)); sys.exit(0)
+
+url = f"https://huggingface.co/{repo}/resolve/main/{fname}"
+print(f"Downloading {fname} → {dest}", file=sys.stderr)
+try:
+    req = urllib.request.Request(url, headers=hdrs)
+    with urllib.request.urlopen(req) as r:
+        total = int(r.headers.get("Content-Length", 0))
+        done = 0
+        with open(dest, "wb") as f:
+            while True:
+                chunk = r.read(65536)
+                if not chunk: break
+                f.write(chunk); done += len(chunk)
+                if total:
+                    pct = min(100, done * 100 // total)
+                    bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+                    print(f"\r  [{bar}] {pct}%  ", end="", flush=True, file=sys.stderr)
+    print(file=sys.stderr)
+except Exception as e:
+    dest.unlink(missing_ok=True)
+    print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
+
+print(str(dest))
+PYEOF
+}
+
+if [[ ${#MODELS[@]} -gt 0 ]]; then
+    printf "\nFound local models:\n"
+    for _i in "${!MODELS[@]}"; do
+        printf "  [%d] %s\n" "$((_i + 1))" "${MODELS[$_i]}"
+    done
+    printf "  [D] Download from HuggingFace\n"
+    printf "  [P] Enter local path\n\n"
+    printf "Select [1-%d / D / P]: " "${#MODELS[@]}"; read -r _sel
+
+    if [[ "${_sel,,}" == "p" ]]; then
+        printf "Path: "; read -r CHOSEN_MODEL
+    elif [[ "${_sel,,}" != "d" ]]; then
+        if [[ "$_sel" =~ ^[0-9]+$ && "$_sel" -ge 1 && "$_sel" -le "${#MODELS[@]}" ]]; then
+            CHOSEN_MODEL="${MODELS[$((_sel - 1))]}"
+        else
+            error "Invalid selection."
+        fi
+    fi
+fi
+
+if [[ -z "$CHOSEN_MODEL" ]]; then
+    [[ ${#MODELS[@]} -eq 0 ]] && warn "No local .gguf models found."
+    printf "\nEnter a HuggingFace repo ID or local path.\n"
+    printf "  [Enter] = %s\n\n" "$DEFAULT_HF_REPO"
+    printf "Repo/path: "; read -r _model_input
+    _model_input="${_model_input:-$DEFAULT_HF_REPO}"
+
+    if [[ -f "$_model_input" || "$_model_input" == /* || "$_model_input" == ~* ]]; then
+        CHOSEN_MODEL="${_model_input/#\~/$HOME}"
+        [[ -f "$CHOSEN_MODEL" ]] || warn "File not found — update MODEL in .env after install."
+    else
+        info "Downloading from HuggingFace: $_model_input"
+        CHOSEN_MODEL="$(_hf_download "$_model_input")" \
+            || error "Download failed. Check network or set MODEL in .env manually."
+    fi
+fi
+
+[[ -n "$CHOSEN_MODEL" ]] || error "No model selected."
+info "Model: $CHOSEN_MODEL"
+MODEL_ALIAS="$(basename "${CHOSEN_MODEL%.gguf}")"
+
+# ── GPU layers ────────────────────────────────────────────────────────────────
+GPU_BACKEND="${GPU_BACKEND:-$(detect_gpu)}"
+[[ "$GPU_BACKEND" == "cpu" ]] && NGL_DEFAULT=0 || NGL_DEFAULT=99
+printf "GPU layers to offload (0=CPU-only, 99=fully GPU) [%d]: " "$NGL_DEFAULT"
+read -r _ngl; NGL_LAYERS="${_ngl:-$NGL_DEFAULT}"
+
+# ── Conversation storage ──────────────────────────────────────────────────────
+step "Conversation storage..."
+printf "  [1] SQLite   — full search, tasks, folders (recommended)\n"
+printf "  [2] JSONL    — flat files per conversation, easy to back up\n"
+printf "  [3] None     — no history stored\n\n"
+while true; do
+    printf "Storage [1/2/3]: "; read -r _sc
+    case "$_sc" in
+        1) CONV_STORAGE="sqlite"; break ;;
+        2) CONV_STORAGE="jsonl";  break ;;
+        3) CONV_STORAGE="none";
+           warn "Conversations will not be saved across sessions."; break ;;
+        *) printf "Enter 1, 2, or 3.\n" ;;
+    esac
+done
+
+# ── Port scan ─────────────────────────────────────────────────────────────────
+step "Finding available ports..."
+LLAMA_PORT="$(find_free_port 8080 8180)"
+TOOLS_PORT="$(find_free_port 5100 5200)"
+BACKEND_PORT="$(find_free_port 5000 5099)"
+FRONTEND_PORT="$(find_free_port 3000 3100)"
+info "llama-server=$LLAMA_PORT  tools=$TOOLS_PORT  backend=$BACKEND_PORT  frontend=$FRONTEND_PORT"
+
+# ── Python deps ───────────────────────────────────────────────────────────────
+step "Installing Python dependencies..."
+if command -v uv &>/dev/null; then
+    uv sync
+    RUNPY="uv run python"
+    info "Installed via uv"
+else
+    warn "uv not found — falling back to pip + requirements.txt"
+    "$PYTHON" -m venv .venv
+    .venv/bin/pip install --quiet --upgrade pip
+    .venv/bin/pip install --quiet -r requirements.txt
+    RUNPY=".venv/bin/python"
+    info "Installed via pip"
+fi
+
+# ── Frontend deps ─────────────────────────────────────────────────────────────
+step "Installing frontend dependencies..."
+if command -v npm &>/dev/null; then
+    npm install --prefix frontend --silent
+    info "Frontend deps installed."
+else
+    warn "npm not found — skipping frontend deps."
+    warn "Install Node.js then run: npm install --prefix frontend"
+fi
+
+# ── Data directory ────────────────────────────────────────────────────────────
+DATA_DIR="${HOME}/.atomic_chat"
+mkdir -p "$DATA_DIR"
+SQLITE_URL="sqlite:///${DATA_DIR}/atomic_chat.db"
+JSONL_DIR="${DATA_DIR}/conversations"
+
+# ── Secret key ────────────────────────────────────────────────────────────────
+SECRET_KEY="$("$PYTHON" -c "import secrets; print(secrets.token_hex(32))")"
+
+# ── Write .env ────────────────────────────────────────────────────────────────
+step "Writing .env..."
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+    cp "$SCRIPT_DIR/.env" "$SCRIPT_DIR/.env.bak"
+    warn "Backed up existing .env → .env.bak"
+fi
+
+cat > "$SCRIPT_DIR/.env" <<ENVEOF
+# ── Flask ──────────────────────────────────────────────────────────────────────
+SECRET_KEY=${SECRET_KEY}
+BACKEND_PORT=${BACKEND_PORT}
+
+# ── Database ───────────────────────────────────────────────────────────────────
+DATABASE_URL=${SQLITE_URL}
+CONVERSATION_STORAGE=${CONV_STORAGE}
+JSONL_PATH=${JSONL_DIR}
+
+# ── llama-server ───────────────────────────────────────────────────────────────
+LLAMA_HOST=127.0.0.1
+LLAMA_PORT=${LLAMA_PORT}
+LLAMA_SERVER_URL=http://127.0.0.1:${LLAMA_PORT}
+LLAMA_ARG_CTX_SIZE=32000
+
+# ── Model ──────────────────────────────────────────────────────────────────────
+MODEL=${CHOSEN_MODEL}
+MODEL_ALIAS=${MODEL_ALIAS}
+DEFAULT_MODEL=${MODEL_ALIAS}
+MODEL_NGL=${NGL_LAYERS}
+MODEL_CTX=32000
+
+# ── Service ports ──────────────────────────────────────────────────────────────
+TOOLS_PORT=${TOOLS_PORT}
+FRONTEND_PORT=${FRONTEND_PORT}
+
+# ── Workspace ──────────────────────────────────────────────────────────────────
+DEFAULT_WORKSPACE=${DATA_DIR}/workspace/
+ENVEOF
+chmod 600 "$SCRIPT_DIR/.env"
+info "Written: .env"
+
+# ── DB init ───────────────────────────────────────────────────────────────────
+if [[ "$CONV_STORAGE" == "sqlite" ]]; then
+    step "Initialising database..."
+    DATABASE_URL="$SQLITE_URL" $RUNPY -c "from auth.db import init_db; init_db()"
+    info "Database ready: $SQLITE_URL"
+fi
+
+# ── Done ─────────────────────────────────────────────────────────────────────
+printf "\n${GREEN}${BOLD}══════════════════════════════════${RESET}\n"
+printf "${GREEN}${BOLD}  Installation complete!${RESET}\n"
+printf "${GREEN}${BOLD}══════════════════════════════════${RESET}\n\n"
+info "Start everything:  ./start.sh"
+printf "\n"
+info "Or launch llama-server manually:"
+printf "  %s \\\\\n    --model \"%s\" \\\\\n    --port %s \\\\\n    -ngl %s\n\n" \
+    "$LLAMA_BIN" "$CHOSEN_MODEL" "$LLAMA_PORT" "$NGL_LAYERS"
+info "UI: http://localhost:${FRONTEND_PORT}"
+printf "\n"
+
+fi  # end PATH 1
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PATH 2 — CLOUD CLIENT ONLY
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$INSTALL_PATH" == "cloud" ]]; then
+
+# ── Client venv ───────────────────────────────────────────────────────────────
+step "Setting up client environment..."
+VENV_DIR="$SCRIPT_DIR/.client-venv"
+VENV_PY="$VENV_DIR/bin/python"
+
+if [[ -d "$VENV_DIR" ]]; then
+    warn "Reusing existing .client-venv"
+else
+    "$PYTHON" -m venv "$VENV_DIR"
+fi
+"$VENV_PY" -m pip install --quiet --upgrade pip
+"$VENV_PY" -m pip install --quiet websockets rich requests python-dotenv cryptography
+info "Client dependencies installed."
+
+# ── Port ──────────────────────────────────────────────────────────────────────
+step "Finding free port for agent bridge..."
+AGENT_PORT="$(find_free_port 5100 5200)"
+info "Agent bridge port: $AGENT_PORT"
+
+# ── API key ───────────────────────────────────────────────────────────────────
+printf "\nYou'll need an API key to connect (or press Enter to configure later).\n"
+printf "API key: "; read -r _api_key
+
+# ── Write .env.client ─────────────────────────────────────────────────────────
+cat > "$SCRIPT_DIR/.env.client" <<ENVEOF
+INSTALL_MODE=cloud
+AGENT_API_KEY=${_api_key:-YOUR_KEY_HERE}
+ATOMIC_HOST=https://agent.eric-merritt.com
+AGENT_SERVER=wss://agent.eric-merritt.com/api/chat/ws
+CLIENT_AGENT_PORT=${AGENT_PORT}
+ALLOWED_PATHS=${HOME}
+ENVEOF
+chmod 600 "$SCRIPT_DIR/.env.client"
+info "Written: .env.client"
+
+[[ -z "${_api_key:-}" ]] && warn "Set AGENT_API_KEY in .env.client before running."
+
+# ── ./agent wrapper ───────────────────────────────────────────────────────────
+cat > "$SCRIPT_DIR/agent" <<'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$DIR/.env.client" ]] && { set -a; source "$DIR/.env.client"; set +a; }
+exec "$DIR/.client-venv/bin/python" "$DIR/atomic_client/agent.py" "$@"
+WRAPPER
+chmod +x "$SCRIPT_DIR/agent"
+info "Created: ./agent"
+
+# ── .gitignore ────────────────────────────────────────────────────────────────
+for _pat in ".client-venv" ".env.client"; do
+    grep -qxF "$_pat" "$SCRIPT_DIR/.gitignore" 2>/dev/null || echo "$_pat" >> "$SCRIPT_DIR/.gitignore"
+done
+
+# ── Done ─────────────────────────────────────────────────────────────────────
+printf "\n${GREEN}${BOLD}══════════════════════════════════${RESET}\n"
+printf "${GREEN}${BOLD}  Installation complete!${RESET}\n"
+printf "${GREEN}${BOLD}══════════════════════════════════${RESET}\n\n"
+info "Start the agent bridge:  ./agent"
+printf "\nYour browser will open for login on first run.\n\n"
+
+fi  # end PATH 2

@@ -5,10 +5,11 @@ import { ProfilePanel } from '../components/organisms/ProfilePanel';
 import { ApiKeyPanel } from '../components/organisms/ApiKeyPanel';
 import { ConnectionsPanel } from '../components/organisms/ConnectionsPanel';
 import { JournalEntryForm } from '../components/organisms/JournalEntryForm';
+import { RestrictedToolsPanel } from '../components/organisms/RestrictedToolsPanel';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { useTheme } from '../hooks/useTheme';
 
-type Section = 'conversations' | 'profile' | 'keys' | 'connections' | 'accounting';
+type Section = 'conversations' | 'profile' | 'keys' | 'connections' | 'accounting' | 'restricted';
 
 export function DashboardPage() {
   const { theme } = useTheme();
@@ -20,6 +21,7 @@ export function DashboardPage() {
     accounting: <JournalEntryForm />,
     keys: <ApiKeyPanel />,
     connections: <ConnectionsPanel />,
+    restricted: <RestrictedToolsPanel />,
   };
 
   return (

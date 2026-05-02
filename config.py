@@ -68,6 +68,40 @@ SUMMARIZE_SERVER_URL = os.environ.get(
 CONTEXT_SUMMARIZE_THRESHOLD = float(os.environ.get("CONTEXT_SUMMARIZE_THRESHOLD", "0.75"))
 
 
+# ── Bridge RSA key pair ──────────────────────────────────────────────────────
+import pathlib as _pathlib
+
+_KEYS_DIR = _pathlib.Path(__file__).parent / "keys"
+
+
+def _load_or_generate_keypair():
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    _KEYS_DIR.mkdir(mode=0o700, exist_ok=True)
+    priv_path = _KEYS_DIR / "server_private.pem"
+
+    if priv_path.exists():
+        private_key = serialization.load_pem_private_key(priv_path.read_bytes(), password=None)
+    else:
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        priv_path.write_bytes(private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+        priv_path.chmod(0o600)
+
+    public_pem = private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+    return private_key, public_pem
+
+
+SERVER_PRIVATE_KEY, SERVER_PUBLIC_KEY_PEM = _load_or_generate_keypair()
+
+
 def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
   """Build a qwen-agent LLM config pointing at the local llama.cpp instance."""
   return {

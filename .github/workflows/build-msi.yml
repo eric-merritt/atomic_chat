@@ -35,17 +35,50 @@ jobs:
         run: dotnet tool install --global wix --version "4.*"
 
       - name: Build MSI
-        working-directory: installer
-        run: wix build atomic-chat.wxs -o atomic-chat-setup.msi
+        run: wix build installer\atomic-chat.wxs -o installer\atomic-chat-setup.msi
 
-      - name: Upload artifact
+      - name: Upload MSI artifact
         uses: actions/upload-artifact@v4
         with:
           name: atomic-chat-setup
           path: installer\atomic-chat-setup.msi
 
+      - name: Prepare MSIX layout
+        run: |
+          New-Item -ItemType Directory -Force msix_layout\Assets | Out-Null
+          Copy-Item dist\atomic-chat-agent.exe msix_layout\
+          Copy-Item installer\AppxManifest.xml msix_layout\
+
+      - name: Generate placeholder assets
+        shell: python
+        run: |
+          import struct, zlib
+          def make_png(w, h):
+              def chunk(t, d):
+                  c = zlib.crc32(t + d) & 0xffffffff
+                  return struct.pack('>I', len(d)) + t + d + struct.pack('>I', c)
+              ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
+              raw = b''.join(b'\x00' + bytes([0, 120, 215]) * w for _ in range(h))
+              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+          for name, size in [('Square44x44Logo.png', 44), ('Square150x150Logo.png', 150), ('StoreLogo.png', 50)]:
+              open(f'msix_layout/Assets/{name}', 'wb').write(make_png(size, size))
+
+      - name: Build MSIX
+        run: |
+          $makeappx = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter makeappx.exe |
+                      Where-Object { $_.FullName -match 'x64' } | Sort-Object | Select-Object -Last 1 -ExpandProperty FullName
+          & $makeappx pack /d msix_layout /p installer\atomic-chat-agent.msix /nv
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomic-chat-agent-msix
+          path: installer\atomic-chat-agent.msix
+
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: installer/atomic-chat-setup.msi
+          files: |
+            installer/atomic-chat-setup.msi
+            installer/atomic-chat-agent.msix

@@ -1180,10 +1180,7 @@ class BrowserClickTool(BaseTool):
 @register_tool('www_find_struct')
 class FindWebStructureTool(BaseTool):
     description = (
-        'Finds web elements that make up the sites content structure.'
-        'Returns: main container selector, ranked card candidates (each with count and per-card field selectors: '
-        'thumbnail, preview_video, title, link). Platform-agnostic. '
-        'Use this on gallery listing pages to build site config objects for structured extraction.'
+        'Queries the DOM of a given site to return CSS selectors for use in creating site structure templates.'
     )
     parameters = {
         'type': 'object',

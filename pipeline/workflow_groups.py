@@ -11,6 +11,7 @@ from dataclasses import dataclass
 class WorkflowGroup:
     tools: list[str]
     tooltip: str
+    gate: str | None = None  # 'waiver' | 'age' — requires Dashboard acceptance before use
 
 
 WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
@@ -39,6 +40,7 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
                "of_scroll_convos", "of_scroll_msgs",
                "of_save_media"],
         tooltip="Creator discovery, profiles, and media management",
+        gate="age",
     ),
     "Torrent": WorkflowGroup(
         tools=["bt_search", "bt_download", "bt_plugins",
@@ -75,10 +77,12 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
                "bb_inti_programs", "bb_ywh_programs", "bb_synack_programs",
                "bb_search", "bb_vuln_types"],
         tooltip="Bug bounty program discovery and vulnerability research across HackerOne, Bugcrowd, Intigriti, YesWeHack, Synack",
+        gate="waiver",
     ),
     "Exploit": WorkflowGroup(
         tools=["xp_sinj", "xp_xss", "xp_ssrf", "xp_cmdi", "xp_trav", "xp_rce", "xp_scan", "xp_gen"],
         tooltip="Payload generation and vulnerability testing for SQLi, XSS, SSRF, command injection, path traversal, RCE",
+        gate="waiver",
     ),
 }
 

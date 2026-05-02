@@ -30,7 +30,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     fetchWorkflowGroups()
-      .then((r) => setGroups(r.groups))
+      .then((r) => setGroups(r.groups))  // restricted groups are managed in Dashboard, not ToolExplorer
       .catch((e: unknown) => {
         console.error(
           '[WorkspaceProvider] Failed to load workflow groups from /api/workspace/groups —',

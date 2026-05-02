@@ -11,6 +11,8 @@ import { ChatPage } from './pages/ChatPage';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { CliAuthPage } from './pages/CliAuthPage';
+import { PrivacyPage } from './pages/PrivacyPage';
+import { SupportPage } from './pages/SupportPage';
 import { useAuth } from './hooks/useAuth';
 
 function AuthGate() {
@@ -18,6 +20,8 @@ function AuthGate() {
   const location = useLocation();
 
   if (location.pathname === '/cli-auth') return <CliAuthPage />;
+  if (location.pathname === '/privacy') return <PrivacyPage />;
+  if (location.pathname === '/support') return <SupportPage />;
 
   if (loading) {
     return (

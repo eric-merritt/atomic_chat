@@ -2,9 +2,17 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey
-from sqlalchemy.dialects.postgresql import JSONB
+import os
+
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
+
+# Use PostgreSQL's binary JSONB when available; fall back to generic JSON for SQLite
+_db_url = os.environ.get("DATABASE_URL", "")
+if _db_url.startswith("postgresql"):
+    from sqlalchemy.dialects.postgresql import JSONB as _JsonType
+else:
+    _JsonType = JSON
 
 from auth.models import Base, _uuid, _now
 
@@ -32,8 +40,8 @@ class ConversationMessage(Base):
     conversation_id = Column(String(36), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False)
     role = Column(String(16), nullable=False)
     content = Column(Text, nullable=False, default="")
-    images = Column(JSONB, nullable=False, default=list, server_default='[]')
-    tool_calls = Column(JSONB, nullable=False, default=list, server_default='[]')
+    images = Column(_JsonType, nullable=False, default=list, server_default='[]')
+    tool_calls = Column(_JsonType, nullable=False, default=list, server_default='[]')
     created_at = Column(DateTime(timezone=True), default=_now)
 
     conversation = relationship("Conversation", back_populates="messages")

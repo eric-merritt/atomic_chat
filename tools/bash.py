@@ -7,6 +7,7 @@ import json5
 from qwen_agent.tools.base import BaseTool, register_tool
 
 from tools._output import tool_result
+from tools._access import check_fs_access
 
 # conv_id → {"event": threading.Event, "approved": bool | None}
 _pending_confirms: dict[str, dict] = {}
@@ -39,6 +40,9 @@ class BashTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         command = (p.get('command') or '').strip()
         description = (p.get('description') or '').strip()

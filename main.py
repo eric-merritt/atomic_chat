@@ -67,6 +67,9 @@ def register_auth_bps():
   app.register_blueprint(chat_bp)
   from routes.models import models_bp
   app.register_blueprint(models_bp)
+  from routes.bridge import bridge_bp, sock as bridge_sock
+  app.register_blueprint(bridge_bp)
+  bridge_sock.init_app(app)
   app.before_request(auth_guard)
 
 @app.teardown_appcontext
@@ -86,9 +89,10 @@ _FRONTEND_DIST = _os.path.join(_os.path.dirname(__file__), "frontend", "dist")
 @app.route("/api/workflows", methods=["GET"])
 @login_required
 def list_workflows():
-  """List available workflow groups with full tool metadata."""
+  """List workflow groups. Non-gated groups in 'groups'; gated groups in 'restricted'."""
   meta_by_name = {t["name"]: t for t in TOOL_REGISTRY if t is not None}
   groups = []
+  restricted = []
   for name, group in WORKFLOW_GROUPS.items():
     group_tools = []
     for tool_name in group.tools:
@@ -100,17 +104,14 @@ def list_workflows():
           "params": t.get("params", {}),
         })
       else:
-        group_tools.append({
-          "name": tool_name,
-          "description": "",
-          "params": {},
-        })
-    groups.append({
-      "name": name,
-      "tooltip": group.tooltip,
-      "tools": group_tools,
-    })
-  return jsonify({"groups": groups})
+        group_tools.append({"name": tool_name, "description": "", "params": {}})
+    entry = {"name": name, "tooltip": group.tooltip, "tools": group_tools}
+    if group.gate:
+      entry["gate"] = group.gate
+      restricted.append(entry)
+    else:
+      groups.append(entry)
+  return jsonify({"groups": groups, "restricted": restricted})
 
 
 @app.route("/", defaults={"path": ""})

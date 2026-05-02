@@ -11,6 +11,7 @@ from qwen_agent.tools.base import BaseTool, register_tool
 
 from tools._output import tool_result, retry
 from tools._enrich import enrichable
+from tools._access import check_fs_access
 from config import DEFAULT_WORKSPACE
 
 
@@ -56,6 +57,9 @@ class ReadTool(BaseTool):
 
     @retry()
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         path = _resolve(p['path'])
         start_line = p.get('start_line', 0)
@@ -102,6 +106,9 @@ class InfoTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         path = _resolve(p['path'])
 
@@ -152,6 +159,9 @@ class SummaryTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         import time
         p = json5.loads(params)
         path = _resolve(p['path'])
@@ -292,6 +302,9 @@ class WriteTool(BaseTool):
 
     @retry()
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         import time
         p = json5.loads(params)
         path = _resolve(p['path'])
@@ -360,6 +373,9 @@ class GrepTool(BaseTool):
     }
     
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         path = _resolve(p['path'])
         pattern = p['pattern']
@@ -448,6 +464,9 @@ class FindDefinitionTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         path = _resolve(p['path'])
         name = p['name']
@@ -573,6 +592,9 @@ class ReplaceTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict:
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         p = json5.loads(params)
         path = _resolve(p['path'])
         start_line = p['start_line']
@@ -639,6 +661,9 @@ class FilesystemTreeTool(BaseTool):
     }
     
     def call(self, params: str, **kwargs):
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
         try:
             p = json5.loads(params)
             path = _resolve(p['path'])
