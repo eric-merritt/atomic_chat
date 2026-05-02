@@ -4,6 +4,7 @@ import {
   type WorkflowGroup,
 } from '../../api/workflowGroups';
 import { GroupCard } from '../molecules/GroupCard';
+import { useWorkspace } from '../../hooks/useWorkspace';
 
 interface GateBlockProps {
   gate: 'waiver' | 'age';
@@ -105,6 +106,7 @@ function GateBlock({ gate, onAccepted }: GateBlockProps) {
 }
 
 export function RestrictedToolsPanel() {
+  const { refreshGroups } = useWorkspace();
   const [groups, setGroups] = useState<WorkflowGroup[]>([]);
   const [gateStatus, setGateStatus] = useState<Record<string, boolean>>({});
   const [activeGroups, setActiveGroups] = useState<string[]>([]);
@@ -119,9 +121,10 @@ export function RestrictedToolsPanel() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleGateAccepted = useCallback((gate: string) => {
+  const handleGateAccepted = useCallback(async (gate: string) => {
     setGateStatus((s) => ({ ...s, [gate]: true }));
-  }, []);
+    await refreshGroups();
+  }, [refreshGroups]);
 
   const handleToggle = useCallback(async (name: string) => {
     const willBeActive = !activeGroups.includes(name);
