@@ -1,11 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Atomic Chat Agent — Windows Installer
-  Builds with WiX 4: wix build installer/atomic-chat.wxs
-  Requires: wix extension add WixToolset.UI.wixext
--->
-<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
-     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+<!-- Atomic Chat Agent - Windows Installer (WiX 4) -->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
   <Package Name="Atomic Chat Agent"
            Manufacturer="Eric Merritt"
@@ -14,26 +9,16 @@
            Scope="perUser">
 
     <SummaryInformation Description="Atomic Chat client bridge" />
-
-    <!-- Remove old version before installing new one -->
     <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
-
-    <!-- Embed all files into the MSI (no separate .cab) -->
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- ── Directories ──────────────────────────────────────────────────── -->
-
-    <!-- Exe → %LOCALAPPDATA%\AtomicChat\ -->
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="INSTALLFOLDER" Name="AtomicChat" />
     </StandardDirectory>
 
-    <!-- Shortcut → Start Menu\Atomic Chat -->
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="AppMenuFolder" Name="Atomic Chat" />
     </StandardDirectory>
-
-    <!-- ── Components ──────────────────────────────────────────────────── -->
 
     <ComponentGroup Id="AgentBinary" Directory="INSTALLFOLDER">
       <Component Id="AgentExe" Guid="*">
@@ -41,10 +26,6 @@
       </Component>
     </ComponentGroup>
 
-    <!--
-      The shortcut component needs a registry KeyPath so MSI can track it.
-      Writing to HKCU is fine for perUser installs (no elevation needed).
-    -->
     <ComponentGroup Id="Shortcuts" Directory="AppMenuFolder">
       <Component Id="StartMenuShortcutComp" Guid="*">
         <Shortcut Id="StartMenuShortcut"
@@ -60,18 +41,10 @@
       </Component>
     </ComponentGroup>
 
-    <!-- ── Features ────────────────────────────────────────────────────── -->
-
     <Feature Id="Complete" Title="Atomic Chat Agent" Level="1">
       <ComponentGroupRef Id="AgentBinary" />
       <ComponentGroupRef Id="Shortcuts" />
     </Feature>
-
-    <!-- ── UI ──────────────────────────────────────────────────────────── -->
-
-    <!-- WixUI_Minimal: license agreement → Install → progress → finish -->
-    <ui:WixUI Id="WixUI_Minimal" />
-    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 
   </Package>
 </Wix>
