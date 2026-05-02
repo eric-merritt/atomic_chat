@@ -1,0 +1,51 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build-msi:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python deps + PyInstaller
+        run: pip install pyinstaller websockets rich requests python-dotenv cryptography
+
+      - name: Build exe
+        run: >-
+          pyinstaller
+          --onefile
+          --console
+          --name atomic-chat-agent
+          --hidden-import websockets.sync.client
+          --collect-all cryptography
+          atomic_client/agent.py
+
+      - name: Install WiX 4
+        run: dotnet tool install --global wix
+
+      - name: Add WiX UI extension
+        run: wix extension add WixToolset.UI.wixext
+
+      - name: Build MSI
+        run: wix build installer/atomic-chat.wxs -o installer/atomic-chat-setup.msi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: atomic-chat-setup
+          path: installer/atomic-chat-setup.msi
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/atomic-chat-setup.msi
