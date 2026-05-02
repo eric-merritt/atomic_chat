@@ -12,6 +12,7 @@ import { ToolWorkspace } from '../components/organisms/ToolWorkspace';
 import { ApGallery } from '../components/organisms/ApGallery';
 import { Icon } from '../components/atoms/Icon';
 import { ChatPopover } from '../components/molecules/ChatPopover';
+import { BashConfirmBar } from '../components/molecules/BashConfirmBar';
 import { Lightbox } from '../components/organisms/Lightbox';
 import { ParticleCanvas } from '../components/atoms/ParticleCanvas';
 import { useTheme } from '../hooks/useTheme';
@@ -103,26 +104,29 @@ export function ChatPage() {
         )}
 
         {/* Bottom row: spans all columns */}
-        <div style={{ gridColumn: '1 / -1' }} className="flex items-stretch shrink-0">
-          <ErrorBoundary>
-            <div className="flex items-stretch p-2 transition-[width] duration-300 ease-in-out" style={{ width: sidebarWidth }}>
-              <TaskList sidebarExpanded={sidebarExpanded} style={{}} />
-            </div>
-          </ErrorBoundary>
-          <ErrorBoundary>
-            <div className="flex-1 flex items-stretch">
-              <InputBar />
-              {layout === 'workspace-inputbar' && (
-                <button
-                  className="flex items-center justify-center w-10 shrink-0 cursor-pointer text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors text-lg"
-                  onClick={() => setChatPopoverOpen((p) => !p)}
-                  title="Open chat"
-                >
-                  Chat
-                </button>
-              )}
-            </div>
-          </ErrorBoundary>
+        <div style={{ gridColumn: '1 / -1' }} className="flex flex-col shrink-0">
+          <BashConfirmBar />
+          <div className="flex items-stretch">
+            <ErrorBoundary>
+              <div className="flex items-stretch p-2 transition-[width] duration-300 ease-in-out" style={{ width: sidebarWidth }}>
+                <TaskList sidebarExpanded={sidebarExpanded} style={{}} />
+              </div>
+            </ErrorBoundary>
+            <ErrorBoundary>
+              <div className="flex-1 flex items-stretch">
+                <InputBar />
+                {layout === 'workspace-inputbar' && (
+                  <button
+                    className="flex items-center justify-center w-10 shrink-0 cursor-pointer text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors text-lg"
+                    onClick={() => setChatPopoverOpen((p) => !p)}
+                    title="Open chat"
+                  >
+                    Chat
+                  </button>
+                )}
+              </div>
+            </ErrorBoundary>
+          </div>
         </div>
       </div>
 

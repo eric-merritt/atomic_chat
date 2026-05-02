@@ -23,18 +23,33 @@ def _resolve(path: str) -> str:
     return path
 
 
-# ── Read Operations ──────────────────────────────────────────────────────────
+# ============================================================================
+# Read Operations
+# ============================================================================
+
+_READ_PAGE = 200
+
+
+def _page_for(line_start: int) -> dict:
+    """Return page number (1-indexed) and the start_line arg to pass to fs_read."""
+    page = (line_start - 1) // _READ_PAGE + 1
+    return {'page': page, 'read_start_line': (page - 1) * _READ_PAGE}
+
 
 @register_tool('fs_read')
 @enrichable
 class ReadTool(BaseTool):
-    description = 'Read a file and return its contents with line numbers.'
+    description = (
+        'Read a file and return its contents with line numbers. '
+        'Returns at most 200 lines per call. When has_more is true, '
+        'call again with start_line=next_start_line to read the next page.'
+    )
     parameters = {
         'type': 'object',
         'properties': {
             'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
             'start_line': {'type': 'integer', 'description': 'First line to include (0-indexed). Default: 0.'},
-            'end_line': {'type': 'integer', 'description': 'Last line to include (exclusive). -1 = read to end.'},
+            'end_line': {'type': 'integer', 'description': 'Last line to include (exclusive). Capped at start_line+200.'},
         },
         'required': ['path'],
     }
@@ -56,14 +71,23 @@ class ReadTool(BaseTool):
         except Exception as e:
             return tool_result(error=str(e))
 
-        end = None if end_line == -1 else end_line
-        subset = lines[start_line:end]
+        total = len(lines)
+        cap = start_line + _READ_PAGE
+        if end_line == -1 or end_line > cap:
+            end_line = cap
+        subset = lines[start_line:end_line]
         numbered = [f'{i:>6}  {line.rstrip()}' for i, line in enumerate(subset, start=start_line + 1)]
-        return tool_result(data={
+        has_more = end_line < total
+        result = {
             'path': os.path.abspath(path),
             'content': '\n'.join(numbered),
             'lines_returned': len(numbered),
-        })
+            'total_lines': total,
+            'has_more': has_more,
+        }
+        if has_more:
+            result['next_start_line'] = end_line
+        return tool_result(data=result)
 
 
 @register_tool('fs_info')
@@ -77,654 +101,549 @@ class InfoTool(BaseTool):
         'required': ['path'],
     }
 
-    @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         path = _resolve(p['path'])
 
         try:
             stat = os.stat(path)
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+            import time
+            return tool_result(data={
+                'path': os.path.abspath(path),
+                'size': stat.st_size,
+                'modified_time': time.ctime(stat.st_mtime),
+                'type': 'file' if os.path.isfile(path) else 'directory',
+                'line_count': len(lines),
+            })
         except FileNotFoundError:
             return tool_result(error=f'File not found: {os.path.abspath(path)}')
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        info_dict = {
-            'path': os.path.abspath(path),
-            'exists': True,
-            'size_bytes': stat.st_size,
-            'modified': stat.st_mtime,
-            'is_file': os.path.isfile(path),
-            'is_dir': os.path.isdir(path),
-        }
-        if info_dict['is_file']:
-            try:
-                with open(path, 'r', encoding='utf-8', errors='replace') as f:
-                    info_dict['line_count'] = sum(1 for _ in f)
-            except Exception:
-                info_dict['line_count'] = None
-        return tool_result(data=info_dict)
-
-
-@register_tool('fs_ls')
-class LsTool(BaseTool):
-    description = 'List directory contents, optionally recursive with glob pattern.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Directory to list. Defaults to current directory.'},
-            'recursive': {'type': 'boolean', 'description': 'If true, walk subdirectories.'},
-            'pattern': {'type': 'string', 'description': "Glob pattern to filter results (e.g. '*.py')."},
-        },
-        'required': [],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p.get('path', '.'))
-        recursive = p.get('recursive', False)
-        pattern = p.get('pattern', '*')
-
-        try:
-            if recursive:
-                entries = sorted(glob_mod.glob(os.path.join(path, '**', pattern), recursive=True))
-            else:
-                entries = sorted(glob_mod.glob(os.path.join(path, pattern)))
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        return tool_result(data={'path': os.path.abspath(path), 'count': len(entries), 'entries': entries})
-
-
-@register_tool('fs_tree')
-@enrichable
-class TreeTool(BaseTool):
-    description = 'Print a directory tree with configurable depth using lsd.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Directory path to tree. Default: current directory.'},
-            'max_depth': {'type': 'integer', 'description': 'Max recursion depth. Default: 3.'},
-            'show_hidden': {'type': 'boolean', 'description': 'Include hidden files/dirs. Default: false.'},
-        },
-        'required': [],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p.get('path', '.'))
-        max_depth = p.get('max_depth', 3)
-        show_hidden = p.get('show_hidden', False)
-
-        args = ['lsd', '--tree', '--depth', str(max_depth)]
-        if show_hidden:
-            args.append('-a')
-        args.append(path)
-
-        try:
-            result = run(args, capture_output=True, text=True)
-        except FileNotFoundError:
-            return tool_result(error='lsd not found in PATH')
-
-        if result.returncode != 0:
-            return tool_result(error=result.stderr.strip() or f'lsd exited with code {result.returncode}')
-
-        return tool_result(data={'path': os.path.abspath(path), 'tree': result.stdout.rstrip()})
-
-
-# ── Write Operations ─────────────────────────────────────────────────────────
-
-@register_tool('fs_write')
-class WriteTool(BaseTool):
-    description = 'Write content to a file, creating parent directories if needed. DESTRUCTIVE: overwrites existing content.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
-            'content': {'type': 'string', 'description': 'Full file content to write.'},
-        },
-        'required': ['path', 'content'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p['path'])
-        content = p['content']
-
-        try:
-            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-            with open(path, 'w', encoding='utf-8') as f:
-                written = f.write(content)
-            return tool_result(data={'path': os.path.abspath(path), 'bytes_written': written})
         except PermissionError:
             return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
         except Exception as e:
             return tool_result(error=str(e))
 
 
-@register_tool('fs_append')
-class AppendTool(BaseTool):
-    description = 'Append content to the end of a file.'
+@register_tool('fs_summary')
+class SummaryTool(BaseTool):
+    """Provide a lightweight structural summary of a file without full contents.
+
+    Best practices for the summary:
+    - Include line numbers for all definitions (essential for navigation)
+    - Map file structure (classes, functions, imports)
+    - Describe component purposes briefly
+    - Keep token usage minimal while maintaining utility
+    - Enable precise navigation without "flying blind"
+
+    This tool combines fs_info and fs_find_def to provide:
+    - File metadata (size, line count, modified time)
+    - Structural overview with line number mapping
+    - Component descriptions
+    - Navigation guidance
+    """
+    description = 'Provide a structural summary of a file with line numbers for definitions, metadata, and navigation guidance without full contents.'
     parameters = {
         'type': 'object',
         'properties': {
-            'path': {'type': 'string', 'description': 'File path to append to.'},
-            'content': {'type': 'string', 'description': 'Content to append.'},
+            'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
+        },
+        'required': ['path'],
+    }
+
+    def call(self, params: str, **kwargs) -> dict:
+        import time
+        p = json5.loads(params)
+        path = _resolve(p['path'])
+
+        # Get file metadata first
+        try:
+            stat = os.stat(path)
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            return tool_result(error=f'File not found: {os.path.abspath(path)}')
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
+        except Exception as e:
+            return tool_result(error=str(e))
+
+        # Extract structural information with line numbers
+        structure = []
+
+        # Find imports
+        import_pattern = r'^import\s+(.+)$|^from\s+(.+?)\s+import\s+(.+)$'
+        for i, line in enumerate(lines):
+            match = re.match(import_pattern, line.strip())
+            if match:
+                structure.append({
+                    'type': 'import',
+                    'line': i + 1,
+                    'content': line.strip(),
+                    'purpose': 'Module import'
+                })
+
+        # Find class definitions
+        class_pattern = r'^class\s+(\w+)'
+        for i, line in enumerate(lines):
+            match = re.match(class_pattern, line.strip())
+            if match:
+                class_name = match.group(1)
+                # Try to find docstring or description
+                purpose = 'Class definition'
+                for j in range(i, min(i + 10, len(lines))):
+                    if lines[j].strip().startswith('"""') or lines[j].strip().startswith("'''"):
+                        # Extract docstring content
+                        docstring = lines[j].strip()
+                        if 'description' in docstring.lower() or 'purpose' in docstring.lower():
+                            purpose = docstring
+                            break
+                structure.append({
+                    'type': 'class',
+                    'name': class_name,
+                    'line': i + 1,
+                    'purpose': purpose
+                })
+
+        # Find function definitions
+        func_pattern = r'^(def|async\s+def)\s+(\w+)'
+        for i, line in enumerate(lines):
+            match = re.match(func_pattern, line.strip())
+            if match:
+                func_name = match.group(2)
+                func_type = 'async' if match.group(1) == 'async def' else 'sync'
+                # Try to find docstring or description
+                purpose = 'Function definition'
+                for j in range(i, min(i + 10, len(lines))):
+                    if lines[j].strip().startswith('"""') or lines[j].strip().startswith("'''"):
+                        docstring = lines[j].strip()
+                        if 'description' in docstring.lower() or 'purpose' in docstring.lower():
+                            purpose = docstring
+                            break
+                structure.append({
+                    'type': 'function',
+                    'name': func_name,
+                    'line': i + 1,
+                    'func_type': func_type,
+                    'purpose': purpose
+                })
+
+        # Find key structural elements (decorators, register_tool calls)
+        decorator_pattern = r'^@\w+'
+        for i, line in enumerate(lines):
+            match = re.match(decorator_pattern, line.strip())
+            if match:
+                structure.append({
+                    'type': 'decorator',
+                    'line': i + 1,
+                    'content': line.strip(),
+                    'purpose': 'Function decorator'
+                })
+
+        return tool_result(data={
+            'path': os.path.abspath(path),
+            'metadata': {
+                'size': stat.st_size,
+                'modified_time': time.ctime(stat.st_mtime),
+                'type': 'file' if os.path.isfile(path) else 'directory',
+                'line_count': len(lines),
+            },
+            'structure': structure,
+            'summary': f'File contains {len([s for s in structure if s["type"] == "class"])} classes, {len([s for s in structure if s["type"] == "function"])} functions, and {len([s for s in structure if s["type"] == "import"])} imports. Use fs_read with line ranges to view specific sections, or fs_find_def to locate definitions.'
+        })
+
+
+# ============================================================================
+# Write Operations
+# ============================================================================
+
+@register_tool('fs_write')
+@enrichable
+class WriteTool(BaseTool):
+    """Write content to a file in manageable chunks to avoid token overflow.
+
+    Constraints:
+    - Files are written in chunks of manageable tokens (max ~4096 tokens per chunk)
+    - Large content is automatically split into multiple write operations
+    - Each chunk is written sequentially to ensure data integrity
+    - Supports both append and overwrite modes
+    - DEFAULTS TO APPEND MODE
+    """
+    description = 'Write content to a file in chunks to manage token limits safely.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
+            'content': {'type': 'string', 'description': 'Content to write to the file.'},
+            'mode': {'type': 'string', 'description': 'Write mode: "append" (default) or "overwrite".', 'enum': ['append', 'overwrite']},
+            'chunk_size': {'type': 'integer', 'description': 'Maximum tokens per chunk. Default: 4096.'},
         },
         'required': ['path', 'content'],
     }
 
+    def _split_into_chunks(self, content: str, max_tokens: int = 4096) -> list[str]:
+        """Split content into chunks of manageable token size."""
+        # Rough estimate: 1 token ≈ 4 characters
+        max_chars = max_tokens * 4
+        chunks = []
+        for i in range(0, len(content), max_chars):
+            chunks.append(content[i:i + max_chars])
+        return chunks
+
     @retry()
     def call(self, params: str, **kwargs) -> dict:
+        import time
         p = json5.loads(params)
         path = _resolve(p['path'])
         content = p['content']
+        mode = p.get('mode', 'append')  # DEFAULT TO APPEND
+        chunk_size = p.get('chunk_size', 4096)
 
         try:
-            with open(path, 'a', encoding='utf-8') as f:
-                written = f.write(content)
-            return tool_result(data={'path': os.path.abspath(path), 'bytes_appended': written})
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(path) or DEFAULT_WORKSPACE, exist_ok=True)
+
+            # Split content into chunks
+            chunks = self._split_into_chunks(content, chunk_size)
+
+            # Write all chunks sequentially
+            if mode == 'overwrite':
+                with open(path, 'w', encoding='utf-8') as f:
+                    for chunk in chunks:
+                        f.write(chunk)
+            else:  # append (default)
+                with open(path, 'a', encoding='utf-8') as f:
+                    for chunk in chunks:
+                        f.write(chunk)
+
+            stat = os.stat(path)
+            return tool_result(data={
+                'path': os.path.abspath(path),
+                'status': 'success',
+                'chunks_written': len(chunks),
+                'total_size': stat.st_size,
+                'mode': mode,
+            })
+        except FileNotFoundError:
+            return tool_result(error=f'File not found: {os.path.abspath(path)}')
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
         except Exception as e:
             return tool_result(error=str(e))
 
+
+# ============================================================================
+# Search Operations
+# ============================================================================
+
+@register_tool('fs_grep')
+class GrepTool(BaseTool):
+    """Search for patterns in files using ripgrep (rg) via subprocess.
+    
+    This tool uses the system 'rg' command to perform fast, efficient text searching.
+    Supports regex patterns, case sensitivity options, and multiple file searching.
+    
+    Requirements:
+    - ripgrep (rg) must be installed on the system
+    - Works on files and directories
+    """
+    description = 'Search for patterns in files using ripgrep (rg) command-line tool.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'path': {'type': 'string', 'description': 'File or directory path to search.'},
+            'pattern': {'type': 'string', 'description': 'Text or regex pattern to search for.'},
+            'case_sensitive': {'type': 'boolean', 'description': 'Enable case-sensitive search. Default: false.'},
+            'max_results': {'type': 'integer', 'description': 'Maximum number of results to return. Default: 50.'},
+        },
+        'required': ['path', 'pattern'],
+    }
+    
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        path = _resolve(p['path'])
+        pattern = p['pattern']
+        case_sensitive = p.get('case_sensitive', False)
+        max_results = p.get('max_results', 50)
+        
+        try:
+            # Build rg command arguments
+            cmd = ['rg', pattern]
+            
+            # Add case sensitivity flag if requested
+            if case_sensitive:
+                cmd.append('--no-ignore-case')
+            else:
+                cmd.append('-i')  # Case-insensitive by default
+            
+            # Limit output
+            cmd.append(f'-l')  # List files only (we'll read them separately)
+            
+            # Run the command
+            result = run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                return tool_result(error=f'Ripgrep error: {result.stderr.strip()}')
+            
+            # Get list of matching files
+            matching_files = result.stdout.strip().split('\n')
+            matching_files = [f for f in matching_files if f.strip()][:max_results]
+            
+            # Now search with line numbers and context
+            cmd = ['rg', pattern]
+            if case_sensitive:
+                cmd.append('--no-ignore-case')
+            else:
+                cmd.append('-i')
+            cmd.append('-n')  # Show line numbers
+            cmd.append(f'-C2')  # Show 2 lines context
+            
+            if os.path.isfile(path):
+                cmd.append(path)
+            else:
+                cmd.append(path)
+                cmd.append('--glob')
+                cmd.append('*.py')
+            
+            result = run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                return tool_result(error=f'Ripgrep search error: {result.stderr.strip()}')
+            
+            return tool_result(data={
+                'path': os.path.abspath(path),
+                'pattern': pattern,
+                'case_sensitive': case_sensitive,
+                'results': result.stdout.strip(),
+                'matching_files': matching_files,
+                'result_count': len(matching_files),
+            })
+        
+        except FileNotFoundError:
+            return tool_result(error='ripgrep (rg) command not found. Please install ripgrep.')
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
+        except TimeoutError:
+            return tool_result(error='Search timed out after 30 seconds.')
+        except Exception as e:
+            return tool_result(error=f'Search error: {str(e)}')
+
+
+# ============================================================================
+# Definition Finder Tool
+# ============================================================================
+
+@register_tool('fs_find_def')
+class FindDefinitionTool(BaseTool):
+    """Find function and class definitions by name and return their line numbers."""
+    description = 'Find function and class definitions by name and return their line numbers in the code.'
+    parameters = {
+        'type': 'object',
+        'properties': {
+            'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
+            'name': {'type': 'string', 'description': 'Name of the function or class to find.'},
+            'def_type': {'type': 'string', 'description': 'Type of definition: "function", "class", or "any". Default: "any".', 'enum': ['function', 'class', 'any']},
+        },
+        'required': ['path', 'name'],
+    }
+
+    def call(self, params: str, **kwargs) -> dict:
+        p = json5.loads(params)
+        path = _resolve(p['path'])
+        name = p['name']
+        def_type = p.get('def_type', 'any')
+
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            return tool_result(error=f'File not found: {os.path.abspath(path)}')
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
+        except Exception as e:
+            return tool_result(error=str(e))
+
+        results = []
+
+        # Search patterns based on def_type
+        if def_type == 'any' or def_type == 'function':
+            # Find function definitions
+            func_pattern = rf'^(def|async\s+def)\s+{re.escape(name)}\s*\('
+            for i, line in enumerate(lines):
+                match = re.match(func_pattern, line.strip())
+                if match:
+                    func_type = 'async' if match.group(1) == 'async def' else 'sync'
+                    # Find the extent of the function (until next def or end of file)
+                    start_line = i + 1
+                    end_line = self._find_definition_end(lines, i)
+                    results.append({
+                        'type': 'function',
+                        'name': name,
+                        'line_start': start_line,
+                        'line_end': end_line,
+                        'func_type': func_type,
+                        'content_preview': line.strip(),
+                        **_page_for(start_line),
+                    })
+
+        if def_type == 'any' or def_type == 'class':
+            # Find class definitions
+            class_pattern = rf'^class\s+{re.escape(name)}'
+            for i, line in enumerate(lines):
+                match = re.match(class_pattern, line.strip())
+                if match:
+                    start_line = i + 1
+                    end_line = self._find_definition_end(lines, i)
+                    results.append({
+                        'type': 'class',
+                        'name': name,
+                        'line_start': start_line,
+                        'line_end': end_line,
+                        'content_preview': line.strip(),
+                        **_page_for(start_line),
+                    })
+
+        if not results:
+            return tool_result(error=f'No definition found for "{name}" in {os.path.abspath(path)}')
+
+        return tool_result(data={
+            'path': os.path.abspath(path),
+            'searched_name': name,
+            'definitions_found': len(results),
+            'results': results,
+            'guidance': 'Each result includes page and read_start_line. Call fs_read(path, start_line=read_start_line) to load that page, then use line_start/line_end to locate the definition within it.'
+        })
+
+    def _find_definition_end(self, lines: list[str], start_idx: int) -> int:
+        """Find the end line of a definition by detecting indentation changes or next definition."""
+        # Get the indentation level of the definition line
+        def_line = lines[start_idx]
+        base_indent = len(def_line) - len(def_line.lstrip())
+
+        end_idx = start_idx
+        for i in range(start_idx + 1, len(lines)):
+            line = lines[i]
+            stripped = line.strip()
+            if not stripped:  # Empty line
+                continue
+            current_indent = len(line) - len(line.lstrip())
+            # If we find a line with same or less indentation that's not empty, we've reached the end
+            if current_indent <= base_indent and stripped:
+                # Check if it's a new definition
+                if re.match(r'^(def|async\s+def|class)\s+\w+', stripped):
+                    end_idx = i
+                    break
+                else:
+                    end_idx = i
+                    break
+            else:
+                end_idx = i
+
+        return end_idx + 1  # Convert to 1-indexed line number
+
+
+# ============================================================================
+# Line Replacement Tool
+# ============================================================================
 
 @register_tool('fs_replace')
 class ReplaceTool(BaseTool):
-    description = 'Replace exact string occurrences in a file.'
+    """Replace specific lines in a file with new content.
+
+    This tool allows targeted modifications to specific line ranges in a file.
+    It reads the file, replaces the specified lines, and writes back the modified content.
+
+    Best practices:
+    - Use fs_find_def to locate definitions before making edits
+    - Use fs_read to view the specific sections to modify
+    - Never read or rewrite entire files blindly
+    - Make targeted, surgical changes
+    - Always verify the changes are correct before committing
+    """
+    description = 'Replace specific lines in a file with new content.'
     parameters = {
         'type': 'object',
         'properties': {
-            'path': {'type': 'string', 'description': 'File to edit.'},
-            'old': {'type': 'string', 'description': 'Exact string to find. Must exist in the file.'},
-            'new': {'type': 'string', 'description': 'Replacement string.'},
-            'count': {'type': 'integer', 'description': 'Max replacements. 0 = replace all occurrences.'},
+            'path': {'type': 'string', 'description': 'Absolute or relative file path.'},
+            'start_line': {'type': 'integer', 'description': 'First line to replace (1-indexed, inclusive).'},
+            'end_line': {'type': 'integer', 'description': 'Last line to replace (1-indexed, inclusive). -1 = to end of file.'},
+            'replacement': {'type': 'string', 'description': 'Content to replace the specified lines with.'},
         },
-        'required': ['path', 'old', 'new'],
+        'required': ['path', 'start_line', 'end_line', 'replacement'],
     }
 
-    @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
         path = _resolve(p['path'])
-        old = p['old']
-        new = p['new']
-        count = p.get('count', 1)
+        start_line = p['start_line']
+        end_line = p['end_line']
+        replacement = p['replacement']
 
         try:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        if old not in content:
-            return tool_result(error=f'String not found in {os.path.abspath(path)}')
-
-        occurrences = content.count(old)
-        if count == 0:
-            new_content = content.replace(old, new)
-            replaced = occurrences
-        else:
-            new_content = content.replace(old, new, count)
-            replaced = min(count, occurrences)
-
-        try:
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        return tool_result(data={'path': os.path.abspath(path), 'replacements': replaced})
-
-
-@register_tool('fs_insert_at_line')
-class InsertAtLineTool(BaseTool):
-    description = 'Insert content at a specific line number (1-indexed).'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'File to edit.'},
-            'line_number': {'type': 'integer', 'description': 'Line number to insert before (1-indexed).'},
-            'content': {'type': 'string', 'description': 'Text to insert.'},
-        },
-        'required': ['path', 'line_number', 'content'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p['path'])
-        line_number = p['line_number']
-        content = p['content']
-
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()
+        except FileNotFoundError:
+            return tool_result(error=f'File not found: {os.path.abspath(path)}')
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
         except Exception as e:
             return tool_result(error=str(e))
 
-        if not content.endswith('\n'):
-            content += '\n'
-        lines.insert(line_number - 1, content)
+        n = len(lines)
+        # Convert 1-indexed inclusive to 0-indexed slice bounds
+        start_idx = start_line - 1
+        end_idx = n if end_line == -1 else end_line  # end_line is inclusive, slice end is exclusive
+
+        if start_idx < 0 or start_idx >= n:
+            return tool_result(error=f'Invalid start_line: {start_line}. File has {n} lines.')
+        if end_idx < start_line or end_idx > n:
+            return tool_result(error=f'Invalid end_line: {end_line}. Must be >= start_line ({start_line}) and <= {n}.')
+
+        lines_to_replace = lines[start_idx:end_idx]
+        new_lines = [replacement if replacement.endswith('\n') else replacement + '\n']
+        modified_lines = lines[:start_idx] + new_lines + lines[end_idx:]
 
         try:
             with open(path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
-        except Exception as e:
-            return tool_result(error=str(e))
+                f.writelines(modified_lines)
 
-        return tool_result(data={'path': os.path.abspath(path), 'inserted_at_line': line_number})
-
-
-@register_tool('fs_delete')
-class DeleteTool(BaseTool):
-    description = (
-        'Delete a file, empty directory, or a range of lines from a file. '
-        'If start and end are both 0, deletes the file/directory. '
-        'Otherwise, deletes lines start-end (1-indexed, inclusive).'
-    )
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Path to delete or file to edit.'},
-            'start': {'type': 'integer', 'description': 'First line to delete (1-indexed). 0 = delete the file itself.'},
-            'end': {'type': 'integer', 'description': 'Last line to delete (1-indexed, inclusive). 0 = delete the file itself.'},
-        },
-        'required': ['path'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p['path'])
-        start = p.get('start', 0)
-        end = p.get('end', 0)
-
-        try:
-            if start == 0 and end == 0:
-                if os.path.isdir(path):
-                    os.rmdir(path)
-                    return tool_result(data={'path': os.path.abspath(path), 'action': 'deleted_directory'})
-                else:
-                    os.remove(path)
-                    return tool_result(data={'path': os.path.abspath(path), 'action': 'deleted_file'})
-            else:
-                with open(path, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
-                removed_count = len(lines[start - 1:end])
-                del lines[start - 1:end]
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.writelines(lines)
-                return tool_result(data={
-                    'path': os.path.abspath(path),
-                    'action': 'deleted_lines',
-                    'start': start,
-                    'end': end,
-                    'lines_removed': removed_count,
-                })
-        except Exception as e:
-            return tool_result(error=str(e))
-
-
-# ── File Management ──────────────────────────────────────────────────────────
-
-@register_tool('fs_copy')
-class CopyTool(BaseTool):
-    description = 'Copy a file or directory.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'src': {'type': 'string', 'description': 'Source path.'},
-            'dst': {'type': 'string', 'description': 'Destination path.'},
-        },
-        'required': ['src', 'dst'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        src = _resolve(p['src'])
-        dst = _resolve(p['dst'])
-
-        try:
-            if os.path.isdir(src):
-                shutil.copytree(src, dst)
-            else:
-                os.makedirs(os.path.dirname(os.path.abspath(dst)), exist_ok=True)
-                shutil.copy2(src, dst)
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        return tool_result(data={'src': os.path.abspath(src), 'dst': os.path.abspath(dst)})
-
-
-@register_tool('fs_move')
-class MoveTool(BaseTool):
-    description = 'Move or rename a file or directory. WARNING: overwrites destination if it exists.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'src': {'type': 'string', 'description': 'Source path.'},
-            'dst': {'type': 'string', 'description': 'Destination path.'},
-        },
-        'required': ['src', 'dst'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        src = _resolve(p['src'])
-        dst = _resolve(p['dst'])
-        
-        # Check if source exists
-        if not os.path.exists(src):
-            return tool_result(error=f"Source path {src} does not exist.")
-        
-        # Check if destination already exists (either file or directory)
-        if os.path.exists(dst):
-            return tool_result(error=f"Destination path {dst} already exists. Overwriting is not allowed.")
-        
-        # Check if source is a file or directory, and handle accordingly
-        try:
-            # Check if source is a file or directory and move it
-            if os.path.isfile(src):
-                # If the source is a file, move it to the destination
-                os.rename(src, dst)
-            elif os.path.isdir(src):
-                # If the source is a directory, use shutil.move (to handle directories)
-                import shutil
-                shutil.move(src, dst)
-            else:
-                return tool_result(error="Source is neither a file nor a directory.")
-
-            # Return the result with absolute paths
-            return tool_result(data={'src': os.path.abspath(src), 'dst': os.path.abspath(dst)})
-
-        except Exception as e:
-            return tool_result(error=f"Failed to move {src} to {dst}: {e}")
-
-@register_tool('fs_ls_dir')
-@enrichable
-class ListDirectoriesTool(BaseTool):
-    _FLAGS = {
-        'all':       ('-a',               'Include hidden entries (dotfiles).'),
-        'long':      ('-l',               'Include extended metadata: permissions, owner, size, modified time.'),
-        'recursive': ('-R',               'Recurse into subdirectories.'),
-        'dirs_only': ('--directory-only', 'Show directories only.'),
-        'timesort':  ('-t',               'Sort by modification time (newest first).'),
-        'sizesort':  ('-S',               'Sort by file size (largest first).'),
-        'extsort':   ('-X',               'Sort by file extension.'),
-        'reverse':   ('-r',               'Reverse the sort order.'),
-    }
-    description = 'List directory contents using lsd, returned as structured JSON with optional metadata.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path':  {'type': 'string',  'description': 'Directory to list. Defaults to home directory.'},
-            'depth': {'type': 'integer', 'description': 'Max recursion depth (only with recursive=true).'},
-            **{k: {'type': 'boolean', 'description': desc} for k, (_, desc) in _FLAGS.items()},
-        },
-        'required': [],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p.get('path', os.getenv('HOME', '.')))
-
-        args = ['lsd', '--output-format', 'json']
-        args += [self._FLAGS[key][0] for key in self._FLAGS.keys() if p.get(key)]
-        if p.get('depth') is not None:
-            args.extend(['--depth', str(p['depth'])])
-        args.append(path)
-
-        try:
-            result = run(args, capture_output=True, text=True)
-        except FileNotFoundError:
-            return tool_result(error='lsd not found in PATH')
-
-        if result.returncode != 0:
-            return tool_result(error=result.stderr.strip() or f'lsd exited with code {result.returncode}')
-
-        try:
-            entries = json5.loads(result.stdout)
-        except Exception as e:
-            return tool_result(error=f'Failed to parse lsd output: {e}')
-
-        return tool_result(data={'path': os.path.abspath(path), 'entries': entries})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-@register_tool('fs_make_dir')
-class CreateDirectoryTool(BaseTool):
-    description = 'Create a directory and any missing parents.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Directory path to create.'},
-        },
-        'required': ['path'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = _resolve(p['path'])
-
-        try:
-            os.makedirs(path, exist_ok=True)
-        except Exception as e:
-            return tool_result(error=str(e))
-
-        return tool_result(data={'path': os.path.abspath(path)})
-
-@register_tool('fs_grep')
-@enrichable
-class GrepTool(BaseTool):
-    description = 'Search file contents with regex using ripgrep, returning matches with context.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'pattern': {'type': 'string', 'description': 'Regex pattern to search for. Must be non-empty.'},
-            'path': {'type': 'string', 'description': 'File or directory to search in. Defaults to current directory.'},
-            'file_pattern': {'type': 'string', 'description': "Glob to filter which files to search (e.g. '*.py')."},
-            'ignore_case': {'type': 'boolean', 'description': 'Case-insensitive matching.'},
-            'context': {'type': 'integer', 'description': 'Number of lines before/after each match to include.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum number of matches to return. Range: 1-500.'},
-        },
-        'required': ['pattern'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        import json as _json
-        p = json5.loads(params)
-        pattern = p.get('pattern', '')
-        path = p.get('path', '.')
-        file_pattern = p.get('file_pattern', '')
-        ignore_case = p.get('ignore_case', False)
-        context_lines = p.get('context', 0)
-        max_results = p.get('max_results', 50)
-
-        if not pattern or not pattern.strip():
-            return tool_result(error='pattern must be a non-empty string')
-
-        args = ['rg', '--json']
-        if ignore_case:
-            args.append('-i')
-        if context_lines:
-            args.extend(['-C', str(context_lines)])
-        if file_pattern:
-            args.extend(['-g', file_pattern])
-        args.extend(['--', pattern, os.path.expanduser(path)])
-
-        try:
-            result = run(args, capture_output=True, text=True)
-        except FileNotFoundError:
-            return tool_result(error='rg (ripgrep) not found in PATH')
-
-        if result.returncode == 2:
-            return tool_result(error=result.stderr.strip())
-
-        # Parse NDJSON into a flat list of (file, lineno, type, text)
-        flat: list[tuple[str, int, str, str]] = []
-        current_file = None
-        for line in result.stdout.splitlines():
-            if not line.strip():
-                continue
-            try:
-                obj = _json.loads(line)
-            except Exception:
-                continue
-            t = obj.get('type')
-            data = obj.get('data', {})
-            if t == 'begin':
-                current_file = data.get('path', {}).get('text', '')
-            elif t in ('match', 'context') and current_file is not None:
-                flat.append((
-                    current_file,
-                    data.get('line_number', 0),
-                    t,
-                    data.get('lines', {}).get('text', '').rstrip(),
-                ))
-
-        # Build per-match records with context snippets
-        matches = []
-        for file, lineno, t, _ in flat:
-            if t != 'match':
-                continue
-            if len(matches) >= max_results:
-                break
-            seen: set[int] = set()
-            snippet_entries: list[tuple[int, str]] = []
-            for f2, ln2, t2, text2 in flat:
-                if f2 != file or abs(ln2 - lineno) > context_lines:
-                    continue
-                if ln2 in seen:
-                    continue
-                seen.add(ln2)
-                marker = '>' if t2 == 'match' and ln2 == lineno else ' '
-                snippet_entries.append((ln2, f'  {marker} {ln2:>5}  {text2}'))
-            snippet_entries.sort(key=lambda x: x[0])
-            matches.append({
-                'file': file,
-                'line': lineno,
-                'snippet': '\n'.join(s for _, s in snippet_entries),
+            stat = os.stat(path)
+            return tool_result(data={
+                'path': os.path.abspath(path),
+                'status': 'success',
+                'lines_replaced': len(lines_to_replace),
+                'start_line': start_line,
+                'end_line': end_line if end_line != -1 else n,
+                'new_size': stat.st_size,
+                'guidance': 'Changes applied. Verify the modifications are correct and test the code.'
             })
+        except PermissionError:
+            return tool_result(error=f'Permission denied: {os.path.abspath(path)}')
+        except Exception as e:
+            return tool_result(error=str(e))
 
-        return tool_result(data={
-            'pattern': pattern,
-            'count': len(matches),
-            'truncated': len(matches) >= max_results,
-            'matches': matches,
-        })
+@register_tool('fs_tree')
+class FilesystemTreeTool(BaseTool):
+    """Print the directory structure with its files and subdirectories"""
 
-
-@register_tool('fs_find')
-@enrichable
-class FindTool(BaseTool):
-    description = 'Find files by name pattern, extension, or content using fd.'
+    description = "This tool lists all the files and subdirectories within the given directory, allowing for easier and more general traversal. Use it to find files that may differ slightly from the names the user provides."
     parameters = {
-        'type': 'object',
-        'properties': {
-            'path': {'type': 'string', 'description': 'Directory to search. Defaults to current directory.'},
-            'name': {'type': 'string', 'description': 'Glob pattern for filename (e.g. "test_*", "*.py").'},
-            'extension': {'type': 'string', 'description': 'File extension filter (e.g. ".py", "py").'},
-            'contains': {'type': 'string', 'description': 'Only return files containing this exact string.'},
-            'max_results': {'type': 'integer', 'description': 'Maximum files to return. Range: 1-500.'},
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "an absolute or relative DIRECTORY path."
+            },
         },
-        'required': [],
+        "required": ["path"]
     }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        path = os.path.expanduser(p.get('path', '.'))
-        name = p.get('name', '')
-        extension = p.get('extension', '')
-        contains = p.get('contains', '')
-        max_results = p.get('max_results', 50)
-
-        args = ['fdfind', '--type', 'f']
-        if not contains:
-            args.extend(['--max-results', str(max_results)])
-        if extension:
-            args.extend(['-e', extension.lstrip('.')])
-        if name:
-            args.extend(['--glob', name])
-        args.append(path)
-
+    
+    def call(self, params: str, **kwargs):
         try:
-            result = run(args, capture_output=True, text=True)
-        except FileNotFoundError:
-            return tool_result(error='fdfind not found in PATH')
-
-        if result.returncode != 0:
-            return tool_result(error=result.stderr.strip())
-
-        files = [f for f in result.stdout.splitlines() if f]
-
-        if contains and files:
-            rg_result = run(
-                ['rg', '--files-with-matches', '--fixed-strings', '--', contains] + files,
-                capture_output=True, text=True,
-            )
-            files = [f for f in rg_result.stdout.splitlines() if f]
-
-        files = files[:max_results]
-        return tool_result(data={
-            'path': path,
-            'count': len(files),
-            'files': files,
-        })
-
-
-@register_tool('fs_find_def')
-class DefinitionTool(BaseTool):
-    description = 'Find where a function, class, or variable is defined.'
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'symbol': {'type': 'string', 'description': 'Name of the symbol to find. Must be non-empty.'},
-            'path': {'type': 'string', 'description': 'Directory to search. Defaults to current directory.'},
-            'file_pattern': {'type': 'string', 'description': 'Glob pattern for files to search (e.g. "*.py", "*.js").'},
-        },
-        'required': ['symbol'],
-    }
-
-    @retry()
-    def call(self, params: str, **kwargs) -> dict:
-        import json
-        p = json5.loads(params)
-        symbol = p.get('symbol', '')
-        path = p.get('path', '.')
-        file_pattern = p.get('file_pattern', '*.py')
-
-        if not symbol or not symbol.strip():
-            return tool_result(error='symbol must be a non-empty string')
-
-        patterns = [
-            rf'^\s*(def|class)\s+{re.escape(symbol)}\b',
-            rf'^\s*(export\s+)?(function|const|let|var|class)\s+{re.escape(symbol)}\b',
-            rf'^{re.escape(symbol)}\s*=',
-        ]
-        combined = '|'.join(f'({p})' for p in patterns)
-        return GrepTool().call(json.dumps({
-            'pattern': combined,
-            'path': path,
-            'file_pattern': file_pattern,
-            'context': 3,
-        }))
+            p = json5.loads(params)
+            path = _resolve(p['path'])
+            results = os.listdir(path)
+            return results
+        except NotADirectoryError:
+            print("Target must be a directory")
+        

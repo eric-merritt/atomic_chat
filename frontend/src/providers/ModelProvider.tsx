@@ -8,6 +8,7 @@ interface ModelContextValue {
   current: Model | null;
   selectModel: (model: Model) => Promise<void>;
   loading: boolean;
+  error: string | null;
 }
 
 export const ModelContext = createContext<ModelContextValue | null>(null);
@@ -16,18 +17,21 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   const [models, setModels] = useState<Model[]>([]);
   const [current, setCurrent] = useState<Model | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetchModels().then((result) => {
       setModels(result.data);
       if (result.current) {
-        const match = result.data.find(
-          (m) => modelId(m) === result.current
-        );
+        // Find the full object that matches the current ID string
+        const match = result.data.find((m) => modelId(m) === result.current);
         setCurrent(match ?? null);
       }
       setLoading(false);
-    }).catch(() => {
+    }).catch((e: unknown) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('[ModelProvider] Failed to load models from /api/models:', msg);
+      setError('Failed to load available models — backend may be offline. Reload the page or check that the server is running.');
       setLoading(false);
     });
   }, []);
@@ -38,7 +42,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ModelContext.Provider value={{ models, current, selectModel, loading }}>
+    <ModelContext.Provider value={{ models, current, selectModel, loading, error }}>
       {children}
     </ModelContext.Provider>
   );

@@ -69,7 +69,16 @@ export function useStream() {
       callbacks.onDone();
     } catch (e) {
       if ((e as Error).name !== 'AbortError') {
-        callbacks.onError(String(e));
+        const err = e as Error;
+        let msg: string;
+        if (err.name === 'TypeError' && err.message.toLowerCase().includes('fetch')) {
+          msg = 'Connection lost — unable to reach the chat server. Check that the backend is running on port 5000.';
+        } else if (err.message) {
+          msg = err.message;
+        } else {
+          msg = `Unexpected stream error: ${String(e)}`;
+        }
+        callbacks.onError(msg);
       }
     } finally {
       abortRef.current = null;

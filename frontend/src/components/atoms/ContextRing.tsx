@@ -19,13 +19,11 @@ export function ContextRing({ contextPct, summarizing, onSummarize }: ContextRin
     : fill >= 0.7 ? '#f59e0b'
     : 'var(--accent)';
 
-  if (contextPct < 5) return null;
-
   return (
     <button
       onClick={onSummarize}
       disabled={summarizing}
-      title={`Context: ${Math.round(contextPct)}% — ${fill >= 1 ? 'click to summarize' : `auto-summarizes at ${TRIGGER_PCT}%`}`}
+      title={contextPct < 1 ? 'Context empty' : `Context: ${Math.round(contextPct)}% — ${fill >= 1 ? 'click to summarize' : `auto-summarizes at ${TRIGGER_PCT}%`}`}
       className="shrink-0 cursor-pointer disabled:cursor-wait"
     >
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -33,7 +31,7 @@ export function ContextRing({ contextPct, summarizing, onSummarize }: ContextRin
         <circle
           cx={size / 2} cy={size / 2} r={r}
           fill="none"
-          stroke="color-mix(in srgb, var(--accent) 15%, transparent)"
+          stroke="var(--glass-border)"
           strokeWidth={2.5}
         />
         {/* Fill */}
@@ -57,7 +55,7 @@ export function ContextRing({ contextPct, summarizing, onSummarize }: ContextRin
           fill={strokeColor}
           style={{ transition: 'fill 0.4s ease' }}
         >
-          {summarizing ? '…' : Math.round(contextPct)}
+          {summarizing ? '…' : contextPct < 1 ? '' : Math.round(contextPct)}
         </text>
       </svg>
     </button>

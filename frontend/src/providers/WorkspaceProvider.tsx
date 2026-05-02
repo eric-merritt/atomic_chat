@@ -10,8 +10,7 @@ interface WorkspaceContextValue {
   setLayout: (layout: LayoutState) => void;
   groups: WorkflowGroup[];
   activeGroups: string[];
-  openGroup: (name: string) => Promise<void>;
-  closeGroup: (name: string) => Promise<void>;
+  toggleGroup: (name: string) => Promise<void>;
   selectedTool: string | null;
   selectTool: (name: string | null) => void;
   galleryPayload: ApGalleryPayload | null;
@@ -32,31 +31,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     fetchWorkflowGroups()
       .then((r) => setGroups(r.groups))
-      .catch(() => {});
+      .catch((e: unknown) => {
+        console.error(
+          '[WorkspaceProvider] Failed to load workflow groups from /api/workspace/groups —',
+          e instanceof Error ? e.message : String(e)
+        );
+      });
   }, []);
 
-  const openGroup = useCallback(async (name: string) => {
-    setActiveGroups((prev) => (prev.includes(name) ? prev : [...prev, name]));
-    setLayout((prev) => (prev === 'default' ? 'workspace-chat' : prev));
-    try {
-      await selectGroup(name, true);
-      await refreshTools();
-    } catch (e) {
-      console.error('Failed to activate group:', e);
-    }
-  }, [refreshTools]);
-
-  const closeGroup = useCallback(async (name: string) => {
+  const toggleGroup = useCallback(async (name: string) => {
+    let willBeActive = false;
     setActiveGroups((prev) => {
-      const next = prev.filter((g) => g !== name);
-      if (next.length === 0) setLayout('default');
-      return next;
+      if (prev.includes(name)) {
+        const next = prev.filter((g) => g !== name);
+        if (next.length === 0) setLayout('default');
+        willBeActive = false;
+        return next;
+      }
+      willBeActive = true;
+      return [...prev, name];
     });
+    if (willBeActive) {
+      setLayout((prev) => (prev === 'default' ? 'workspace-chat' : prev));
+    }
     try {
-      await selectGroup(name, false);
+      await selectGroup(name, willBeActive);
       await refreshTools();
     } catch (e) {
-      console.error('Failed to deactivate group:', e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[WorkspaceProvider] Failed to sync group "${name}" with backend — UI state preserved:`, msg);
     }
   }, [refreshTools]);
 
@@ -78,7 +81,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     <WorkspaceContext.Provider
       value={{
         layout, setLayout, groups, activeGroups,
-        openGroup, closeGroup, selectedTool, selectTool: selectToolCb,
+        toggleGroup, selectedTool, selectTool: selectToolCb,
         galleryPayload, showGallery, clearGallery,
       }}
     >

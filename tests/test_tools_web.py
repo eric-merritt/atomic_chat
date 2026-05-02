@@ -15,7 +15,7 @@ def test_all_web_tools_registered():
         'web_search',
         'www_fetch',
         'www_scrape',
-        'www_cookies',
+        'www_set_cookies',
         'www_find_all',
         'www_find_dl',
         'www_find_routes',

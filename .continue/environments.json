@@ -1,7 +1,0 @@
-[
-  {
-    "install": "uv sync",
-    "start": "uv run python main.py",
-    "resourceSize": "medium"
-  }
-]

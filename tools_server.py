@@ -10,6 +10,9 @@ import inspect
 import json
 import logging
 import typing
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 from mcp.server.fastmcp import FastMCP
 
 import tools  # noqa: F401 — triggers @register_tool side-effects
@@ -60,35 +63,35 @@ def _register_qwen_tool(tool_cls):
   # Build inspect.Parameter list for the function signature
   params = []
   for pname, pinfo in properties.items():
-  py_type = _TYPE_MAP.get(pinfo.get("type", "string"), str)
-  is_required = pname in required_set
-  default = inspect.Parameter.empty
+    py_type = _TYPE_MAP.get(pinfo.get("type", "string"), str)
+    is_required = pname in required_set
+    default = inspect.Parameter.empty
 
-  if not is_required:
-    default = pinfo.get("default")
-    if default is None:
-    default = None
-    py_type = typing.Optional[py_type]
+    if not is_required:
+      default = pinfo.get("default")
+      if default is None:
+        default = None
+      py_type = typing.Optional[py_type]
 
-  params.append(inspect.Parameter(
-    pname,
-    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-    default=default,
-    annotation=py_type,
-  ))
+    params.append(inspect.Parameter(
+      pname,
+      inspect.Parameter.POSITIONAL_OR_KEYWORD,
+      default=default,
+      annotation=py_type,
+    ))
 
   sig = inspect.Signature(params, return_annotation=str)
 
   # Build the wrapper — instantiates tool and calls it with JSON params
   async def _wrapper(*args, _cls=tool_cls, _sig=sig, **kwargs):
-  bound = _sig.bind(*args, **kwargs)
-  bound.apply_defaults()
-  call_args = {k: v for k, v in bound.arguments.items() if v is not None}
-  try:
-    result = _cls().call(json.dumps(call_args))
-    return json.dumps(result) if isinstance(result, (dict, list)) else str(result)
-  except Exception as e:
-    return json.dumps({"status": "error", "data": None, "error": str(e)})
+    bound = _sig.bind(*args, **kwargs)
+    bound.apply_defaults()
+    call_args = {k: v for k, v in bound.arguments.items() if v is not None}
+    try:
+      result = _cls().call(json.dumps(call_args))
+      return json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+    except Exception as e:
+      return json.dumps({"status": "error", "data": None, "error": str(e)})
 
   _wrapper.__name__ = name
   _wrapper.__qualname__ = name
@@ -104,13 +107,13 @@ def _register_qwen_tool(tool_cls):
 _registered = 0
 for _name, _cls in QW_TOOL_REGISTRY.items():
   if _name in _BUILTIN_TOOLS:
-  continue
+    continue
   try:
-  _register_qwen_tool(_cls)
-  logger.info("Registered MCP tool: %s", _name)
-  _registered += 1
+    _register_qwen_tool(_cls)
+    logger.info("Registered MCP tool: %s", _name)
+    _registered += 1
   except Exception as e:
-  logger.error("Failed to register tool %s: %s", _name, e)
+    logger.error("Failed to register tool %s: %s", _name, e)
 
 
 def main():

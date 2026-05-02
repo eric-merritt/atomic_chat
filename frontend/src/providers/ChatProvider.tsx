@@ -1,14 +1,14 @@
 import { createContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import type { Message } from '../atoms/message';
 import { createMessage } from '../atoms/message';
-import { cancelChat, respondToRecommendation, summarizeContext as apiSummarize } from '../api/chat';
+import { cancelChat, respondToBashConfirm, summarizeContext as apiSummarize } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
-interface Recommendation {
-  groups: string[];
-  reason: string;
+interface BashConfirmPrompt {
+  command: string;
+  description: string;
 }
 
 interface ChatContextValue {
@@ -21,12 +21,12 @@ interface ChatContextValue {
   conversationId: string | null;
   loadConversation: (id: string) => Promise<void>;
   newConversation: () => void;
-  recommendation: Recommendation | null;
-  acceptRecommendation: () => void;
-  dismissRecommendation: () => void;
   contextPct: number;
   summarizing: boolean;
   summarizeContext: () => void;
+  pendingBashConfirm: BashConfirmPrompt | null;
+  approveBashCommand: () => void;
+  declineBashCommand: () => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -35,9 +35,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const [recommendation, setRecommendation] = useState<Recommendation | null>(null);
   const [contextPct, setContextPct] = useState(0);
   const [summarizing, setSummarizing] = useState(false);
+  const [pendingBashConfirm, setPendingBashConfirm] = useState<BashConfirmPrompt | null>(null);
   const streamingRef = useRef(false);
   const lastEventRef = useRef(0);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -184,8 +184,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             })
             break
           }
-          case 'recommendation':
-            setRecommendation({ groups: ev.groups, reason: ev.reason });
+          case 'bash_confirm':
+            setPendingBashConfirm({ command: ev.command, description: ev.description });
             break;
           case 'context_pct':
             setContextPct(ev.pct);
@@ -205,7 +205,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             setSummarizing(true);
             apiSummarize(conversationId)
               .then((r) => setContextPct(r.context_pct))
-              .catch(console.error)
+              .catch((e: unknown) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                console.error('[ChatProvider] Auto-summarize failed:', msg);
+                setMessages((prev) => [...prev, createMessage('error',
+                  'Context compression failed — conversation history was not compacted. ' +
+                  'You may hit the context limit soon. Try summarizing manually or start a new conversation.'
+                )]);
+              })
               .finally(() => setSummarizing(false));
           }
           return pct;
@@ -242,28 +249,39 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         setContextPct(r.context_pct);
         return loadConversation(conversationId);
       })
-      .catch(console.error)
+      .catch((e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error('[ChatProvider] Manual summarize failed:', msg);
+        setMessages((prev) => [...prev, createMessage('error',
+          `Failed to compress context — ${msg}. ` +
+          'Your conversation history was not modified. Try again or start a new conversation.'
+        )]);
+      })
       .finally(() => setSummarizing(false));
   }, [conversationId, summarizing, streaming, loadConversation]);
 
-  const acceptRecommendation = useCallback(async () => {
-    if (!recommendation || !conversationId) return;
-    await respondToRecommendation(conversationId, recommendation.groups);
-    setRecommendation(null);
-  }, [recommendation, conversationId]);
-
-  const dismissRecommendation = useCallback(async () => {
+  const approveBashCommand = useCallback(() => {
     if (!conversationId) return;
-    await respondToRecommendation(conversationId, []);
-    setRecommendation(null);
+    setPendingBashConfirm(null);
+    respondToBashConfirm(conversationId, true).catch((e: unknown) =>
+      console.error('[ChatProvider] bash approve failed:', e)
+    );
+  }, [conversationId]);
+
+  const declineBashCommand = useCallback(() => {
+    if (!conversationId) return;
+    setPendingBashConfirm(null);
+    respondToBashConfirm(conversationId, false).catch((e: unknown) =>
+      console.error('[ChatProvider] bash decline failed:', e)
+    );
   }, [conversationId]);
 
   return (
     <ChatContext.Provider value={{
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
-      recommendation, acceptRecommendation, dismissRecommendation,
       contextPct, summarizing, summarizeContext,
+      pendingBashConfirm, approveBashCommand, declineBashCommand,
     }}>
       {children}
     </ChatContext.Provider>

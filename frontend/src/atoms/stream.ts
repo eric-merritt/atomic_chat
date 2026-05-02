@@ -5,8 +5,9 @@ export type StreamEvent =
   | { type: 'image'; src: string; filename: string; sizeKb: number }
   | { type: 'error'; message: string }
   | { type: 'meta'; conversationId: string | null }
-  | { type: 'recommendation'; groups: string[]; reason: string }
-  | { type: 'context_pct'; pct: number };
+  | { type: 'context_pct'; pct: number }
+  | { type: 'heartbeat' }
+  | { type: 'bash_confirm'; command: string; description: string };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
@@ -36,18 +37,21 @@ export function parseStreamLine(raw: any): StreamEvent | null {
       sizeKb: raw.image.size_kb,
     };
   }
-  if ('recommendation' in raw) {
-    return {
-      type: 'recommendation',
-      groups: raw.recommendation.groups,
-      reason: raw.recommendation.reason,
-    };
-  }
   if ('error' in raw) {
     return { type: 'error', message: raw.error };
   }
   if ('context_pct' in raw) {
     return { type: 'context_pct', pct: raw.context_pct };
+  }
+  if ('heartbeat' in raw) {
+    return { type: 'heartbeat' };
+  }
+  if ('bash_confirm' in raw) {
+    return {
+      type: 'bash_confirm',
+      command: raw.bash_confirm.command,
+      description: raw.bash_confirm.description,
+    };
   }
   return null;
 }

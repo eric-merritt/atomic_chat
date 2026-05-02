@@ -32,18 +32,15 @@ export async function summarizeContext(conversationId: string): Promise<{ contex
   return resp.json();
 }
 
-export async function respondToRecommendation(
+export async function respondToBashConfirm(
   conversationId: string,
-  acceptedGroups: string[],
+  approved: boolean,
 ): Promise<void> {
-  const resp = await fetch('/api/chat/recommend', {
+  const resp = await fetch('/api/chat/bash_confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      conversation_id: conversationId,
-      accepted_groups: acceptedGroups,
-    }),
+    body: JSON.stringify({ conversation_id: conversationId, approved }),
     credentials: 'include',
   });
-  if (!resp.ok) throw new Error(`Recommendation response failed: ${resp.status}`);
+  if (!resp.ok) throw new Error(`Bash confirm failed: ${resp.status}`);
 }

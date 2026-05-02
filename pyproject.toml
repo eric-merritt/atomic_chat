@@ -27,4 +27,6 @@ dependencies = [
     "soundfile>=0.13.1",
     "python-dateutil>=2.9.0.post0",
     "ddgs>=9.13.0",
+    "prompt-toolkit>=3.0.52",
+    "rich>=13.0.0",
 ]

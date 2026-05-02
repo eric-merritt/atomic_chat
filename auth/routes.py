@@ -3,6 +3,8 @@
 import os
 import uuid
 import secrets
+import threading
+import time as _time
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
@@ -406,3 +408,70 @@ def oauth_google_callback():
         max_age=int(SESSION_LIFETIME.total_seconds()),
     )
     return resp
+
+
+# ── CLI Auth ──────────────────────────────────────────────────────────────────
+# In-memory store: token → { status, session_id, expires_at }
+# Tokens are single-use, 5-minute TTL, consumed on approval poll.
+
+_cli_tokens: dict[str, dict] = {}
+_cli_lock = threading.Lock()
+
+
+def _purge_cli_tokens():
+    now = _time.time()
+    for k in [k for k, v in _cli_tokens.items() if v["expires_at"] < now]:
+        del _cli_tokens[k]
+
+
+@auth_bp.route("/cli/initiate", methods=["POST"])
+def cli_initiate():
+    token = f"cli_{secrets.token_urlsafe(16)}"
+    with _cli_lock:
+        _purge_cli_tokens()
+        _cli_tokens[token] = {
+            "status": "pending",
+            "session_id": None,
+            "expires_at": _time.time() + 300,
+        }
+    return jsonify({"token": token})
+
+
+@auth_bp.route("/cli/approve", methods=["POST"])
+@login_required
+def cli_approve():
+    token = (request.get_json(force=True) or {}).get("token", "")
+    with _cli_lock:
+        entry = _cli_tokens.get(token)
+        if not entry or entry["status"] != "pending" or entry["expires_at"] < _time.time():
+            return jsonify({"error": "Invalid or expired token"}), 400
+        sess = _create_session(current_user)
+        entry["status"] = "approved"
+        entry["session_id"] = sess.id
+    return jsonify({"ok": True})
+
+
+@auth_bp.route("/cli/deny", methods=["POST"])
+@login_required
+def cli_deny():
+    token = (request.get_json(force=True) or {}).get("token", "")
+    with _cli_lock:
+        entry = _cli_tokens.get(token)
+        if entry and entry["status"] == "pending":
+            entry["status"] = "denied"
+    return jsonify({"ok": True})
+
+
+@auth_bp.route("/cli/poll", methods=["GET"])
+def cli_poll():
+    token = request.args.get("token", "")
+    with _cli_lock:
+        entry = _cli_tokens.get(token)
+        if not entry or entry["expires_at"] < _time.time():
+            _cli_tokens.pop(token, None)
+            return jsonify({"status": "expired"})
+        if entry["status"] == "approved":
+            session_id = entry["session_id"]
+            del _cli_tokens[token]
+            return jsonify({"status": "approved", "session_id": session_id})
+        return jsonify({"status": entry["status"]})

@@ -1,36 +1,34 @@
-import type { Model } from '../atoms/model';
 import { parseModelString, modelId } from '../atoms/model';
-import type { ApiResponse } from '../atoms/api';
+import type { Model } from '../atoms/model';
 
-export async function fetchModels(): Promise<ApiResponse<Model[]> & { current: string | null }> {
-  try {
-    const resp = await fetch('/api/models', { credentials: 'include' });
-    if (!resp.ok) {
-      return { data: [], error: `Failed to fetch models: ${resp.status}`, current: null };
-    }
-    const json = await resp.json();
-    const models = (json.models as string[]).map(parseModelString);
-    return { data: models, current: json.current ?? null };
-  } catch (e) {
-    return { data: [], error: String(e), current: null };
-  }
+interface ModelsResponse {
+  models: string[];
+  current: string | null;
 }
 
-export async function selectModel(model: Model): Promise<ApiResponse<string>> {
+export async function fetchModels(): Promise<{ data: Model[]; current: string | null }> {
+  const res = await fetch('/api/models', { credentials: 'include' });
+  if (!res.ok) throw new Error('Failed to fetch models');
+
+  const json: ModelsResponse = await res.json();
+  return {
+    data: (json.models ?? []).map(parseModelString),
+    current: json.current,
+  };
+}
+
+export async function selectModel(model: Model): Promise<void> {
   const id = modelId(model);
-  try {
-    const resp = await fetch('/api/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: id }),
-      credentials: 'include',
-    });
-    if (!resp.ok) {
-      return { data: '', error: `Failed to select model: ${resp.status}` };
-    }
-    const json = await resp.json();
-    return { data: json.model };
-  } catch (e) {
-    return { data: '', error: String(e) };
+
+  const res = await fetch('/api/models', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: id }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Failed to switch model: ${err}`);
   }
 }
