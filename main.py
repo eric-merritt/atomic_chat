@@ -4,7 +4,7 @@ load_dotenv(override=True)
 
 import requests
 from flask import Flask, jsonify, send_file
-from flask_login import login_required
+from flask_login import login_required, current_user
 import json5
 from qwen_agent.agents import Assistant
 from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
@@ -109,6 +109,9 @@ def list_workflows():
     if group.gate:
       entry["gate"] = group.gate
       restricted.append(entry)
+      prefs = dict(current_user.preferences or {})
+      if prefs.get(f"gate_{group.gate}_accepted"):
+        groups.append(entry)
     else:
       groups.append(entry)
   return jsonify({"groups": groups, "restricted": restricted})

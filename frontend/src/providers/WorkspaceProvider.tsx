@@ -11,6 +11,7 @@ interface WorkspaceContextValue {
   groups: WorkflowGroup[];
   activeGroups: string[];
   toggleGroup: (name: string) => Promise<void>;
+  refreshGroups: () => Promise<void>;
   selectedTool: string | null;
   selectTool: (name: string | null) => void;
   galleryPayload: ApGalleryPayload | null;
@@ -28,16 +29,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [galleryPayload, setGalleryPayload] = useState<ApGalleryPayload | null>(null);
 
-  useEffect(() => {
-    fetchWorkflowGroups()
-      .then((r) => setGroups(r.groups))  // restricted groups are managed in Dashboard, not ToolExplorer
-      .catch((e: unknown) => {
-        console.error(
-          '[WorkspaceProvider] Failed to load workflow groups from /api/workspace/groups —',
-          e instanceof Error ? e.message : String(e)
-        );
-      });
+  const loadGroups = useCallback(async () => {
+    try {
+      const r = await fetchWorkflowGroups();
+      setGroups(r.groups);  // includes gate-accepted restricted groups
+    } catch (e: unknown) {
+      console.error(
+        '[WorkspaceProvider] Failed to load workflow groups —',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
   }, []);
+
+  useEffect(() => { loadGroups(); }, [loadGroups]);
 
   const toggleGroup = useCallback(async (name: string) => {
     let willBeActive = false;
@@ -81,7 +85,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     <WorkspaceContext.Provider
       value={{
         layout, setLayout, groups, activeGroups,
-        toggleGroup, selectedTool, selectTool: selectToolCb,
+        toggleGroup, refreshGroups: loadGroups, selectedTool, selectTool: selectToolCb,
         galleryPayload, showGallery, clearGallery,
       }}
     >
