@@ -170,10 +170,10 @@ def _find_makeappx() -> str | None:
   if path_hit:
     return path_hit
   search_roots = [
+    Path(r"C:\Program Files (x86)\Windows Kits\10\App Certification Kit"),
+    Path(r"C:\Program Files\Windows Kits\10\App Certification Kit"),
     Path(r"C:\Program Files (x86)\Windows Kits\10\bin"),
     Path(r"C:\Program Files\Windows Kits\10\bin"),
-    Path(r"C:\Program Files (x86)\Windows Kits\10\WindowsSDK"),
-    Path(r"C:\Program Files\Windows Kits\10\WindowsSDK"),
   ]
   for search_root in search_roots:
     if not search_root.exists():
