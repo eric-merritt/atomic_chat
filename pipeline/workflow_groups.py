@@ -22,7 +22,7 @@ WORKFLOW_GROUPS: dict[str, WorkflowGroup] = {
         tooltip="File reading, writing, and directory operations, and codesearch functions like fs_find_def to find function definitions",
     ),
     "Web Tools": WorkflowGroup(
-        tools=["www_ddg", "www_find_content", "www_set_cookies", "www_set_local_storage",
+        tools=["www_search", "www_find_content", "www_set_cookies", "www_set_local_storage",
                "www_find_dl", "www_dl", "www_dl_status", "www_find_routes",
                "www_query", "www_click", "www_find_struct"],
         tooltip="Web search, fetch-and-extract, and browser navigation",

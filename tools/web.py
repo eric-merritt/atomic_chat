@@ -773,7 +773,7 @@ class RetrieveCookiesTool(BaseTool):
 
 # ── Web Operations ───────────────────────────────────────────────────────────
 
-@register_tool('www_ddg')
+@register_tool('www_search')
 class WebSearchTool(BaseTool):
     description = 'Search the web using DuckDuckGo and return results.'
     parameters = {

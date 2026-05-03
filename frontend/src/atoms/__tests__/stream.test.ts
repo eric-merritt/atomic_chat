@@ -8,13 +8,13 @@ describe('parseStreamLine', () => {
   });
 
   it('parses tool_call event', () => {
-    const ev = parseStreamLine({ tool_call: { tool: 'web_search', input: 'test' } });
-    expect(ev).toEqual({ type: 'tool_call', tool: 'web_search', input: 'test' });
+    const ev = parseStreamLine({ tool_call: { tool: 'www_search', input: 'test' } });
+    expect(ev).toEqual({ type: 'tool_call', tool: 'www_search', input: 'test' });
   });
 
   it('parses tool_result event', () => {
-    const ev = parseStreamLine({ tool_result: { tool: 'web_search', output: 'results' } });
-    expect(ev).toEqual({ type: 'tool_result', tool: 'web_search', output: 'results' });
+    const ev = parseStreamLine({ tool_result: { tool: 'www_search', output: 'results' } });
+    expect(ev).toEqual({ type: 'tool_result', tool: 'www_search', output: 'results' });
   });
 
   it('parses image event with snake_case to camelCase', () => {

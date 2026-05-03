@@ -128,9 +128,9 @@ const fsFind: ToolAdapter = {
   },
 }
 
-// ── www_ddg ──────────────────────────────────────────────────────────────────
+// ── www_search ───────────────────────────────────────────────────────────────
 
-const wwwDdg: ToolAdapter = {
+const wwwSearch: ToolAdapter = {
   summarize(_p, data) {
     return `Web search: ${asArr(asObj(data).results).length} results`
   },
@@ -195,7 +195,7 @@ const ADAPTERS: Record<string, ToolAdapter> = {
   fs_ls_dir: fsLsDir,
   fs_grep:   fsGrep,
   fs_find:   fsFind,
-  www_ddg:   wwwDdg,
+  www_search: wwwSearch,
   www_fetch: wwwFetch,
   www_get:   wwwGet,
 }

@@ -38,14 +38,14 @@ test('fs_find toHierarchy flat file list', () => {
   expect(nodes[0]).toMatchObject({ label: '/src/a.py', depth: 0, isFile: true, href: '/src/a.py' })
 })
 
-test('www_ddg summarize', () => {
-  const a = getAdapter('www_ddg')!
+test('www_search summarize', () => {
+  const a = getAdapter('www_search')!
   const data = { abstract: '', abstract_url: '', results: [{text:'a',url:'http://x.com'},{text:'b',url:'http://y.com'}] }
   expect(a.summarize({ query: 'python config' }, data)).toBe('Web search: 2 results')
 })
 
-test('www_ddg toHierarchy builds external links', () => {
-  const a = getAdapter('www_ddg')!
+test('www_search toHierarchy builds external links', () => {
+  const a = getAdapter('www_search')!
   const data = { abstract: '', abstract_url: '', results: [
     { text: 'How to configure Python', url: 'https://docs.python.org/config' },
   ]}

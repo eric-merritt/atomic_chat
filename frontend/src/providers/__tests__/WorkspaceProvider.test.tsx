@@ -8,7 +8,7 @@ vi.mock('../../api/workflowGroups', () => ({
   fetchWorkflowGroups: vi.fn().mockResolvedValue({
     groups: [
       { name: 'Filesystem', tooltip: 'File ops', tools: [{ name: 'read', description: 'Read file', params: {} }] },
-      { name: 'Web Tools', tooltip: 'Web ops', tools: [{ name: 'web_search', description: 'Search', params: {} }] },
+      { name: 'Web Tools', tooltip: 'Web ops', tools: [{ name: 'www_search', description: 'Search', params: {} }] },
     ],
   }),
   selectGroup: vi.fn().mockResolvedValue({ ok: true, selected: [] }),

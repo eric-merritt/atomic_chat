@@ -6,7 +6,7 @@ import type { LayoutState } from '../../../providers/WorkspaceProvider';
 
 const GROUPS = [
   { name: 'Filesystem', tooltip: 'File ops', tools: [{ name: 'read', description: 'Read', params: {} }] },
-  { name: 'Web Tools', tooltip: 'Web ops', tools: [{ name: 'web_search', description: 'Search', params: {} }] },
+  { name: 'Web Tools', tooltip: 'Web ops', tools: [{ name: 'www_search', description: 'Search', params: {} }] },
 ];
 
 function renderWithContext(activeGroups: string[] = []) {

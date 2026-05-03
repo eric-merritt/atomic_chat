@@ -11,7 +11,7 @@ def test_all_web_tools_registered():
     import tools.web  # noqa: F401 — trigger registration
 
     expected = {
-        'www_ddg',
+        'www_search',
         'www_find_content',
         'www_find_dl',
         'www_dl',
@@ -32,7 +32,7 @@ def test_all_web_tools_registered():
 
 def test_ddg_search_registered():
     import tools.web  # noqa: F401
-    assert 'www_ddg' in TOOL_REGISTRY
+    assert 'www_search' in TOOL_REGISTRY
 
 
 def test_find_download_link_registered():
@@ -62,7 +62,7 @@ def test_tool_classes_are_base_tool_subclasses():
     import tools.web  # noqa: F401
 
     tool_names = [
-        'www_ddg', 'www_find_content', 'www_find_dl', 'www_dl',
+        'www_search', 'www_find_content', 'www_find_dl', 'www_dl',
         'www_dl_status', 'www_find_routes', 'www_query', 'www_click',
         'www_find_struct',
     ]
@@ -81,7 +81,7 @@ def test_find_download_link_no_url_returns_error():
     assert result["status"] == "error"
 
 
-# ── Functional test: WebSearchTool (www_ddg) validation ──────────────────────
+# ── Functional test: WebSearchTool (www_search) validation ──────────────────────
 
 def test_ddg_search_empty_query_returns_error():
     from tools.web import WebSearchTool
