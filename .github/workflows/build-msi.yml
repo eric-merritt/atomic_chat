@@ -25,10 +25,18 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Python deps + PyInstaller
+      - name: Install PyInstaller and deps
         run: pip install pyinstaller websockets rich requests python-dotenv cryptography
 
-      - name: Build exe
+      - name: Build setup wizard exe
+        run: >-
+          pyinstaller
+          --onefile
+          --console
+          --name atomic-chat-setup
+          installer\atomic_chat_installer.py
+
+      - name: Build cloud agent exe
         run: >-
           pyinstaller
           --onefile
@@ -36,7 +44,7 @@ jobs:
           --name atomic-chat-agent
           --hidden-import websockets.sync.client
           --collect-all cryptography
-          atomic_client/agent.py
+          atomic_client\agent.py
 
       - name: Install WiX 4
         run: dotnet tool install --global wix --version "4.*"
@@ -44,11 +52,13 @@ jobs:
       - name: Build MSI
         run: wix build installer\atomic-chat.wxs -o installer\atomic-chat-setup.msi
 
-      - name: Upload MSI artifact
+      - name: Upload setup artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: atomic-chat-setup
-          path: installer\atomic-chat-setup.msi
+          name: atomic-chat-windows
+          path: |
+            dist\atomic-chat-setup.exe
+            installer\atomic-chat-setup.msi
 
       - name: Prepare MSIX layout
         run: |
@@ -105,10 +115,13 @@ jobs:
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        env:
+          TAG_NAME: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          tag_name: ${{ env.TAG_NAME }}
           files: |
+            dist/atomic-chat-setup.exe
             installer/atomic-chat-setup.msi
             installer/atomic-chat-agent.msix
             installer/atomic-chat-agent.cer

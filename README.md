@@ -42,24 +42,19 @@ The script will:
 
 #### Windows
 
-```powershell
-.\install_client.ps1
-# Choose option [1] at the prompt
-```
+Download `atomic-chat-setup.exe` from the [latest release](../../releases/latest) and double-click it. Choose **[1] Full Local Stack** at the prompt.
 
-The script will:
-1. Check for Python 3.12+ (offers to install if missing)
-2. Locate or download `llama-server.exe` (winget, GitHub release, or skip)
-3. Let you scan for existing `.gguf` models, download from HuggingFace, or enter a path
-4. Auto-detect NVIDIA/AMD/Intel GPU and prompt for offload layers
-5. Install `uv` if missing, run `uv sync`
-6. Run `npm install` for the frontend
+The installer will:
+1. Check for Python 3.12+ and Node.js (offers to install if missing)
+2. Download the app source from GitHub
+3. Locate or download `llama-server.exe` (GitHub release or winget, GPU-aware)
+4. Let you scan for existing `.gguf` models, download from HuggingFace, or enter a path
+5. Auto-detect NVIDIA/AMD/Intel GPU and prompt for offload layers
+6. Install Python and frontend dependencies
 7. Pick free ports, generate a secret key, write `.env`, initialise the database
+8. Create a **Atomic Chat (Local)** desktop shortcut
 
-**Start:**
-```
-start_local.bat
-```
+**Start:** Double-click **Atomic Chat (Local)** on your Desktop.
 
 ---
 
@@ -93,25 +88,11 @@ The script will:
 
 ---
 
-#### Windows — MSI (recommended for non-technical users)
+#### Windows
 
-Download `atomic-chat-setup.msi` from the [latest release](../../releases/latest) and double-click it. The agent installs to `%LOCALAPPDATA%\AtomicChat\` with a Start Menu shortcut.
+Download `atomic-chat-setup.exe` from the [latest release](../../releases/latest) and double-click it. Choose **[2] Cloud Client Only** at the prompt.
 
-**Start:** Launch **Atomic Chat Agent** from the Start Menu. Your browser will open for one-time authentication.
-
----
-
-#### Windows — PowerShell script
-
-```powershell
-.\install_client.ps1
-# Choose option [2] at the prompt
-```
-
-**Start:**
-```
-agent.bat
-```
+**Start:** Double-click **Atomic Chat Agent** on your Desktop. Your browser will open for one-time authentication.
 
 ---
 

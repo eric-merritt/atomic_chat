@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Atomic Chat Agent - Windows Installer (WiX 4) -->
+<!-- Atomic Chat — Windows Installer (WiX 4) -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
 
-  <Package Name="Atomic Chat Agent"
+  <Package Name="Atomic Chat"
            Manufacturer="Eric Merritt"
            Version="1.0.0"
            UpgradeCode="f3a8b1c2-d4e5-4f60-a7b8-c9d0e1f23456"
            Scope="perUser">
 
-    <SummaryInformation Description="Atomic Chat client bridge" />
+    <SummaryInformation Description="Atomic Chat Setup Wizard" />
     <MajorUpgrade DowngradeErrorMessage="A newer version is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
@@ -20,29 +20,32 @@
       <Directory Id="AppMenuFolder" Name="Atomic Chat" />
     </StandardDirectory>
 
-    <ComponentGroup Id="AgentBinary" Directory="INSTALLFOLDER">
+    <ComponentGroup Id="SetupBinary" Directory="INSTALLFOLDER">
+      <Component Id="SetupExe" Guid="*">
+        <File Source="dist\atomic-chat-setup.exe" KeyPath="yes" />
+      </Component>
       <Component Id="AgentExe" Guid="*">
-        <File Source="dist\atomic-chat-agent.exe" KeyPath="yes" />
+        <File Source="dist\atomic-chat-agent.exe" />
       </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="Shortcuts" Directory="AppMenuFolder">
       <Component Id="StartMenuShortcutComp" Guid="*">
-        <Shortcut Id="StartMenuShortcut"
-                  Name="Atomic Chat Agent"
-                  Description="Connect your computer to Atomic Chat"
-                  Target="[INSTALLFOLDER]atomic-chat-agent.exe" />
+        <Shortcut Id="SetupShortcut"
+                  Name="Atomic Chat Setup"
+                  Description="Install Atomic Chat (local or cloud)"
+                  Target="[INSTALLFOLDER]atomic-chat-setup.exe" />
         <RemoveFolder Id="CleanAppMenu" Directory="AppMenuFolder" On="uninstall" />
         <RegistryValue Root="HKCU"
-                       Key="Software\AtomicChat\Agent"
+                       Key="Software\AtomicChat\Setup"
                        Name="Installed"
                        Type="integer" Value="1"
                        KeyPath="yes" />
       </Component>
     </ComponentGroup>
 
-    <Feature Id="Complete" Title="Atomic Chat Agent" Level="1">
-      <ComponentGroupRef Id="AgentBinary" />
+    <Feature Id="Complete" Title="Atomic Chat" Level="1">
+      <ComponentGroupRef Id="SetupBinary" />
       <ComponentGroupRef Id="Shortcuts" />
     </Feature>
 
