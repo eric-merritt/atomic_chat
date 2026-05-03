@@ -4,9 +4,10 @@ import type { Model } from '../atoms/model';
 interface ModelsResponse {
   models: string[];
   current: string | null;
+  save_dir: string | null;
 }
 
-export async function fetchModels(): Promise<{ data: Model[]; current: string | null }> {
+export async function fetchModels(): Promise<{ data: Model[]; current: string | null; saveDir: string }> {
   const res = await fetch('/api/models', { credentials: 'include' });
   if (!res.ok) throw new Error('Failed to fetch models');
 
@@ -14,6 +15,7 @@ export async function fetchModels(): Promise<{ data: Model[]; current: string | 
   return {
     data: (json.models ?? []).map(parseModelString),
     current: json.current,
+    saveDir: json.save_dir ?? '~/Downloads',
   };
 }
 
