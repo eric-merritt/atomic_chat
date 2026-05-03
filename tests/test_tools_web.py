@@ -111,6 +111,18 @@ def test_ddg_search_empty_query_returns_error():
     assert "query" in result["error"]
 
 
+# ── Functional test: DownloadFileTool validation ─────────────────────────────
+
+def test_dl_non_media_url_tells_agent_to_use_find_dl():
+    from tools.web import DownloadFileTool
+    import tempfile, os
+
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/watch?v=abc123", "dest": tempfile.gettempdir()}))
+    assert result["status"] == "error"
+    assert "www_find_dl" in result["error"]
+
+
 # ── Functional test: FindAllowedRoutesTool validation ────────────────────────
 
 def test_find_allowed_routes_bad_url_returns_error():
