@@ -103,10 +103,7 @@ def _resize_or_copy(source: Path, target: Path, size: tuple[int, int]) -> None:
   try:
     from PIL import Image  # type: ignore
   except ImportError:
-    _info("Pillow not installed — copying source asset without resize. "
-          "Install pillow for proper Store-compliant scaling.")
-    shutil.copy2(source, target)
-    return
+    _fail("Pillow is required to produce Store-compliant assets. Run: pip install pillow")
   target_w, target_h = size
   with Image.open(source) as img:
     img = img.convert("RGBA")
