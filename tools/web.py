@@ -305,8 +305,33 @@ def _score_card(container) -> dict:
     return found
 
 
-_IMG_EXTS = ('.jpg', '.jpeg', '.png', '.webp', '.gif')
-_VID_EXTS = ('.mp4', '.webm', '.m3u8', '.mkv', '.mov')
+_IMG_EXTS = (
+    '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.svg',
+    '.tiff', '.tif', '.ico', '.avif', '.heic', '.heif',
+)
+_VID_EXTS = (
+    '.mp4', '.webm', '.m3u8', '.mkv', '.mov', '.avi', '.flv',
+    '.wmv', '.ts', '.ogv',
+)
+_DOC_EXTS = (
+    '.txt', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx',
+    '.odt', '.ods', '.odp', '.rtf', '.csv', '.md', '.epub',
+)
+_BIN_EXTS = (
+    '.exe', '.msi', '.msix', '.dmg', '.pkg', '.deb', '.rpm', '.AppImage',
+    '.sh', '.bash', '.zsh', '.fish',
+    '.py', '.rs', '.js', '.mjs', '.cjs', '.ts', '.jsx', '.tsx',
+    '.go', '.rb', '.php', '.cs', '.cpp', '.c', '.h', '.java',
+    '.kt', '.swift', '.lua', '.r', '.jl',
+    '.zip', '.tar', '.gz', '.bz2', '.xz', '.7z', '.rar', '.zst',
+)
+
+_MEDIA_EXTS: dict[str, tuple] = {
+    'video':    _VID_EXTS,
+    'image':    _IMG_EXTS,
+    'document': _DOC_EXTS,
+    'binary':   _BIN_EXTS,
+}
 
 # Ordered (selector, attribute) pairs. Earlier entries win.
 # Lazy-load data-* attrs come before the bare src/href — tiles on infinite-scroll
@@ -971,6 +996,8 @@ def _run_download(job_id: str, url: str, dest: str) -> None:
 class DownloadFileTool(BaseTool):
     description = (
         'Download a file from a direct URL to disk. '
+        'The url must be a direct link to the file — if you only have a page URL, '
+        'call www_find_dl first to extract the real download link. '
         'Returns a job_id immediately — download runs in the background. '
         'Use www_dl_status to check progress. '
         'Pass wait=true to block until the download finishes.'
@@ -978,28 +1005,39 @@ class DownloadFileTool(BaseTool):
     parameters = {
         'type': 'object',
         'properties': {
-            'url':  {'type': 'string', 'description': 'Direct URL to the file.'},
-            'dest': {'type': 'string', 'description': 'Local file path or directory. Filename is derived from URL when a directory is given.'},
-            'wait': {'type': 'boolean', 'description': 'Block until download completes. Default false.'},
+            'url':        {'type': 'string', 'description': 'Direct URL to the file.'},
+            'dest':       {'type': 'string', 'description': 'Local file path or directory. Filename is derived from URL when a directory is given.'},
+            'media_type': {'type': 'string', 'description': 'Type of file being downloaded.', 'enum': ['video', 'image', 'document', 'binary']},
+            'wait':       {'type': 'boolean', 'description': 'Block until download completes. Default false.'},
         },
-        'required': ['url', 'dest'],
+        'required': ['url', 'dest', 'media_type'],
     }
 
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        url = p['url']
-        dest = os.path.expanduser(p['dest'])
-        wait = p.get('wait', False)
+        url        = p['url']
+        dest       = os.path.expanduser(p['dest'])
+        media_type = p.get('media_type', '')
+        wait       = p.get('wait', False)
 
         err = _validate_url(url)
         if err:
             return tool_result(error=err)
 
-        if not any(ext in url for ext in _VID_EXTS):
+        valid_types = list(_MEDIA_EXTS)
+        if media_type not in _MEDIA_EXTS:
             return tool_result(error=(
-                f"'{url}' does not appear to be a direct media link. "
-                "Call www_find_dl on the page URL first to extract the actual download URL, "
-                "then pass that result to www_dl."
+                f"media_type must be one of: {', '.join(valid_types)}."
+            ))
+
+        exts = _MEDIA_EXTS[media_type]
+        url_lower = url.lower().split('?')[0]
+        if not any(url_lower.endswith(ext) for ext in exts):
+            return tool_result(error=(
+                f"'{url}' does not look like a direct {media_type} link "
+                f"(expected one of: {', '.join(exts[:6])}...). "
+                "Call www_find_dl on the page URL first to extract the real download link, "
+                "then pass that to www_dl."
             ))
 
         if os.path.isdir(dest):

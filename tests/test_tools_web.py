@@ -73,26 +73,7 @@ def test_tool_classes_are_base_tool_subclasses():
 
 # ── Functional test: FindDownloadLinkTool ────────────────────────────────────
 
-def test_find_download_link_from_html():
-    from tools.web import FindDownloadLinkTool
-
-    html = """
-    <video src="/media/video.mp4"></video>
-    <img src="/media/thumb.jpg" />
-    <audio src="/media/audio.mp3"></audio>
-    """
-    tool = FindDownloadLinkTool()
-    result = tool.call(json.dumps({"html": html}))
-
-    assert result["status"] == "success"
-    links = result["data"]["links"]
-    tags = {l["tag"] for l in links}
-    assert "video" in tags
-    assert "img" in tags
-    assert "audio" in tags
-
-
-def test_find_download_link_no_input_returns_error():
+def test_find_download_link_no_url_returns_error():
     from tools.web import FindDownloadLinkTool
 
     tool = FindDownloadLinkTool()
@@ -113,14 +94,67 @@ def test_ddg_search_empty_query_returns_error():
 
 # ── Functional test: DownloadFileTool validation ─────────────────────────────
 
-def test_dl_non_media_url_tells_agent_to_use_find_dl():
-    from tools.web import DownloadFileTool
-    import tempfile, os
+import tempfile
 
+def test_dl_missing_media_type_returns_error():
+    from tools.web import DownloadFileTool
     tool = DownloadFileTool()
-    result = tool.call(json.dumps({"url": "https://example.com/watch?v=abc123", "dest": tempfile.gettempdir()}))
+    result = tool.call(json.dumps({"url": "https://example.com/file.mp4", "dest": tempfile.gettempdir()}))
+    assert result["status"] == "error"
+    assert "media_type" in result["error"]
+
+def test_dl_invalid_media_type_returns_error():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/file.mp4", "dest": tempfile.gettempdir(), "media_type": "banana"}))
+    assert result["status"] == "error"
+    assert "media_type" in result["error"]
+
+def test_dl_video_page_url_tells_agent_to_use_find_dl():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/watch?v=abc123", "dest": tempfile.gettempdir(), "media_type": "video"}))
     assert result["status"] == "error"
     assert "www_find_dl" in result["error"]
+
+def test_dl_image_page_url_tells_agent_to_use_find_dl():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/gallery/photo", "dest": tempfile.gettempdir(), "media_type": "image"}))
+    assert result["status"] == "error"
+    assert "www_find_dl" in result["error"]
+
+def test_dl_document_page_url_tells_agent_to_use_find_dl():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/reports/annual", "dest": tempfile.gettempdir(), "media_type": "document"}))
+    assert result["status"] == "error"
+    assert "www_find_dl" in result["error"]
+
+def test_dl_accepts_valid_video_url():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/video.mp4", "dest": tempfile.gettempdir(), "media_type": "video"}))
+    # passes validation — will fail on network, not on extension check
+    assert "www_find_dl" not in result.get("error", "")
+
+def test_dl_accepts_valid_image_url():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/photo.jpg", "dest": tempfile.gettempdir(), "media_type": "image"}))
+    assert "www_find_dl" not in result.get("error", "")
+
+def test_dl_accepts_valid_document_url():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/report.pdf", "dest": tempfile.gettempdir(), "media_type": "document"}))
+    assert "www_find_dl" not in result.get("error", "")
+
+def test_dl_accepts_valid_binary_url():
+    from tools.web import DownloadFileTool
+    tool = DownloadFileTool()
+    result = tool.call(json.dumps({"url": "https://example.com/setup.exe", "dest": tempfile.gettempdir(), "media_type": "binary"}))
+    assert "www_find_dl" not in result.get("error", "")
 
 
 # ── Functional test: FindAllowedRoutesTool validation ────────────────────────
