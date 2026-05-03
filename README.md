@@ -24,7 +24,7 @@ bash install_client.sh
 ```
 
 The script will:
-1. Locate or install `llama-server` (Homebrew on Mac, apt on Ubuntu, or build from source)
+1. Locate or install `llama-server` — Homebrew on Mac (`brew install llama.cpp`), or build from source by cloning [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) (apt is offered but not available in standard Ubuntu repos)
 2. Let you scan for existing `.gguf` models, download one from HuggingFace, or enter a path manually — default model: `sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF`
 3. Auto-detect GPU and prompt for offload layers
 4. Install Python dependencies via `uv` (or pip fallback)
