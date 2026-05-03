@@ -44,11 +44,11 @@ MANIFEST_SRC = INSTALLER_DIR / "AppxManifest.xml"
 # (filename, source_logo, expected_size). The installer ships pre-rendered
 # 150/300/71 logos; the rest are generated via Pillow at build time.
 ASSET_TARGETS: list[tuple[str, str, tuple[int, int]]] = [
-  ("StoreLogo.png",         "logo_300x300.png", (300, 300)),
-  ("Square44x44Logo.png",   "logo_71x71.png",   (44, 44)),
-  ("Square71x71Logo.png",   "logo_71x71.png",   (71, 71)),
-  ("Square150x150Logo.png", "logo_150x150.png", (150, 150)),
-  ("SplashScreen.png",      "poster_1440x2160.png", (1440, 2160)),
+  ("StoreLogo.png",         "logo_300x300.png",    (50, 50)),
+  ("Square44x44Logo.png",   "logo_71x71.png",      (44, 44)),
+  ("Square71x71Logo.png",   "logo_71x71.png",      (71, 71)),
+  ("Square150x150Logo.png", "logo_150x150.png",    (150, 150)),
+  ("SplashScreen.png",      "poster_1440x2160.png", (620, 300)),
 ]
 
 
@@ -99,7 +99,7 @@ def _stamp_manifest_version(target: Path, version: str) -> None:
 
 
 def _resize_or_copy(source: Path, target: Path, size: tuple[int, int]) -> None:
-  """Resize source PNG to target size if Pillow is available; else copy as-is."""
+  """Fit-then-center-crop source PNG to exact target size using Pillow."""
   try:
     from PIL import Image  # type: ignore
   except ImportError:
@@ -107,9 +107,17 @@ def _resize_or_copy(source: Path, target: Path, size: tuple[int, int]) -> None:
           "Install pillow for proper Store-compliant scaling.")
     shutil.copy2(source, target)
     return
+  target_w, target_h = size
   with Image.open(source) as img:
-    resized = img.convert("RGBA").resize(size, Image.LANCZOS)
-    resized.save(target, format="PNG")
+    img = img.convert("RGBA")
+    src_w, src_h = img.size
+    scale = max(target_w / src_w, target_h / src_h)
+    scaled_w, scaled_h = int(src_w * scale), int(src_h * scale)
+    img = img.resize((scaled_w, scaled_h), Image.LANCZOS)
+    left = (scaled_w - target_w) // 2
+    top = (scaled_h - target_h) // 2
+    img = img.crop(( left, top, left + target_w, top + target_h ))
+    img.save(target, format="PNG")
 
 
 def _stage_assets(stage_assets_dir: Path) -> None:
