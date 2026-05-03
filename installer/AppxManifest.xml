@@ -39,7 +39,6 @@
         <uap:DefaultTile
           Square71x71Logo="Assets\Square71x71Logo.png"
           ShortName="Atomic Chat" />
-        <uap:SplashScreen Image="Assets\SplashScreen.png" />
       </uap:VisualElements>
     </Application>
   </Applications>
