@@ -166,16 +166,15 @@ def _stage_package(version: str) -> Path:
 
 
 def _find_makeappx() -> str | None:
-  for candidate in (
-    "makeappx.exe", "makeappx",
-    r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\makeappx.exe",
-    r"C:\Program Files (x86)\Windows Kits\10\bin\10.0.19041.0\x64\makeappx.exe",
-  ):
-    found = shutil.which(candidate)
-    if found:
-      return found
-    if Path(candidate).exists():
-      return candidate
+  path_hit = shutil.which("makeappx.exe") or shutil.which("makeappx")
+  if path_hit:
+    return path_hit
+  kits_bin = Path(r"C:\Program Files (x86)\Windows Kits\10\bin")
+  if kits_bin.exists():
+    for sdk_dir in sorted(kits_bin.iterdir(), reverse=True):
+      candidate = sdk_dir / "x64" / "makeappx.exe"
+      if candidate.exists():
+        return str(candidate)
   return None
 
 
