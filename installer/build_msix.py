@@ -134,10 +134,9 @@ def _build_agent_exe() -> Path:
     _info(f"non-Windows host — skipping PyInstaller; expected exe at {expected} "
           "(will need to run pack step on Windows)")
     return expected
-  pyinstaller = shutil.which("pyinstaller") or "pyinstaller"
   agent_entry = ROOT_DIR / "atomic_client" / "agent.py"
   cmd = [
-    pyinstaller, "--onefile", "--name", "atomic-chat-agent",
+    sys.executable, "-m", "PyInstaller", "--onefile", "--name", "atomic-chat-agent",
     "--distpath", str(DIST_DIR), "--workpath", str(DIST_DIR / "_build"),
     "--specpath", str(DIST_DIR / "_spec"), str(agent_entry),
   ]
