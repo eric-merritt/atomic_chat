@@ -4,6 +4,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag to upload signed assets to'
+        required: true
+        default: 'v1.0.0'
 
 jobs:
   build-msi:
@@ -69,16 +74,39 @@ jobs:
                       Where-Object { $_.FullName -match 'x64' } | Sort-Object | Select-Object -Last 1 -ExpandProperty FullName
           & $makeappx pack /d msix_layout /p installer\atomic-chat-agent.msix /nv
 
+      - name: Create self-signed certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate `
+            -Subject "CN=25F7CEF2-A1D9-49D0-A2BC-96F2F9BAC2A5" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -Type CodeSigningCert `
+            -HashAlgorithm SHA256
+          $pwd = ConvertTo-SecureString -String "TempSign!" -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath signing.pfx -Password $pwd
+          Export-Certificate -Cert $cert -FilePath installer\atomic-chat-agent.cer -Type CERT
+
+      - name: Sign MSIX
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                      Where-Object { $_.FullName -match 'x64' } | Sort-Object | Select-Object -Last 1 -ExpandProperty FullName
+          & $signtool sign /fd SHA256 /f signing.pfx /p "TempSign!" installer\atomic-chat-agent.msix
+
       - name: Upload MSIX artifact
         uses: actions/upload-artifact@v4
         with:
           name: atomic-chat-agent-msix
-          path: installer\atomic-chat-agent.msix
+          path: |
+            installer\atomic-chat-agent.msix
+            installer\atomic-chat-agent.cer
 
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           files: |
             installer/atomic-chat-setup.msi
             installer/atomic-chat-agent.msix
+            installer/atomic-chat-agent.cer
