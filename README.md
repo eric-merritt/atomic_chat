@@ -95,8 +95,6 @@ The script will:
 
 #### Windows — MSI (recommended for non-technical users)
 
-This is the **cloud client only** — it connects your machine to [agent.eric-merritt.com](https://agent.eric-merritt.com). It does not include a local model or backend. For the full local stack use the PowerShell script above.
-
 Download `atomic-chat-setup.msi` from the [latest release](../../releases/latest) and double-click it. The agent installs to `%LOCALAPPDATA%\AtomicChat\` with a Start Menu shortcut.
 
 **Start:** Launch **Atomic Chat Agent** from the Start Menu. Your browser will open for one-time authentication.
