@@ -126,6 +126,8 @@ function Find-Models {
 }
 
 function Detect-GpuBackend {
+    # Returns: cuda (NVIDIA+CUDA), vulkan (AMD/Radeon/Intel Arc), cpu (fallback)
+    # ROCm is Linux-only; AMD on Windows uses the Vulkan build
     $gpus = Get-WmiObject Win32_VideoController -ErrorAction SilentlyContinue |
             Select-Object -ExpandProperty Name
     foreach ($gpu in $gpus) {
@@ -133,7 +135,7 @@ function Detect-GpuBackend {
             $cudaRt = Get-ChildItem 'C:\Windows\System32' -Filter 'nvcuda.dll' -ErrorAction SilentlyContinue
             return if ($cudaRt) { 'cuda' } else { 'vulkan' }
         }
-        if ($gpu -match 'AMD|Radeon|Intel Arc') { return 'vulkan' }
+        if ($gpu -match 'AMD|Radeon|Intel Arc|Intel Xe') { return 'vulkan' }
     }
     return 'cpu'
 }
@@ -255,9 +257,11 @@ if ($mode -eq '1') {
             Info "Detected GPU backend: $gpu"
             $releaseApi = 'https://api.github.com/repos/ggerganov/llama.cpp/releases/latest'
             $release    = Invoke-RestMethod -Uri $releaseApi -UseBasicParsing
+            # rocm is Linux-only; AMD on Windows uses the vulkan build
             $pattern    = switch ($gpu) {
                 'cuda'   { 'win-cuda-cu\d+\.\d+-x64\.zip$' }
                 'vulkan' { 'win-vulkan-x64\.zip$' }
+                'rocm'   { 'win-vulkan-x64\.zip$' }
                 default  { 'win-avx2-x64\.zip$' }
             }
             $asset = $release.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1
