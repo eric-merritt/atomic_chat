@@ -333,6 +333,13 @@ _MEDIA_EXTS: dict[str, tuple] = {
     'binary':   _BIN_EXTS,
 }
 
+_MEDIA_TYPE_ALIASES: dict[str, str] = {
+    'photo': 'image', 'photograph': 'image', 'picture': 'image', 'img': 'image',
+    'movie': 'video', 'film': 'video', 'clip': 'video',
+    'doc': 'document', 'text': 'document',
+    'executable': 'binary', 'exe': 'binary', 'code': 'binary', 'script': 'binary',
+}
+
 # Ordered (selector, attribute) pairs. Earlier entries win.
 # Lazy-load data-* attrs come before the bare src/href — tiles on infinite-scroll
 # sites typically hold the shared placeholder in src and the real per-card URL
@@ -1007,7 +1014,7 @@ class DownloadFileTool(BaseTool):
         'properties': {
             'url':        {'type': 'string', 'description': 'Direct URL to the file.'},
             'dest':       {'type': 'string', 'description': 'Local file path or directory. Filename is derived from URL when a directory is given.'},
-            'media_type': {'type': 'string', 'description': 'Type of file being downloaded.', 'enum': ['video', 'image', 'document', 'binary']},
+            'media_type': {'type': 'string', 'description': 'Type of file being downloaded: video/movie/film, image/photo/photograph, document/text, binary/executable/code/script.'},
             'wait':       {'type': 'boolean', 'description': 'Block until download completes. Default false.'},
         },
         'required': ['url', 'dest', 'media_type'],
@@ -1024,10 +1031,11 @@ class DownloadFileTool(BaseTool):
         if err:
             return tool_result(error=err)
 
-        valid_types = list(_MEDIA_EXTS)
+        media_type = _MEDIA_TYPE_ALIASES.get(media_type, media_type)
         if media_type not in _MEDIA_EXTS:
             return tool_result(error=(
-                f"media_type must be one of: {', '.join(valid_types)}."
+                f"media_type must be one of: {', '.join(_MEDIA_EXTS)} "
+                f"(or aliases: photo, photograph, movie, film, executable, script, etc.)."
             ))
 
         exts = _MEDIA_EXTS[media_type]
