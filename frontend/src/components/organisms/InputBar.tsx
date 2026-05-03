@@ -13,7 +13,7 @@ interface DroppedImage {
 async function uploadImage(file: File): Promise<DroppedImage> {
   const form = new FormData();
   form.append("file", file);
-  const resp = await fetch("/api/files/upload", { method: "POST", body: form });
+  const resp = await fetch("/api/files/upload", { method: "POST", credentials: "include", body: form });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
     throw new Error(err.error || `Upload failed (HTTP ${resp.status})`);
