@@ -44,7 +44,7 @@ MANIFEST_SRC = INSTALLER_DIR / "AppxManifest.xml"
 # (filename, source_logo, expected_size). The installer ships pre-rendered
 # 150/300/71 logos; the rest are generated via Pillow at build time.
 ASSET_TARGETS: list[tuple[str, str, tuple[int, int]]] = [
-  ("StoreLogo.png",         "logo_300x300.png",  (50, 50)),
+  ("StoreLogo.png",         "logo_300x300.png",  (300, 300)),
   ("Square44x44Logo.png",   "logo_71x71.png",    (44, 44)),
   ("Square71x71Logo.png",   "logo_71x71.png",    (71, 71)),
   ("Square150x150Logo.png", "logo_150x150.png",  (150, 150)),
