@@ -995,6 +995,13 @@ class DownloadFileTool(BaseTool):
         if err:
             return tool_result(error=err)
 
+        if not any(ext in url for ext in _VID_EXTS):
+            return tool_result(error=(
+                f"'{url}' does not appear to be a direct media link. "
+                "Call www_find_dl on the page URL first to extract the actual download URL, "
+                "then pass that result to www_dl."
+            ))
+
         if os.path.isdir(dest):
             filename = os.path.basename(urllib.parse.urlparse(url).path) or 'download'
             dest = os.path.join(dest, filename)
