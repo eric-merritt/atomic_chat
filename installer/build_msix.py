@@ -169,8 +169,13 @@ def _find_makeappx() -> str | None:
   path_hit = shutil.which("makeappx.exe") or shutil.which("makeappx")
   if path_hit:
     return path_hit
-  kits_bin = Path(r"C:\Program Files (x86)\Windows Kits\10\bin")
-  if kits_bin.exists():
+  search_roots = [
+    Path(r"C:\Program Files (x86)\Windows Kits\10\bin"),
+    Path(r"C:\Program Files\Windows Kits\10\bin"),
+  ]
+  for kits_bin in search_roots:
+    if not kits_bin.exists():
+      continue
     for sdk_dir in sorted(kits_bin.iterdir(), reverse=True):
       candidate = sdk_dir / "x64" / "makeappx.exe"
       if candidate.exists():
