@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
 
 from auth.db import get_db
-from config import MODELS
+from config import MODELS, SAVE_DIR
 from services.llama import (
   MODEL_SWAP_LOCK, kill_llama_server, loaded_model_id, spawn_llama_server,
 )
@@ -22,6 +22,7 @@ def list_models():
     "models": list(MODELS.keys()),
     "current": prefs.get("model") or loaded,
     "loaded": loaded,
+    "save_dir": SAVE_DIR,
   })
 
 

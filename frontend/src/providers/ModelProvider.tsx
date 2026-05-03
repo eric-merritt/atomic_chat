@@ -6,6 +6,7 @@ import { fetchModels as apiFetchModels, selectModel as apiSelectModel } from '..
 interface ModelContextValue {
   models: Model[];
   current: Model | null;
+  saveDir: string;
   selectModel: (model: Model) => Promise<void>;
   loading: boolean;
   error: string | null;
@@ -16,12 +17,14 @@ export const ModelContext = createContext<ModelContextValue | null>(null);
 export function ModelProvider({ children }: { children: ReactNode }) {
   const [models, setModels] = useState<Model[]>([]);
   const [current, setCurrent] = useState<Model | null>(null);
+  const [saveDir, setSaveDir] = useState<string>('~/Downloads');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     apiFetchModels().then((result) => {
       setModels(result.data);
+      setSaveDir(result.saveDir);
       if (result.current) {
         // Find the full object that matches the current ID string
         const match = result.data.find((m) => modelId(m) === result.current);
@@ -42,7 +45,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ModelContext.Provider value={{ models, current, selectModel, loading, error }}>
+    <ModelContext.Provider value={{ models, current, saveDir, selectModel, loading, error }}>
       {children}
     </ModelContext.Provider>
   );

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { ApGalleryCard, type ApGalleryItem } from '../molecules/ApGalleryCard'
 import { useChat } from '../../hooks/useChat'
+import { useModels } from '../../hooks/useModels'
 
 export interface ApGalleryPayload {
   items: ApGalleryItem[]
@@ -22,6 +23,7 @@ const colClass: Record<3 | 6, string> = {
 
 export function ApGallery({ payload, columns, leftRail, initialSelection, onSubmitSent }: Props) {
   const { sendMessage } = useChat()
+  const { saveDir } = useModels()
   const [selected, setSelected] = useState<Set<number>>(initialSelection ?? new Set())
 
   const toggle = (i: number) => {
@@ -44,8 +46,11 @@ export function ApGallery({ payload, columns, leftRail, initialSelection, onSubm
     const chosen = [...selected]
       .sort((a, b) => a - b)
       .map((i) => payload.items[i])
-    const lines = chosen.map((it) => `- ${it.title} — ${it.url}`).join('\n')
-    sendMessage(`Selected ${chosen.length} item(s) from gallery:\n${lines}`)
+    const lines = chosen.map((it) => `- ${it.title}: ${it.url}`).join('\n')
+    sendMessage(
+      `For each of the following links, call www_find_dl to extract the direct download URL, ` +
+      `then download it to ${saveDir}:\n${lines}`
+    )
     clear()
     onSubmitSent?.()
   }

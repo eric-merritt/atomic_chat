@@ -48,6 +48,15 @@ MODELS = {
 
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen3.5:27b-iq4_xs")
 
+import re as _re
+_params_match = _re.search(r'(\d+b)', DEFAULT_MODEL.lower())
+MODEL_NUM_PARAMS = _params_match.group(1) if _params_match else 'unknown'
+
+SAVE_DIR = os.environ.get(
+    "SAVE_DIR",
+    os.path.expanduser(f"~/.atomic_chat/agent_downloads/{MODEL_NUM_PARAMS}")
+)
+
 # Seconds between requests to the same platform
 RATE_LIMITS = {
   "ebay": 6,
