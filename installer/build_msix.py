@@ -172,16 +172,15 @@ def _find_makeappx() -> str | None:
   search_roots = [
     Path(r"C:\Program Files (x86)\Windows Kits\10\bin"),
     Path(r"C:\Program Files\Windows Kits\10\bin"),
+    Path(r"C:\Program Files (x86)\Windows Kits\10\WindowsSDK"),
+    Path(r"C:\Program Files\Windows Kits\10\WindowsSDK"),
   ]
-  for kits_bin in search_roots:
-    if not kits_bin.exists():
+  for search_root in search_roots:
+    if not search_root.exists():
       continue
-    for sdk_dir in sorted(kits_bin.iterdir(), reverse=True):
-      if not sdk_dir.is_dir():
-        continue
-      for hit in sdk_dir.rglob("makeappx.exe"):
-        _info(f"found makeappx at {hit}")
-        return str(hit)
+    for hit in search_root.rglob("makeappx.exe"):
+      _info(f"found makeappx at {hit}")
+      return str(hit)
   return None
 
 
