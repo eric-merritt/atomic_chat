@@ -14,6 +14,7 @@ login_manager = LoginManager()
 
 PUBLIC_PATHS = frozenset({
     "/api/health",
+    "/api/health/ready",
     "/api/auth/login",
     "/api/auth/register",
     "/api/auth/oauth/github",

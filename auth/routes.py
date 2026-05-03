@@ -14,10 +14,25 @@ from flask_login import login_user, logout_user, login_required, current_user
 
 from auth.models import User, UserSession, ApiKey, OAuthToken
 from auth.db import get_db
+from auth.rate_limit import rate_limit
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 SESSION_LIFETIME = timedelta(hours=24)
+
+# Secure cookie flag is enabled in production (anything not FLASK_DEBUG) so the
+# session_id cookie is only sent over HTTPS. Local dev over plain http would
+# silently drop a Secure cookie, so we relax it when FLASK_DEBUG is truthy.
+_COOKIE_SECURE = os.environ.get("FLASK_DEBUG", "").lower() not in ("1", "true", "yes")
+
+
+def _set_session_cookie(resp, session_id: str):
+  """Attach the session_id cookie with the right security flags."""
+  resp.set_cookie(
+    "session_id", session_id,
+    httponly=True, samesite="Lax", secure=_COOKIE_SECURE,
+    max_age=int(SESSION_LIFETIME.total_seconds()),
+  )
 
 
 def _hash_password(password: str) -> str:
@@ -57,6 +72,7 @@ def _user_json(user: User) -> dict:
 # ── Register ─────────────────────────────────────────────────────────────────
 
 @auth_bp.route("/register", methods=["POST"])
+@rate_limit(window_s=300, max_hits=10)
 def register():
     data = request.get_json(force=True)
     username = (data.get("username") or "").strip()
@@ -90,17 +106,14 @@ def register():
 
     resp = jsonify({"user": _user_json(user)})
     resp.status_code = 201
-    resp.set_cookie(
-        "session_id", session.id,
-        httponly=True, samesite="Lax",
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-    )
+    _set_session_cookie(resp, session.id)
     return resp
 
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 @auth_bp.route("/login", methods=["POST"])
+@rate_limit(window_s=300, max_hits=10)
 def login():
     data = request.get_json(force=True)
     username = (data.get("username") or "").strip()
@@ -123,11 +136,7 @@ def login():
     login_user(user)
 
     resp = jsonify({"user": _user_json(user)})
-    resp.set_cookie(
-        "session_id", session.id,
-        httponly=True, samesite="Lax",
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-    )
+    _set_session_cookie(resp, session.id)
     return resp
 
 
@@ -360,11 +369,7 @@ def oauth_github_callback():
     login_user(user)
 
     resp = redirect("/")
-    resp.set_cookie(
-        "session_id", session.id,
-        httponly=True, samesite="Lax",
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-    )
+    _set_session_cookie(resp, session.id)
     return resp
 
 
@@ -402,11 +407,7 @@ def oauth_google_callback():
     login_user(user)
 
     resp = redirect("/")
-    resp.set_cookie(
-        "session_id", session.id,
-        httponly=True, samesite="Lax",
-        max_age=int(SESSION_LIFETIME.total_seconds()),
-    )
+    _set_session_cookie(resp, session.id)
     return resp
 
 

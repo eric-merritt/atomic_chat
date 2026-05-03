@@ -5,8 +5,26 @@ import os
 # Default workspace for file operations when no path directory is given
 DEFAULT_WORKSPACE = os.environ.get("DEFAULT_WORKSPACE", os.path.expanduser("~/workspace"))
 
-# Context window size (tokens)
-LLAMA_ARG_CTX_SIZE = int(os.environ.get("LLAMA_ARG_CTX_SIZE")) - 5000
+# Context window size (tokens). Subtract a 5000-token safety margin so qwen-agent's
+# tool schemas, system prompt, and tool-result fan-in cannot push us past the model
+# window mid-turn. Default is conservative; production envs should set explicitly.
+def _resolve_ctx_size() -> int:
+  raw = os.environ.get("LLAMA_ARG_CTX_SIZE")
+  if raw is None or not raw.strip():
+    return 32000 - 5000  # safe default for the documented qwen3.5 model set
+  try:
+    parsed = int(raw)
+  except (TypeError, ValueError) as parse_err:
+    raise RuntimeError(
+      f"LLAMA_ARG_CTX_SIZE must be an integer (got {raw!r}): {parse_err}"
+    ) from parse_err
+  if parsed <= 5000:
+    raise RuntimeError(
+      f"LLAMA_ARG_CTX_SIZE={parsed} is too small. Must exceed the 5000-token safety margin."
+    )
+  return parsed - 5000
+
+LLAMA_ARG_CTX_SIZE = _resolve_ctx_size()
 
 # ── llama-server process ──
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "127.0.0.1")

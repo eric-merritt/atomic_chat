@@ -21,15 +21,37 @@ LLAMA_PID_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs"
 LLAMA_LOG_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "llama.log")
 MODEL_SWAP_LOCK = threading.Lock()
 
+# loaded_model_id is hot — every chat request hits it via /health/ready and
+# every model-swap polls it in a tight loop. Cache the answer for a short
+# window so we don't pay /v1/models latency per call. Cache is invalidated
+# explicitly by spawn_llama_server / kill_llama_server.
+_LOADED_MODEL_CACHE_TTL_S = 5.0
+_loaded_model_cache: dict = {"value": None, "expires_at": 0.0}
+_loaded_model_cache_lock = threading.Lock()
+
+
+def _invalidate_loaded_model_cache() -> None:
+  with _loaded_model_cache_lock:
+    _loaded_model_cache["value"] = None
+    _loaded_model_cache["expires_at"] = 0.0
+
 
 def loaded_model_id() -> str | None:
+  now = time.monotonic()
+  with _loaded_model_cache_lock:
+    if now < _loaded_model_cache["expires_at"]:
+      return _loaded_model_cache["value"]
   try:
-    r = requests.get(f"{LLAMA_SERVER_URL}/v1/models", timeout=2)
-    r.raise_for_status()
-    data = r.json().get("data") or []
-    return data[0]["id"] if data else None
+    response = requests.get(f"{LLAMA_SERVER_URL}/v1/models", timeout=2)
+    response.raise_for_status()
+    data = response.json().get("data") or []
+    value = data[0]["id"] if data else None
   except Exception:
-    return None
+    value = None
+  with _loaded_model_cache_lock:
+    _loaded_model_cache["value"] = value
+    _loaded_model_cache["expires_at"] = now + _LOADED_MODEL_CACHE_TTL_S
+  return value
 
 
 def llama_is_healthy() -> bool:
@@ -51,6 +73,7 @@ def _read_pid() -> int | None:
 
 
 def kill_llama_server() -> None:
+  _invalidate_loaded_model_cache()
   pid = _read_pid()
   if pid is None:
     return
@@ -73,6 +96,7 @@ def kill_llama_server() -> None:
 
 
 def spawn_llama_server(model_id: str, timeout_s: int = 120) -> bool:
+  _invalidate_loaded_model_cache()
   cfg = MODELS[model_id]
   os.makedirs(os.path.dirname(LLAMA_LOG_FILE), exist_ok=True)
   log_f = open(LLAMA_LOG_FILE, "ab")

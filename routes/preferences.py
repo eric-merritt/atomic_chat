@@ -6,6 +6,7 @@ from flask_login import login_required, current_user
 
 from auth.db import get_db
 from auth.models import User
+from auth.rate_limit import rate_limit
 
 prefs_bp = Blueprint("preferences", __name__, url_prefix="/api/auth")
 
@@ -65,6 +66,7 @@ def update_profile():
 
 @prefs_bp.route("/password", methods=["POST"])
 @login_required
+@rate_limit(window_s=300, max_hits=5)
 def change_password():
     if current_user.auth_method != "local":
         return jsonify({"error": "Password change not available for OAuth accounts"}), 403

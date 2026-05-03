@@ -2,29 +2,38 @@ import os as _os
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-import requests
+from services.logging_setup import configure_logging
+configure_logging()
+
 from flask import Flask, jsonify, send_file
 from flask_login import login_required, current_user
-import json5
-from qwen_agent.agents import Assistant
-from qwen_agent.tools.base import BaseTool, register_tool, TOOL_REGISTRY as QW_TOOL_REGISTRY
+from qwen_agent.tools.base import TOOL_REGISTRY as QW_TOOL_REGISTRY
 
 _BUILTIN_TOOL_NAMES = set(QW_TOOL_REGISTRY.keys())
 
-import tools  # triggers @register_tool side-effects for all tool modules
-import tools.native as native_tools
-from config import qwen_llm_cfg, LLAMA_SERVER_URL
-from pipeline.workflow_groups import WORKFLOW_GROUPS, TOOL_REF
+import tools  # noqa: F401 — triggers @register_tool side-effects for all tool modules
+from pipeline.workflow_groups import WORKFLOW_GROUPS
 from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
 from auth.db import init_db, SessionLocal
 
-LLAMA_CPP_BASE_URL = LLAMA_SERVER_URL
-
 
 
 app = Flask(__name__)
-app.secret_key = _os.environ.get("FLASK_SECRET_KEY", "dev-fallback-key-change-in-production")
+
+_FLASK_SECRET_KEY = _os.environ.get("FLASK_SECRET_KEY")
+_IS_DEBUG = _os.environ.get("FLASK_DEBUG", "").lower() in ("1", "true", "yes")
+if not _FLASK_SECRET_KEY:
+  if _IS_DEBUG:
+    import secrets as _secrets
+    _FLASK_SECRET_KEY = _secrets.token_hex(32)
+    print("[warn] FLASK_SECRET_KEY unset — using ephemeral dev key (sessions will not survive restart)", flush=True)
+  else:
+    raise RuntimeError(
+      "FLASK_SECRET_KEY is not set. Refusing to start in non-debug mode without a stable secret key. "
+      "Generate one with `python -c 'import secrets; print(secrets.token_hex(32))'` and set it in the environment."
+    )
+app.secret_key = _FLASK_SECRET_KEY
 
 
 def _tool_meta(cls) -> dict:
@@ -34,16 +43,17 @@ def _tool_meta(cls) -> dict:
   required = schema.get('required', [])
   params = {}
   for pname, pinfo in props.items():
-    params[pname] = {
+    entry = {
       'type': pinfo.get('type', 'string'),
       'description': pinfo.get('description', ''),
       'required': pname in required,
     }
     if 'default' in pinfo:
-      params[pname]['default'] = pinfo['default']
-    name = cls.name if hasattr(cls, 'name') else ''
-    desc = (cls.description or '').split('\n')[0]
-    return {'name': name, 'description': desc, 'params': params}
+      entry['default'] = pinfo['default']
+    params[pname] = entry
+  name = cls.name if hasattr(cls, 'name') else ''
+  desc = (cls.description or '').split('\n')[0]
+  return {'name': name, 'description': desc, 'params': params}
 
 
 TOOL_REGISTRY: list[dict] = []  # populated below after internal tools are defined
@@ -70,6 +80,10 @@ def register_auth_bps():
   from routes.bridge import bridge_bp, sock as bridge_sock
   app.register_blueprint(bridge_bp)
   bridge_sock.init_app(app)
+  from routes.health import health_bp
+  app.register_blueprint(health_bp)
+  from routes.mcp_registry import mcp_registry_bp
+  app.register_blueprint(mcp_registry_bp)
   app.before_request(auth_guard)
 
 @app.teardown_appcontext
@@ -117,16 +131,33 @@ def list_workflows():
   return jsonify({"groups": groups, "restricted": restricted})
 
 
+_HASHED_ASSET_RE = __import__("re").compile(r"\.[A-Za-z0-9_-]{8,}\.(?:js|css|woff2?|png|jpg|jpeg|webp|svg|gif|ico)$")
+
+
+def _cache_headers_for(path: str) -> dict[str, str]:
+  """Vite emits hashed filenames for /assets/* — those are safe to cache forever.
+  Everything else (index.html, root assets) gets a short max-age so deploys
+  propagate quickly."""
+  if path.startswith("assets/") or _HASHED_ASSET_RE.search(path):
+    return {"Cache-Control": "public, max-age=31536000, immutable"}
+  return {"Cache-Control": "public, max-age=60, must-revalidate"}
+
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_frontend(path):
   """Serve React SPA from frontend/dist/. """
   file_path = _os.path.join(_FRONTEND_DIST, path)
   if path and _os.path.isfile(file_path):
-    return send_file(file_path)
+    response = send_file(file_path)
+    for header_name, header_value in _cache_headers_for(path).items():
+      response.headers[header_name] = header_value
+    return response
   index = _os.path.join(_FRONTEND_DIST, "index.html")
   if _os.path.isfile(index):
-    return send_file(index)
+    response = send_file(index)
+    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
   return "Frontend not built. Run: cd frontend && npm run build", 404
 
 

@@ -113,6 +113,38 @@ def find_node():
     except Exception:
         return False
 
+def install_uv() -> str | None:
+    existing = shutil.which("uv")
+    if existing:
+        return existing
+
+    info("Installing uv...")
+    try:
+        if platform.system() == "Windows":
+            subprocess.run(
+                ["powershell", "-NoProfile", "-c",
+                 "irm https://astral.sh/uv/install.ps1 | iex"],
+                check=True,
+            )
+            for candidate in [
+                Path(os.environ.get("USERPROFILE", Path.home())) / ".local" / "bin" / "uv.exe",
+                Path(os.environ.get("LOCALAPPDATA", "")) / "uv" / "bin" / "uv.exe",
+            ]:
+                if candidate.exists():
+                    return str(candidate)
+        else:
+            subprocess.run(
+                "curl -LsSf https://astral.sh/uv/install.sh | sh",
+                shell=True, check=True,
+            )
+            candidate = Path.home() / ".local" / "bin" / "uv"
+            if candidate.exists():
+                return str(candidate)
+    except Exception as e:
+        warn(f"uv install failed: {e}")
+
+    return shutil.which("uv")
+
 def ram_gb():
     try:
         import ctypes
@@ -459,15 +491,10 @@ def install_local():
 
     # ── uv / pip ──────────────────────────────────────────────────────────────
     step("Installing Python dependencies...")
-    uv = shutil.which("uv")
-    if not uv:
-        info("Installing uv...")
-        subprocess.run([python, "-m", "pip", "install", "--quiet", "uv"], check=True)
-        uv = shutil.which("uv")
+    uv = install_uv()
 
     if uv:
         run(uv, "sync", cwd=app_dir)
-        run_py = f'"{uv}" run python'
         python_cmd = uv
         use_uv = True
     else:
@@ -622,16 +649,26 @@ def install_cloud():
         shutil.copy(app_dir / "atomic_client" / "agent.py", agent_py)
         shutil.rmtree(app_dir, ignore_errors=True)
 
-    # ── venv + deps ───────────────────────────────────────────────────────────
+    # ── uv + deps ─────────────────────────────────────────────────────────────
     step("Installing dependencies...")
+    uv = install_uv()
     venv = client_dir / ".venv"
-    if not venv.exists():
-        run(python, "-m", "venv", str(venv))
-    pip = str(venv / "Scripts" / "pip.exe")
-    venv_py = str(venv / "Scripts" / "python.exe")
-    run(pip, "install", "--quiet", "--upgrade", "pip")
-    run(pip, "install", "--quiet",
-        "websockets", "rich", "requests", "python-dotenv", "cryptography")
+    if uv:
+        if not venv.exists():
+            run(uv, "venv", str(venv), "--python", python, cwd=client_dir)
+        venv_py_rel = "Scripts/python.exe" if platform.system() == "Windows" else "bin/python"
+        venv_py = str(venv / venv_py_rel)
+        run(uv, "pip", "install", "--quiet", "--python", venv_py,
+            "websockets", "rich", "requests", "python-dotenv", "cryptography")
+    else:
+        warn("uv unavailable — falling back to pip")
+        if not venv.exists():
+            run(python, "-m", "venv", str(venv))
+        pip_rel = "Scripts/pip.exe" if platform.system() == "Windows" else "bin/pip"
+        pip = str(venv / pip_rel)
+        run(pip, "install", "--quiet", "--upgrade", "pip")
+        run(pip, "install", "--quiet",
+            "websockets", "rich", "requests", "python-dotenv", "cryptography")
     info("Dependencies installed.")
 
     # ── API key ───────────────────────────────────────────────────────────────

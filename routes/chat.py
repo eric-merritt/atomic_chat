@@ -4,7 +4,12 @@ import json
 import logging
 import queue
 import threading
+import uuid
 from datetime import datetime, timezone
+
+from services.logging_setup import set_correlation_id
+
+log = logging.getLogger(__name__)
 
 import json5
 import requests
@@ -284,10 +289,12 @@ def chat_stream():
   data = request.get_json(force=True)
   user_msg = data.get("message", "").strip()
   conversation_id = data.get("conversation_id")
-  if not conversation_id:
-    print("No {conversation_id} is defined here, breaking the entire app.")
   if not user_msg:
     return jsonify({"error": "message required"}), 400
+  if not conversation_id:
+    logging.getLogger(__name__).info(
+      "chat_stream: no conversation_id supplied — a new conversation will be created"
+    )
 
   prefs = current_user.preferences or {}
   model_name = prefs.get("model")
@@ -295,7 +302,8 @@ def chat_stream():
   if not model_name:
     return jsonify({"error": "No model selected"}), 400
 
-  print(f"[CHAT_START] user_msg={user_msg[:50]!r}, conv_id={conversation_id}, model={model_name}", flush=True)
+  set_correlation_id(f"chat-{uuid.uuid4().hex[:8]}")
+  log.info("chat_start: msg=%r conv_id=%s model=%s", user_msg[:50], conversation_id, model_name)
 
   db = get_db()
 
@@ -381,8 +389,7 @@ def chat_stream():
     context_pct = round(min(_estimate_tokens(qwen_messages, system_prompt, function_list_with_ttl) / LLAMA_ARG_CTX_SIZE * 100, 100), 1)
     yield json.dumps({"context_pct": context_pct}) + "\n"
 
-    import sys as _sys
-    def _log(msg): print(msg, file=_sys.stderr, flush=True)
+    def _log(msg): log.info("%s", msg)
 
     cancelled = False
     # FIFO of real tool names for mcp_call_tool unwrap — push on call, pop on result.

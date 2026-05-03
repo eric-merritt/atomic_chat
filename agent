@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -f "$DIR/.env.client" ]] && { set -a; source "$DIR/.env.client"; set +a; }
+exec "$DIR/.client-venv/bin/python" "$DIR/atomic_client/agent.py" "$@"

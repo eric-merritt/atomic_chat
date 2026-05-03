@@ -8,6 +8,7 @@ import uuid
 import urllib.parse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Lock
 import bs4 as beautifulsoup
 import json5
@@ -15,6 +16,8 @@ import requests
 
 from qwen_agent.tools.base import BaseTool, register_tool
 from tools._output import tool_result, retry
+
+_KNOWN_SITES_PATH = Path(__file__).parent.parent / "data" / "known_site_structures.json"
 
 _dl_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix='www_dl')
 _dl_jobs: dict[str, dict] = {}
@@ -200,13 +203,31 @@ def _load_summary(ref: str) -> dict | None:
     with _summary_lock:
         return _summary_store.get(ref)
 
+_known_sites_cache: dict = {"mtime": -1.0, "data": []}
+_known_sites_cache_lock = Lock()
+
+
 def _load_tube_site_selectors() -> list[dict]:
-    """Load site-specific selectors from tubesite_structure.json."""
+    """Load site-specific selectors from data/known_site_structures.json.
+
+    Cached by file mtime — re-reads from disk only when the JSON changes,
+    so frequent web tool invocations do not pay the open()+json.load() cost.
+    """
     try:
-        with open(os.path.expanduser('~/tubesite_structure.json'), 'r') as f:
-            return json.load(f)
-    except Exception:
+        current_mtime = _KNOWN_SITES_PATH.stat().st_mtime
+    except OSError:
         return []
+    with _known_sites_cache_lock:
+        if _known_sites_cache["mtime"] == current_mtime:
+            return _known_sites_cache["data"]
+        try:
+            with open(_KNOWN_SITES_PATH, 'r') as fh:
+                loaded = json.load(fh)
+        except Exception:
+            return _known_sites_cache["data"] or []
+        _known_sites_cache["mtime"] = current_mtime
+        _known_sites_cache["data"] = loaded
+        return loaded
 
 
 def _match_site_by_url(url: str, sites: list[dict]) -> dict | None:
@@ -226,7 +247,7 @@ def _match_site_by_url(url: str, sites: list[dict]) -> dict | None:
 
 
 def _detect_content_type(soup, url):
-    """Detect content type using site-specific selectors from tubesite_structure.json."""
+    """Detect content type using site-specific selectors from known_site_structures.json."""
     sites = _load_tube_site_selectors()
     matched_site = _match_site_by_url(url, sites)
 
@@ -377,7 +398,7 @@ def _first_matching_url(container, selectors: tuple, valid_exts: tuple) -> str:
     return first_found
 
 def _page_summary_with_site_selectors(content: str, url: str, site_config: dict) -> dict:
-    """Extract content using site-specific selectors from tubesite_structure.json."""
+    """Extract content using site-specific selectors from known_site_structures.json."""
     try:
         soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
 
@@ -1243,6 +1264,7 @@ class FindWebStructureTool(BaseTool):
             'wait_seconds': {'type': 'integer', 'description': 'Seconds to wait after JS load. Default 3.'},
             'min_cards': {'type': 'integer', 'description': 'Minimum repetitions to consider a candidate card element. Default 5.'},
             'click': {'type': 'string', 'description': 'CSS selector of an element to click after page load (e.g. cookie banner dismiss, load-more button). Requires js=true.'},
+            'save': {'type': 'boolean', 'description': 'Save the best card structure to known_site_structures.json for future reuse. Default false.'},
         },
         'required': ['url'],
     }
@@ -1255,6 +1277,7 @@ class FindWebStructureTool(BaseTool):
         wait_seconds = max(1, min(30, p.get('wait_seconds', 3)))
         min_cards = p.get('min_cards', 5)
         click = p.get('click', '').strip()
+        save = bool(p.get('save', False))
 
         err = _validate_url(url)
         if err:
@@ -1308,9 +1331,18 @@ class FindWebStructureTool(BaseTool):
                 continue
             sample = sig_elements[sig][:5]
             scores = [_score_card(el) for el in sample]
-            avg_fields = sum(len(s) for s in scores) / len(scores)
-            if avg_fields < 1:
+
+            # Media wrapper group: the majority of sampled instances must contain
+            # both a link and at least one media element (thumbnail or preview_video).
+            # This distinguishes gallery cards from nav menus, footers, etc.
+            media_count = sum(
+                1 for s in scores
+                if 'link' in s and ('thumbnail' in s or 'preview_video' in s)
+            )
+            if media_count < max(1, len(scores) * 0.5):
                 continue
+
+            avg_fields = sum(len(s) for s in scores) / len(scores)
             tag, classes = sig
             selector = tag + '.' + '.'.join(classes[:2])
             merged: dict[str, str] = {}
@@ -1322,9 +1354,10 @@ class FindWebStructureTool(BaseTool):
                 'count': count,
                 'fields': merged,
                 'field_count': round(avg_fields, 1),
+                'media_confirmed': media_count,
             })
 
-        candidates.sort(key=lambda c: (-c['field_count'], -c['count']))
+        candidates.sort(key=lambda c: (-c['media_confirmed'], -c['field_count'], -c['count']))
         top = candidates[:5]
 
         # Container: deepest ancestor that covers ≥80% of the best card elements.
@@ -1354,9 +1387,35 @@ class FindWebStructureTool(BaseTool):
 
         for c in top:
             c.pop('_sig', None)
+            c.pop('media_confirmed', None)
+
+        # Optionally persist the best structure for future fetches on this site.
+        saved = False
+        if save and top:
+            parsed_origin = urllib.parse.urlparse(url)
+            origin = f"{parsed_origin.scheme}://{parsed_origin.netloc}"
+            entry = {
+                'url': origin,
+                'container': container_selector,
+                'cards': [{'selector': top[0]['selector'], 'fields': top[0]['fields']}],
+            }
+            _KNOWN_SITES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            sites = _load_tube_site_selectors()
+            updated = False
+            for idx, existing in enumerate(sites):
+                if _match_site_by_url(origin, [existing]):
+                    sites[idx] = entry
+                    updated = True
+                    break
+            if not updated:
+                sites.append(entry)
+            with open(_KNOWN_SITES_PATH, 'w') as f:
+                json.dump(sites, f, indent=2)
+            saved = True
 
         return tool_result(data={
             'url': url,
             'container': container_selector,
             'card_candidates': top,
+            **({"saved_to": str(_KNOWN_SITES_PATH)} if saved else {}),
         })

@@ -213,7 +213,7 @@ def _ensure_bash_disclaimer():
         "\n  • Commands run as YOUR user account\n"
         "  • Back up important files before proceeding\n"
         "  • Review each command before approving it\n"
-        "  • Anthropic/Eric are not responsible for agent-generated commands\n"
+        "  • Cryptic Farms LLC and its affiliates are not responsible for agent-generated commands\n"
     )
     try:
         answer = input("I understand and accept [y/N]: ").strip().lower()
