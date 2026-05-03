@@ -21,6 +21,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from pathlib import Path
 
 import requests
@@ -504,4 +505,24 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    _log_path = _CONFIG_DIR / "atomic-chat-agent.log"
+
+    class _Tee:
+        def __init__(self, a, b): self._a, self._b = a, b
+        def write(self, s): self._a.write(s); self._b.write(s)
+        def flush(self): self._a.flush(); self._b.flush()
+        def isatty(self): return False
+
+    _log_fh = open(_log_path, "a", encoding="utf-8", buffering=1)
+    sys.stdout = _Tee(sys.__stdout__, _log_fh)
+    sys.stderr = _Tee(sys.__stderr__, _log_fh)
+
+    print(f"[agent] Log: {_log_path}")
+
+    try:
+        main()
+    except Exception:
+        traceback.print_exc()
+        input("\nFatal error — press Enter to exit...")
+        sys.exit(1)
