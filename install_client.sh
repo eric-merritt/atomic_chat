@@ -96,10 +96,14 @@ for d in [
 }
 
 detect_gpu() {
-    if [[ "$(uname)" == "Darwin" ]]; then echo "metal"
-    elif command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then echo "cuda"
-    elif command -v rocminfo &>/dev/null && rocminfo &>/dev/null 2>&1; then echo "rocm"
-    else echo "cpu"; fi
+    if [[ "$(uname)" == "Darwin" ]]; then echo "metal"; return; fi
+    if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null 2>&1; then echo "cuda"; return; fi
+    if command -v rocminfo &>/dev/null && rocminfo &>/dev/null 2>&1; then echo "rocm"; return; fi
+    # Intel Arc (and other Vulkan-capable GPUs without CUDA/ROCm)
+    if command -v lspci &>/dev/null && lspci 2>/dev/null | grep -qi "intel.*arc\|intel.*graphics\|alchemist"; then
+        echo "vulkan"; return
+    fi
+    echo "cpu"
 }
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -116,6 +120,81 @@ for _cand in llama-server "$HOME/.local/bin/llama-server" llama.cpp/build/bin/ll
         LLAMA_BIN="$(command -v "$_cand" 2>/dev/null || echo "$_cand")"; break
     fi
 done
+
+_download_github_release() {
+    GPU_BACKEND="$(detect_gpu)"
+    EXTRACT_DIR="$SCRIPT_DIR/.llama-cpp"
+    "$PYTHON" - "$GPU_BACKEND" "$EXTRACT_DIR" <<'PYEOF'
+import urllib.request, json, sys, zipfile, os, stat
+from pathlib import Path
+
+gpu     = sys.argv[1]
+out_dir = Path(sys.argv[2])
+out_dir.mkdir(parents=True, exist_ok=True)
+
+api_url = "https://api.github.com/repos/ggerganov/llama.cpp/releases/latest"
+hdrs    = {"User-Agent": "atomic-chat-installer", "Accept": "application/vnd.github+json"}
+with urllib.request.urlopen(urllib.request.Request(api_url, headers=hdrs), timeout=20) as r:
+    release = json.load(r)
+
+assets = release.get("assets", [])
+tag    = release.get("tag_name", "")
+
+# priority-ordered asset name patterns per GPU backend
+# ROCm and Vulkan both target the Vulkan build; no Linux ROCm binary in releases
+patterns = {
+    "cuda":   ["ubuntu-cuda", "linux-cuda"],
+    "rocm":   ["ubuntu-vulkan", "linux-vulkan"],
+    "vulkan": ["ubuntu-vulkan", "linux-vulkan"],
+    "metal":  ["macos", "osx"],
+}
+fallback = ["ubuntu-x64", "linux-x64", "ubuntu-avx2", "linux-avx2"]
+
+candidates = patterns.get(gpu, []) + fallback
+asset = None
+for pat in candidates:
+    for a in assets:
+        name = a["name"].lower()
+        if pat in name and name.endswith(".zip"):
+            asset = a
+            break
+    if asset:
+        break
+
+if not asset:
+    print(f"ERROR: no matching Linux release found for tag {tag}", file=sys.stderr)
+    print("Check https://github.com/ggerganov/llama.cpp/releases manually.", file=sys.stderr)
+    sys.exit(1)
+
+zip_path = out_dir / asset["name"]
+print(f"Downloading {asset['name']} ({asset['size'] >> 20} MB)...", file=sys.stderr)
+with urllib.request.urlopen(asset["browser_download_url"], timeout=300) as r, \
+        open(zip_path, "wb") as f:
+    total = int(r.headers.get("Content-Length", 0))
+    done  = 0
+    while True:
+        chunk = r.read(65536)
+        if not chunk: break
+        f.write(chunk); done += len(chunk)
+        if total:
+            pct = min(100, done * 100 // total)
+            bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
+            print(f"\r  [{bar}] {pct}%  ", end="", flush=True, file=sys.stderr)
+print(file=sys.stderr)
+
+with zipfile.ZipFile(zip_path) as zf:
+    zf.extractall(out_dir)
+zip_path.unlink()
+
+for p in sorted(out_dir.rglob("llama-server")):
+    p.chmod(p.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    print(str(p))
+    sys.exit(0)
+
+print("ERROR: llama-server not found in downloaded archive.", file=sys.stderr)
+sys.exit(1)
+PYEOF
+}
 
 _build_from_source() {
     GPU_BACKEND="$(detect_gpu)"
@@ -143,7 +222,7 @@ _build_from_source() {
 
 if [[ -z "$LLAMA_BIN" ]]; then
     warn "llama-server not found."
-    printf "\n  [a] Homebrew (macOS)\n  [b] apt (Debian/Ubuntu)\n  [c] Build from source\n  [d] Skip (set manually)\n\n"
+    printf "\n  [a] Homebrew (macOS)\n  [b] Download pre-built release from GitHub (ggerganov/llama.cpp)\n  [c] Build from source\n  [d] Skip (set manually)\n\n"
     printf "Choice [a/b/c/d]: "; read -r _llama_choice
     case "$_llama_choice" in
         a|A)
@@ -153,13 +232,10 @@ if [[ -z "$LLAMA_BIN" ]]; then
             LLAMA_BIN="$(command -v llama-server)"
             ;;
         b|B)
-            info "Installing via apt..."
-            if ! (sudo apt-get update -qq && sudo apt-get install -y llama.cpp 2>/dev/null); then
-                warn "apt package unavailable — building from source"
-                _build_from_source
-            else
-                LLAMA_BIN="$(command -v llama-server 2>/dev/null || true)"
-            fi
+            info "Fetching latest release from ggerganov/llama.cpp..."
+            LLAMA_BIN="$(_download_github_release)" \
+                || error "GitHub download failed. Try option [c] to build from source."
+            info "Downloaded: $LLAMA_BIN"
             ;;
         c|C) _build_from_source ;;
         d|D)
