@@ -25,7 +25,7 @@ bash install_client.sh
 
 The script will:
 1. Locate or install `llama-server` — Homebrew on Mac, download the matching pre-built release from [ggerganov/llama.cpp](https://github.com/ggerganov/llama.cpp) (CUDA for NVIDIA, Vulkan for Intel Arc / AMD, AVX2 for CPU), or build from source
-2. Let you scan for existing `.gguf` models, download one from HuggingFace, or enter a path manually — default model: `sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF`
+2. Let you scan for existing `.gguf` models, download one from HuggingFace, or enter a path manually — defaults to `sci4ai/Qwen3.5-27B-Ablit-iQ4_XS.gguf` on 16GB+ RAM, `sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF` on less
 3. Auto-detect GPU and prompt for offload layers
 4. Install Python dependencies via `uv` (or pip fallback)
 5. Install frontend dependencies via `npm`

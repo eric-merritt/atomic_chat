@@ -251,7 +251,29 @@ fi
 # ── Model setup ───────────────────────────────────────────────────────────────
 step "Model setup..."
 
-DEFAULT_HF_REPO="sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF"
+HF_REPO_9B="sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF"
+HF_REPO_27B="sci4ai/Qwen3.5-27B-Ablit-iQ4_XS.gguf"
+
+_ram_gb() {
+    "$PYTHON" -c "
+import os
+try:
+    with open('/proc/meminfo') as f:
+        for l in f:
+            if l.startswith('MemTotal'):
+                print(int(l.split()[1]) // 1048576); break
+except Exception: print(0)
+"
+}
+RAM_GB="$(_ram_gb)"
+if [[ "$RAM_GB" -ge 16 ]]; then
+    DEFAULT_HF_REPO="$HF_REPO_27B"
+    info "RAM: ${RAM_GB}GB — defaulting to 27B model"
+else
+    DEFAULT_HF_REPO="$HF_REPO_9B"
+    info "RAM: ${RAM_GB}GB — defaulting to 9B model"
+fi
+
 CHOSEN_MODEL=""
 
 printf "Scan home directory for existing GGUF models? [y/N]: "; read -r _scan_ans
@@ -344,9 +366,15 @@ fi
 if [[ -z "$CHOSEN_MODEL" ]]; then
     [[ ${#MODELS[@]} -eq 0 ]] && warn "No local .gguf models found."
     printf "\nEnter a HuggingFace repo ID or local path.\n"
-    printf "  [Enter] = %s\n\n" "$DEFAULT_HF_REPO"
-    printf "Repo/path: "; read -r _model_input
-    _model_input="${_model_input:-$DEFAULT_HF_REPO}"
+    printf "  [1] %s (9B, ~9GB)\n" "$HF_REPO_9B"
+    printf "  [2] %s (27B, ~14GB)\n" "$HF_REPO_27B"
+    printf "  [Enter] = default for your RAM (%s)\n\n" "$DEFAULT_HF_REPO"
+    printf "Repo/path/1/2: "; read -r _model_input
+    case "$_model_input" in
+        1) _model_input="$HF_REPO_9B" ;;
+        2) _model_input="$HF_REPO_27B" ;;
+        "") _model_input="$DEFAULT_HF_REPO" ;;
+    esac
 
     if [[ -f "$_model_input" || "$_model_input" == /* || "$_model_input" == ~* ]]; then
         CHOSEN_MODEL="${_model_input/#\~/$HOME}"

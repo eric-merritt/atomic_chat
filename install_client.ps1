@@ -291,8 +291,19 @@ if ($mode -eq '1') {
     # ── 1b. Model selection ───────────────────────────────────────────────────
     Step 'Model setup...'
 
-    $defaultRepo = 'sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF'
-    $modelPath   = ''
+    $hfRepo9B  = 'sci4ai/Qwen3.5-9B-Abliterated-Q8_0-GGUF'
+    $hfRepo27B = 'sci4ai/Qwen3.5-27B-Ablit-iQ4_XS.gguf'
+
+    $ramGb = [math]::Round((Get-WmiObject Win32_ComputerSystem).TotalPhysicalMemory / 1GB)
+    if ($ramGb -ge 16) {
+        $defaultRepo = $hfRepo27B
+        Info "RAM: ${ramGb}GB — defaulting to 27B model"
+    } else {
+        $defaultRepo = $hfRepo9B
+        Info "RAM: ${ramGb}GB — defaulting to 9B model"
+    }
+
+    $modelPath = ''
 
     $scanAns = Read-Host 'Scan common folders for existing GGUF models? [y/N]'
     $models  = @()
@@ -337,11 +348,20 @@ if ($mode -eq '1') {
 
     if ($sel -eq 'h' -or ($models.Count -eq 0 -and $sel -eq '1')) {
         Write-Host ''
-        $repoInput = Read-Host "HuggingFace repo (org/name) or Enter for default [$defaultRepo]"
-        $repo      = if ($repoInput.Trim()) { $repoInput.Trim() } else { $defaultRepo }
+        Write-Host "  [1] $hfRepo9B (9B, ~9GB)"
+        Write-Host "  [2] $hfRepo27B (27B, ~14GB)"
+        Write-Host "  [Enter] = default for your RAM ($defaultRepo)"
+        Write-Host ''
+        $repoInput = Read-Host 'Repo/path/1/2'
+        $repo = switch ($repoInput.Trim()) {
+            '1'  { $hfRepo9B }
+            '2'  { $hfRepo27B }
+            ''   { $defaultRepo }
+            default { $repoInput.Trim() }
+        }
         if (Test-Path $repo) {
             $modelPath = $repo
-        } elseif ($repo -match '^[^/]+/[^/]+$') {
+        } elseif ($repo -match '^[^/]+/[^/]+') {
             $modelPath = Invoke-HFDownload $repo
         } else {
             Fail "Could not interpret input as a local path or HuggingFace repo ID: $repo"
