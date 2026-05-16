@@ -1,35 +1,25 @@
-"""Tool registry — grouped by agent domain.
+"""Tool registry — auto-discovered from tools/ package.
 
 All tool modules use qwen-agent's @register_tool decorator.
 Importing each module triggers registration in TOOL_REGISTRY.
 ALL_TOOLS is built from the registry after all modules are loaded.
 """
 
+import importlib
+import pkgutil
+import sys
+
 from qwen_agent.tools.base import TOOL_REGISTRY
 
-# Snapshot built-in tool names before our imports
+import tools as _pkg
+
 _BUILTIN_TOOLS = set(TOOL_REGISTRY.keys())
 
-# Import each module to trigger @register_tool side effects
-import tools.filesystem  # noqa: F401
-import tools.web  # noqa: F401
-import tools.ecommerce  # noqa: F401
-import tools.onlyfans  # noqa: F401
-import tools.torrent  # noqa: F401
-import tools.mcp  # noqa: F401
-import tools.accounting  # noqa: F401
-import tools.presentation  # noqa: F401
-import tools.jobs  # noqa: F401
-import tools.tasklist  # noqa: F401
-import tools.native # noqa: F401
-import tools.bug_bounty # noqa: F401
-import tools.exploit # noqa: F401
-import tools.vision # noqa: F401
-import tools.bash # noqa: F401
+for _mod in pkgutil.iter_modules(_pkg.__path__):
+  if not _mod.name.startswith('_'):
+    try:
+      importlib.import_module(f"tools.{_mod.name}")
+    except Exception as _exc:
+      print(f"WARN: failed to load tools.{_mod.name}: {_exc}", file=sys.stderr)
 
-# Build ALL_TOOLS as instantiated tool objects (only our custom tools)
-ALL_TOOLS = []
-for name, cls in TOOL_REGISTRY.items():
-    if name not in _BUILTIN_TOOLS:
-        ALL_TOOLS.append(cls)
-
+ALL_TOOLS = [cls for name, cls in TOOL_REGISTRY.items() if name not in _BUILTIN_TOOLS]
