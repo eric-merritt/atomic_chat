@@ -5,6 +5,8 @@ import re
 import json
 import time
 import uuid
+import shutil
+import subprocess
 import urllib.parse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -18,6 +20,7 @@ from qwen_agent.tools.base import BaseTool, register_tool
 from tools._output import tool_result, retry
 
 _KNOWN_SITES_PATH = Path(__file__).parent.parent / "data" / "known_site_structures.json"
+_USER_STRUCTURES_PATH = Path.home() / '.agent_known_structures.json'
 
 _dl_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix='www_dl')
 _dl_jobs: dict[str, dict] = {}
@@ -208,26 +211,40 @@ _known_sites_cache_lock = Lock()
 
 
 def _load_tube_site_selectors() -> list[dict]:
-    """Load site-specific selectors from data/known_site_structures.json.
+    """Load site-specific selectors, merging shipped + user-local.
 
-    Cached by file mtime — re-reads from disk only when the JSON changes,
-    so frequent web tool invocations do not pay the open()+json.load() cost.
+    User-local (~/.agent_known_structures.json) wins on URL collision.
+    Shipped file (data/known_site_structures.json) is read-only.
+    Cached by shipped-file mtime — re-reads when that file changes.
     """
     try:
         current_mtime = _KNOWN_SITES_PATH.stat().st_mtime
     except OSError:
-        return []
+        current_mtime = -1.0
+
     with _known_sites_cache_lock:
         if _known_sites_cache["mtime"] == current_mtime:
             return _known_sites_cache["data"]
         try:
             with open(_KNOWN_SITES_PATH, 'r') as fh:
-                loaded = json.load(fh)
+                shipped = json.load(fh)
         except Exception:
-            return _known_sites_cache["data"] or []
+            shipped = _known_sites_cache["data"] or []
+
+        try:
+            user_local = json.loads(_USER_STRUCTURES_PATH.read_text())
+        except Exception:
+            user_local = []
+
+        merged: dict[str, dict] = {s['url']: s for s in shipped if s.get('url')}
+        for entry in user_local:
+            if entry.get('url'):
+                merged[entry['url']] = entry
+
+        result = list(merged.values())
         _known_sites_cache["mtime"] = current_mtime
-        _known_sites_cache["data"] = loaded
-        return loaded
+        _known_sites_cache["data"] = result
+        return result
 
 
 def _match_site_by_url(url: str, sites: list[dict]) -> dict | None:
@@ -956,13 +973,77 @@ class ExtractUrlTool(BaseTool):
         return tool_result(data={'url': url, 'selector': selector, 'count': len(results), 'results': results})
 
 
+_MEDIA_URL_RE = re.compile(
+    r'["\'\`]'
+    r'(https?://[^"\'\`]+\.(?:m3u8|mp4|webm|mkv|mov|avi|flv|wmv|ts|ogv)(?:\?[^"\'\`]*)?)'
+    r'["\'\`]',
+    re.IGNORECASE,
+)
+
+_PLAY_SELECTORS = [
+    '.jw-icon-display', '.jw-display-icon-container', '[aria-label="Play"]',
+    '.play-button', 'button.play', '[data-role="play"]', '.vjs-big-play-button',
+    '.video-js .vjs-play-control', 'video',
+]
+
+_INTERCEPT_JS = """
+window.__captured_media = window.__captured_media || [];
+(function() {
+  var _fetch = window.fetch;
+  window.fetch = function(u) {
+    if (typeof u === 'string' && /\\.m3u8/i.test(u)) window.__captured_media.push(u);
+    return _fetch.apply(this, arguments);
+  };
+  var _open = XMLHttpRequest.prototype.open;
+  XMLHttpRequest.prototype.open = function(m, u) {
+    if (u && /\\.m3u8/i.test(u)) window.__captured_media.push(u);
+    return _open.apply(this, arguments);
+  };
+})();
+"""
+
+_PLAYER_EXTRACT_JS = """
+var out = [];
+try {
+  var jw = window.jwplayer && window.jwplayer();
+  if (jw && jw.getPlaylistItem) {
+    (jw.getPlaylistItem().allSources || jw.getPlaylistItem().sources || []).forEach(function(s) {
+      if (s.file && !s.file.startsWith('blob:')) out.push(s.file);
+    });
+  }
+} catch(e) {}
+try {
+  if (window.Hls && window.hls && window.hls.url) out.push(window.hls.url);
+} catch(e) {}
+try {
+  if (window.videojs) {
+    Object.values(videojs.getPlayers ? videojs.getPlayers() : {}).forEach(function(p) {
+      var src = p.currentSrc && p.currentSrc();
+      if (src && !src.startsWith('blob:')) out.push(src);
+    });
+  }
+} catch(e) {}
+return out.concat(window.__captured_media || []);
+"""
+
+
 @register_tool('www_find_dl')
 class FindDownloadLinkTool(BaseTool):
-    description = 'Find media download links (video, image, audio sources) in a page by URL.'
+    description = (
+        'Find media download links (video, image, audio, HLS/m3u8) in a page by URL. '
+        'Scans HTML tags and inline script blocks. '
+        'Use js=true for pages that load the player via JavaScript. '
+        'Use click_play=true when the player only fetches the stream URL after the play button is clicked (blob: URL pages).'
+    )
     parameters = {
         'type': 'object',
         'properties': {
-            'url': {'type': 'string', 'description': 'URL of the page to search for media links.'},
+            'url':          {'type': 'string', 'description': 'URL of the page to search for media links.'},
+            'js':           {'type': 'boolean', 'description': 'Use headless Firefox to execute JavaScript first. Default: false.'},
+            'click_play':   {'type': 'boolean', 'description': 'After page load, inject a network intercept then click the play button to trigger the stream URL fetch. Requires js=true.'},
+            'wait_seconds': {'type': 'integer', 'description': 'Seconds to wait after JS load (and after click if click_play=true). Default: 3.'},
+            'cookies':      {'type': 'array', 'items': {'type': 'string'}, 'description': 'Optional cookies in "name=value" format.'},
+            'referrer':     {'type': 'string', 'description': 'Referer header to send with the page request.'},
         },
         'required': ['url'],
     }
@@ -970,32 +1051,82 @@ class FindDownloadLinkTool(BaseTool):
     @retry()
     def call(self, params: str, **kwargs) -> dict:
         p = json5.loads(params)
-        url = p.get('url', '')
+        url          = p.get('url', '')
+        js           = p.get('js', False)
+        click_play   = p.get('click_play', False)
+        wait_seconds = max(1, min(30, p.get('wait_seconds', 3)))
+        cookies      = p.get('cookies', None)
+        referrer     = p.get('referrer', '')
 
         err = _validate_url(url)
         if err:
             return tool_result(error=err)
 
+        player_links = []
+
         try:
-            r = _web_session.get(url, timeout=15)
-            r.raise_for_status()
-            content = _strip_html_noise(r.text)
+            if js:
+                from selenium.webdriver.common.by import By
+                driver = _get_or_create_browser()
+                if cookies:
+                    from urllib.parse import urlparse as _up
+                    driver.get(f"{_up(url).scheme}://{_up(url).netloc}")
+                    time.sleep(1)
+                    for c in cookies:
+                        if '=' in c:
+                            name, _, value = c.partition('=')
+                            driver.add_cookie({'name': name.strip(), 'value': value.strip(), 'domain': _up(url).netloc})
+                driver.get(url)
+                time.sleep(wait_seconds)
+
+                if click_play:
+                    driver.execute_script(_INTERCEPT_JS)
+                    for sel in _PLAY_SELECTORS:
+                        try:
+                            btn = driver.find_element(By.CSS_SELECTOR, sel)
+                            btn.click()
+                            break
+                        except Exception:
+                            continue
+                    time.sleep(wait_seconds)
+
+                raw_results = driver.execute_script(_PLAYER_EXTRACT_JS) or []
+                origin = urllib.parse.urlparse(url)
+                base = f"{origin.scheme}://{origin.netloc}"
+                player_links = [
+                    {'tag': 'player', 'src': src if src.startswith('http') else base + src}
+                    for src in dict.fromkeys(raw_results)
+                    if src
+                ]
+                raw_html = driver.page_source
+            else:
+                session_headers = { 'Referer': referrer } if referrer else {}
+                _apply_cookies(url, cookies, None)
+                r = _web_session.get(url, timeout=15, headers=session_headers)
+                r.raise_for_status()
+                raw_html = r.text
         except Exception as e:
             return tool_result(error=f"Failed to fetch {url}: {e}")
 
+        script_links = [
+            {'tag': 'script', 'src': match}
+            for match in dict.fromkeys( _MEDIA_URL_RE.findall(raw_html) )
+        ]
+
         try:
-            soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
+            soup = beautifulsoup.BeautifulSoup(_strip_html_noise(raw_html), 'html.parser')
         except Exception as e:
             return tool_result(error=f"HTML parsing failed: {e}")
 
-        links = []
+        tag_links = []
         for tag_name in ('video', 'source', 'img', 'audio'):
             for el in soup.find_all(tag_name):
                 src = el.get('src') or el.get('data-src') or ''
-                if src:
-                    links.append({'tag': tag_name, 'src': src})
+                if src and not src.startswith('blob:'):
+                    tag_links.append({'tag': tag_name, 'src': src})
 
-        return tool_result(data={'url': url, 'links': links})
+        links = player_links + script_links + tag_links
+        return tool_result(data={'url': url, 'links': links, 'count': len(links)})
 
 
 def _run_download(job_id: str, url: str, dest: str) -> None:
@@ -1020,12 +1151,104 @@ def _run_download(job_id: str, url: str, dest: str) -> None:
             _dl_jobs[job_id].update({'status': 'error', 'error': str(e)})
 
 
+def _fetch_with_headers(url: str, headers: dict, retries: int = 5) -> requests.Response:
+    delay = 2.0
+    for attempt in range(retries):
+        r = requests.get(url, headers=headers, timeout=30)
+        if r.status_code == 429:
+            wait = float(r.headers.get('Retry-After', delay))
+            time.sleep(wait)
+            delay = min(delay * 2, 60)
+            continue
+        r.raise_for_status()
+        return r
+    raise RuntimeError(f"Still getting 429 after {retries} retries: {url}")
+
+
+def _run_hls_download(job_id: str, url: str, dest: str, headers: dict) -> None:
+    import tempfile
+    try:
+        if dest.lower().endswith('.m3u8'):
+            dest = dest[:-5] + '.mp4'
+            with _dl_lock:
+                _dl_jobs[job_id]['dest'] = dest
+
+        os.makedirs(os.path.dirname(dest) or '.', exist_ok=True)
+
+        # Try yt-dlp first — battle-tested rate-limit + retry handling for HLS
+        ytdlp = shutil.which('yt-dlp')
+        if ytdlp:
+            cmd = [
+                ytdlp, '--no-warnings', '--quiet',
+                '--sleep-interval', '1', '--max-sleep-interval', '3',
+                '--retries', '10', '--fragment-retries', '10',
+                '-o', dest,
+            ]
+            for k, v in headers.items():
+                cmd += ['--add-header', f'{k}:{v}']
+            cmd.append(url)
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0 and os.path.exists(dest):
+                size = os.path.getsize(dest)
+                with _dl_lock:
+                    _dl_jobs[job_id].update({'status': 'done', 'bytes_done': size})
+                return
+            # yt-dlp failed — fall through to manual
+            ytdlp_err = (result.stderr or result.stdout)[-400:]
+        else:
+            ytdlp_err = 'yt-dlp not found'
+
+        # Manual fallback: requests playlist fetch + per-segment download + ffmpeg concat
+        r = _fetch_with_headers(url, headers)
+        playlist = r.text
+        base_url = url.rsplit('/', 1)[0] + '/'
+        segments = [
+            line.strip() if line.strip().startswith('http') else base_url + line.strip()
+            for line in playlist.splitlines()
+            if line.strip() and not line.strip().startswith('#')
+        ]
+        if not segments:
+            raise RuntimeError(f"No segments in playlist (yt-dlp also failed: {ytdlp_err})")
+
+        written = 0
+        with tempfile.TemporaryDirectory() as tmp:
+            seg_paths = []
+            for idx, seg_url in enumerate(segments):
+                seg_path = os.path.join(tmp, f"seg{idx:05d}.ts")
+                seg_data = _fetch_with_headers(seg_url, headers).content
+                with open(seg_path, 'wb') as sf:
+                    sf.write(seg_data)
+                seg_paths.append(seg_path)
+                written += len(seg_data)
+                with _dl_lock:
+                    _dl_jobs[job_id]['bytes_done'] = written
+                if idx < len(segments) - 1:
+                    time.sleep(0.5)
+
+            concat_file = os.path.join(tmp, 'concat.txt')
+            with open(concat_file, 'w') as cf:
+                cf.write('\n'.join( f"file '{p}'" for p in seg_paths ))
+            cmd = ['ffmpeg', '-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', concat_file, '-c', 'copy', dest]
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise RuntimeError(result.stderr[-800:] or result.stdout[-400:])
+
+        size = os.path.getsize(dest)
+        with _dl_lock:
+            _dl_jobs[job_id].update({'status': 'done', 'bytes_done': size})
+    except Exception as e:
+        with _dl_lock:
+            _dl_jobs[job_id].update({'status': 'error', 'error': str(e)})
+
+
 @register_tool('www_dl')
 class DownloadFileTool(BaseTool):
     description = (
         'Download a file from a direct URL to disk. '
         'The url must be a direct link to the file — if you only have a page URL, '
         'call www_find_dl first to extract the real download link. '
+        'IMPORTANT: CDN-signed URLs (e.g. HLS/m3u8 with key= tokens) expire within minutes — '
+        'always call www_find_dl immediately before www_dl, never reuse a URL from earlier in context. '
         'Returns a job_id immediately — download runs in the background. '
         'Use www_dl_status to check progress. '
         'Pass wait=true to block until the download finishes.'
@@ -1037,6 +1260,8 @@ class DownloadFileTool(BaseTool):
             'dest':       {'type': 'string', 'description': 'Local file path or directory. Filename is derived from URL when a directory is given.'},
             'media_type': {'type': 'string', 'description': 'Type of file being downloaded: video/movie/film, image/photo/photograph, document/text, binary/executable/code/script.'},
             'wait':       {'type': 'boolean', 'description': 'Block until download completes. Default false.'},
+            'headers':    {'type': 'object', 'description': 'Optional HTTP headers (e.g. User-Agent, Referer). Required for CDN-protected HLS streams.'},
+            'referrer':   {'type': 'string', 'description': 'Shorthand for setting the Referer header. Merged into headers if both are provided.'},
         },
         'required': ['url', 'dest', 'media_type'],
     }
@@ -1047,6 +1272,10 @@ class DownloadFileTool(BaseTool):
         dest       = os.path.expanduser(p['dest'])
         media_type = p.get('media_type', '')
         wait       = p.get('wait', False)
+        headers    = dict(p.get('headers') or {})
+        referrer   = p.get('referrer', '')
+        if referrer:
+            headers.setdefault('Referer', referrer)
 
         err = _validate_url(url)
         if err:
@@ -1060,8 +1289,10 @@ class DownloadFileTool(BaseTool):
             ))
 
         exts = _MEDIA_EXTS[media_type]
-        url_lower = url.lower().split('?')[0]
-        if not any(url_lower.endswith(ext) for ext in exts):
+        url_path = url.lower().split('?')[0].rstrip('/')
+        url_qs   = url.lower().split('?')[1] if '?' in url else ''
+        qs_has_m3u8 = 'm3u8' in url_qs
+        if not any(url_path.endswith(ext) for ext in exts) and not qs_has_m3u8:
             return tool_result(error=(
                 f"'{url}' does not look like a direct {media_type} link "
                 f"(expected one of: {', '.join(exts[:6])}...). "
@@ -1079,7 +1310,12 @@ class DownloadFileTool(BaseTool):
         with _dl_lock:
             _dl_jobs[job_id] = {'url': url, 'dest': dest, 'status': 'running', 'bytes_done': 0, 'total_bytes': 0}
 
-        future = _dl_executor.submit(_run_download, job_id, url, dest)
+        is_hls = url_path.endswith('.m3u8') or qs_has_m3u8
+        future = (
+            _dl_executor.submit(_run_hls_download, job_id, url, dest, headers)
+            if is_hls else
+            _dl_executor.submit(_run_download, job_id, url, dest)
+        )
 
         if wait:
             future.result()
@@ -1087,7 +1323,7 @@ class DownloadFileTool(BaseTool):
                 job = dict(_dl_jobs[job_id])
             if job['status'] == 'error':
                 return tool_result(error=job['error'])
-            return tool_result(data={'job_id': job_id, 'status': 'done', 'path': dest, 'bytes': job['bytes_done']})
+            return tool_result(data={'job_id': job_id, 'status': 'done', 'path': job.get('dest', dest), 'bytes': job['bytes_done']})
 
         return tool_result(data={'job_id': job_id, 'status': 'running', 'dest': dest})
 
