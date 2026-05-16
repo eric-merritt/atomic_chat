@@ -8,7 +8,9 @@ from qwen_agent.tools.base import TOOL_REGISTRY
 # ── Registration tests ───────────────────────────────────────────────────────
 
 def test_all_web_tools_registered():
-    import tools.web  # noqa: F401 — trigger registration
+    import tools.web            # noqa: F401
+    import tools.browser_session  # noqa: F401
+    import tools.recorder       # noqa: F401
 
     expected = {
         'www_search',
@@ -24,6 +26,13 @@ def test_all_web_tools_registered():
         'www_set_local_storage',
         'www_get_cookies',
         'www_get_cookies_for_url',
+        # New tools
+        'www_nav',
+        'www_fill',
+        'www_login',
+        'www_start_rec',
+        'www_stop_rec',
+        'www_save_rec',
     }
     registered = set(TOOL_REGISTRY.keys())
     missing = expected - registered
