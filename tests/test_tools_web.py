@@ -8,7 +8,9 @@ from qwen_agent.tools.base import TOOL_REGISTRY
 # ── Registration tests ───────────────────────────────────────────────────────
 
 def test_all_web_tools_registered():
-    import tools.web  # noqa: F401 — trigger registration
+    import tools.web            # noqa: F401
+    import tools.browser_session  # noqa: F401
+    import tools.recorder       # noqa: F401
 
     expected = {
         'www_search',
@@ -24,6 +26,13 @@ def test_all_web_tools_registered():
         'www_set_local_storage',
         'www_get_cookies',
         'www_get_cookies_for_url',
+        # New tools
+        'www_nav',
+        'www_fill',
+        'www_login',
+        'www_start_rec',
+        'www_stop_rec',
+        'www_save_rec',
     }
     registered = set(TOOL_REGISTRY.keys())
     missing = expected - registered
@@ -165,3 +174,31 @@ def test_find_allowed_routes_bad_url_returns_error():
     tool = FindAllowedRoutesTool()
     result = tool.call(json.dumps({"url": "ftp://bad"}))
     assert result["status"] == "error"
+
+
+# ── _load_tube_site_selectors merge test ─────────────────────────────────────
+
+def test_load_tube_site_selectors_merges_user_local(tmp_path, monkeypatch):
+    """User-local ~/.agent_known_structures.json entries win on URL collision."""
+    import tools.web as web_mod
+
+    shipped = tmp_path / "known_site_structures.json"
+    shipped.write_text(json.dumps([
+        {'url': 'https://shipped.example.com', 'container': '.grid', 'cards': []}
+    ]))
+    monkeypatch.setattr(web_mod, '_KNOWN_SITES_PATH', shipped)
+    web_mod._known_sites_cache['mtime'] = -1.0
+
+    user_local = tmp_path / "agent_known_structures.json"
+    user_local.write_text(json.dumps([
+        {'url': 'https://shipped.example.com', 'container': '.user-grid', 'cards': []},
+        {'url': 'https://user-only.example.com', 'container': '.cards', 'cards': []},
+    ]))
+    monkeypatch.setattr(web_mod, '_USER_STRUCTURES_PATH', user_local)
+
+    sites = web_mod._load_tube_site_selectors()
+    urls = [s['url'] for s in sites]
+
+    assert 'https://user-only.example.com' in urls
+    shipped_entry = next(s for s in sites if s['url'] == 'https://shipped.example.com')
+    assert shipped_entry['container'] == '.user-grid'  # user-local wins
