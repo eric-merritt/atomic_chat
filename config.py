@@ -27,6 +27,11 @@ def _resolve_ctx_size() -> int:
 LLAMA_ARG_CTX_SIZE = _resolve_ctx_size()
 
 # ── llama-server process ──
+# Freshly built CUDA-13 binary; the stale /usr/local/bin one was removed after
+# the CUDA 12→13 reinstall. Override via LLAMA_BIN if the build moves.
+LLAMA_BIN = os.environ.get(
+    "LLAMA_BIN", "/home/ermer/models/llama.cpp/build/bin/llama-server"
+)
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "127.0.0.1")
 LLAMA_PORT = int(os.environ.get("LLAMA_PORT", "5173"))
 LLAMA_SERVER_URL = os.environ.get(
@@ -37,6 +42,16 @@ LLAMA_SERVER_URL = os.environ.get(
 # alias (shown to UI, used as --alias and as /v1/chat/completions `model` field)
 # → GGUF file on disk + launch args.
 MODELS = {
+    "qwen3.6:27b-iq4_xs": {
+        "path": "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/Qwen3.6-27B-Ablit-IQ4_XS.gguf",
+        "ngl": 42,
+        "ctx": 4096,
+    },
+    "qwen3.6:27b-iq3_xs": {
+        "path": "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/Qwen3.6-27B-Ablit-IQ3_XS.gguf",
+        "ngl": 42,
+        "ctx": 4096,
+    },
     "qwen3.5:27b-iq4_xs": {
         "path": "/home/ermer/models/Qwen/Qwen3.5-27B/Qwen3.5-27B-IQ4_XS.gguf",
         "ngl": 44,
@@ -64,7 +79,7 @@ MODELS = {
     }
 }
 
-DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen3.5:27b-iq4_xs")
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen3.6:27b-iq4_xs")
 
 import re as _re
 _params_match = _re.search(r'(\d+b)', DEFAULT_MODEL.lower())

@@ -18,13 +18,18 @@ PIDFILE_BACKEND="$LOGDIR/backend.pid"
 PIDFILE_FRONTEND="$LOGDIR/frontend.pid"
 
 # Defaults (override via env or .env)
+# llama-server binary — the freshly built CUDA-13 binary, not the stale
+# /usr/local/bin one left over from the previous CUDA-12 install.
+LLAMA_BIN="${LLAMA_BIN:-/home/ermer/models/llama.cpp/build/bin/llama-server}"
 # Must match an entry in config.py MODELS so backend-triggered swaps line up.
-MODEL_ALIAS="${MODEL_ALIAS:-qwen3.5:27b-iq4_xs}"
+MODEL_ALIAS="${MODEL_ALIAS:-qwen3.6:27b-iq4_xs}"
 SUMMARY_MODEL_ALIAS="${SUMMARY_MODEL_ALIAS:-qwen3.5:4b-q5_k_m}"
-MODEL="${MODEL:-/home/ermer/models/Qwen/Qwen3.5-27B/Qwen3.5-27B-IQ4_XS.gguf}"
+MODEL="${MODEL:-/home/ermer/models/Qwen/Qwen3.6-27B-Abliterated/Qwen3.6-27B-IQ4_XS.gguf}"
 SUMMARY_MODEL="${SUMMARY_MODEL:-/home/ermer/models/Qwen/Qwen3.5-4B/Qwen3.5-4B-Q5_K_M.gguf}"
-SUMMARY_NGL="${SUMMARY_NGL:-0}"
-MODEL_NGL="${MODEL_NGL:-36}"
+SUMMARY_NGL="${SUMMARY_NGL:-auto}"
+MODEL_NGL="${MODEL_NGL:-28}"
+DRAFT_MODEL="${DRAFT_MODEL:-/home/ermer/models/Qwen/Qwen3.5-0.8B/Qwen3.5-0.8B_Q4_K_M.gguf}"
+DRAFT_NGL="${DRAFT_NGL:-0}"
 MODEL_CTX="${MODEL_CTX:-32000}"
 LLAMA_PORT="${LLAMA_PORT:-5173}"
 LLAMA_SUMMARY_PORT="${LLAMA_SUMMARY_PORT:-5175}"
@@ -66,6 +71,26 @@ is_running() {
     [[ -f "$1" ]] && kill -0 "$(cat "$1")" 2>/dev/null
 }
 
+# Block until a llama-server is listening on the given port, or its PID died.
+# Args: port, pidfile, friendly_name, [timeout_sec]
+wait_for_llama() {
+    local port=$1 pidfile=$2 name=$3 timeout=${4:-180}
+    local deadline=$(( SECONDS + timeout ))
+    while (( SECONDS < deadline )); do
+        if ! is_running "$pidfile"; then
+            echo "  💥 $name died during load — see ${LOGDIR}/${name}.log"
+            return 1
+        fi
+        if curl -sf -o /dev/null --max-time 1 "http://127.0.0.1:${port}/health"; then
+            echo "  ✅ $name ready on :$port"
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "  ⏰ $name did not bind :$port within ${timeout}s — see ${LOGDIR}/${name}.log"
+    return 1
+}
+
 # ─── Commands ──────────────────────────────────────────────────────────────
 CMD="${1:-start}"
 case "$CMD" in
@@ -98,32 +123,37 @@ if is_running "$PIDFILE_LLAMA"; then
     echo "⚡ llama-server already running (PID $(cat "$PIDFILE_LLAMA")), skipping"
 else
     echo "🚀 Starting llama-server on :$LLAMA_PORT | Model: $MODEL_ALIAS ($MODEL)"
-    nohup llama-server \
+    nohup "$LLAMA_BIN" \
         --model "$MODEL" \
         --host 0.0.0.0 \
         --port "$LLAMA_PORT" \
         --jinja \
         --reasoning off \
+        --no-webui \
         --flash-attn on \
         --cache-type-k q8_0 \
         --cache-type-v q8_0 \
-        -c "$MODEL_CTX" \
         -ngl "$MODEL_NGL" \
         --parallel 1 \
+        -c "$MODEL_CTX" \
         --alias "$MODEL_ALIAS" \
+        --model-draft "$DRAFT_MODEL" \
+        -ngld "$DRAFT_NGL" \
         > "$LOGDIR/llama.log" 2>&1 &
     echo $! > "$PIDFILE_LLAMA"
+    wait_for_llama "$LLAMA_PORT" "$PIDFILE_LLAMA" "llama" || { echo "❌ Main llama-server failed to come up — aborting before summary/vision contend for VRAM"; exit 1; }
 fi
 
 if is_running "$PIDFILE_LLAMA_SUMMARY"; then
     echo "⚡ llama-summary already running (PID $(cat "$PIDFILE_LLAMA_SUMMARY")), skipping"
 else
     echo "🚀 Starting llama-summary on :$LLAMA_SUMMARY_PORT | Model: $SUMMARY_MODEL_ALIAS ($SUMMARY_MODEL)"
-    nohup llama-server \
+    nohup "$LLAMA_BIN" \
         --model "$SUMMARY_MODEL" \
         --host 127.0.0.1 \
         --port "$LLAMA_SUMMARY_PORT" \
         --jinja \
+        --no-webui \
         --reasoning off \
         -c 4096 \
         -ngl "$SUMMARY_NGL" \
@@ -131,18 +161,22 @@ else
         --alias "$SUMMARY_MODEL_ALIAS" \
         > "$LOGDIR/llama_summary.log" 2>&1 &
     echo $! > "$PIDFILE_LLAMA_SUMMARY"
+    wait_for_llama "$LLAMA_SUMMARY_PORT" "$PIDFILE_LLAMA_SUMMARY" "llama_summary" || echo "  ⚠️  summary did not come up — continuing (chat will work, summaries will be degraded)"
 fi
 
 if is_running "$PIDFILE_LLAMA_VISION"; then
     echo "⚡ llama-vision already running (PID $(cat "$PIDFILE_LLAMA_VISION")), skipping"
 else
     echo "🚀 Starting llama-vision on :$LLAMA_VISION_PORT | Model: llava-v1.5-7b"
-    nohup llama-server \
+    # Vision runs 100% on CPU — hide the GPU so no CUDA context/VRAM is allocated.
+    CUDA_VISIBLE_DEVICES="" nohup "$LLAMA_BIN" \
         --model "$VISION_MODEL" \
         --mmproj "$VISION_MMPROJ" \
         --host 127.0.0.1 \
+        --no-webui \
         --port "$LLAMA_VISION_PORT" \
         -ngl 0 \
+        --no-mmproj-offload \
         --parallel 1 \
         --alias llava-v1.5-7b \
         > "$LOGDIR/llama_vision.log" 2>&1 &
@@ -151,14 +185,14 @@ fi
 
 # ─── 2. MCP Tools Server ──────────────────────────────────────────────────
 echo "🔧 Starting tools-server on :$TOOLS_PORT"
-nohup uv run python "$DIR/tools_server.py" \
+nohup /home/ermer/node_modules/.bin/dotenvx run -- uv run python "$DIR/tools_server.py" \
     > "$LOGDIR/tools.log" 2>&1 &
 echo $! > "$PIDFILE_TOOLS"
 
 # ─── 3. Flask Backend ─────────────────────────────────────────────────────
 if [[ "$CMD" != "shell" ]]; then
     echo "🐍 Starting backend on :$BACKEND_PORT"
-    nohup uv run python "$DIR/main.py" --serve \
+    nohup /home/ermer/node_modules/.bin/dotenvx run -- uv run python "$DIR/main.py" --serve \
         > "$LOGDIR/backend.log" 2>&1 &
     echo $! > "$PIDFILE_BACKEND"
 
