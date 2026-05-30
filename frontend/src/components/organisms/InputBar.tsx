@@ -77,6 +77,7 @@ export function InputBar() {
 
   return (
     <div
+      id="inputBar"
       className={`flex flex-1 flex-shrink w-full items-center gap-2 px-3 py-3 m-2 bg-[var(--glass-bg-solid)] backdrop-blur-xl border rounded-xl z-10 transition-colors ${dragOver ? "border-[var(--accent)] bg-[var(--accent)]/10" : "border-[var(--accent)]"}`}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}

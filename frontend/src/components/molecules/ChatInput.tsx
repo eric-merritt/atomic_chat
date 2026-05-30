@@ -102,7 +102,7 @@ export function ChatInput({ onSend, onCancel, onClear, streaming, disabled, drop
 
   return (
     <>
-      <div className="relative flex-[3] min-w-0">
+      <div id="chatInput" className="relative flex-[3] min-w-0">
         {droppedImage && (
           <div className="absolute -top-14 left-0 flex items-center gap-2 px-2 py-1 rounded-lg bg-[var(--glass-bg-solid)] border border-[var(--accent)] shadow-md">
             <img src={droppedImage.preview} alt={droppedImage.filename} className="w-8 h-8 rounded object-cover" />
@@ -115,6 +115,7 @@ export function ChatInput({ onSend, onCancel, onClear, streaming, disabled, drop
           </div>
         )}
         <Input
+          id="inputText"
           className="w-full"
           placeholder={disabled ? "Select a model to chat..." : droppedImage ? "Ask about the image..." : "Type a message..."}
           value={text}
@@ -130,7 +131,7 @@ export function ChatInput({ onSend, onCancel, onClear, streaming, disabled, drop
       <EmojiPicker onEmojiSelect={insertEmoji} />
       <Button variant="ghost" onClick={onClear}>Clear</Button>
       {streaming && <Button variant="danger" onClick={onCancel}>Stop</Button>}
-      <Button variant="primary" onClick={handleSend} disabled={!canSend}>Send</Button>
+      <Button id="inputSend" variant="primary" onClick={handleSend} disabled={!canSend}>Send</Button>
     </>
   );
 }

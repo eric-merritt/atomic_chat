@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 
-export function EmojiPicker({ onEmojiSelect }: { onEmojiSelect: (emoji: string) => void }) {
+export function EmojiPicker({ onEmojiSelect, id }: { onEmojiSelect: (emoji: string) => void; id?: string }) {
   const [isOpen, setIsOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -36,6 +36,7 @@ export function EmojiPicker({ onEmojiSelect }: { onEmojiSelect: (emoji: string) 
   return (
     <>
       <button
+        id={id}
         onClick={() => setIsOpen(!isOpen)}
         className="px-2 py-1 rounded-lg border border-[var(--glass-border)] text-[var(--text-secondary)] hover:bg-[var(--glass-highlight)] transition-all cursor-pointer flex items-center gap-1"
         title="Add emoji"

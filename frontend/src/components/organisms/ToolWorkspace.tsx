@@ -2,10 +2,11 @@ import { useState, useCallback } from 'react';
 import { useWorkspace } from '../../hooks/useWorkspace';
 import { ToolButton } from '../atoms/ToolButton';
 import { ParamTable } from '../molecules/ParamTable';
+import { AccountingWorkspace } from './AccountingWorkspace';
 import type { WorkflowTool } from '../../api/workflowGroups';
 
 export function ToolWorkspace() {
-  const { groups, activeGroups, selectedTool, selectTool } = useWorkspace();
+  const { groups, activeGroups, selectedTool, selectTool, accountingOpen, openAccounting } = useWorkspace();
   const [interactive, setInteractive] = useState(false);
   const [paramValues, setParamValues] = useState<Record<string, unknown>>({});
 
@@ -22,14 +23,26 @@ export function ToolWorkspace() {
     if (found) { selectedToolData = found; break; }
   }
 
+  if (accountingOpen) return <AccountingWorkspace />;
+
   return (
-    <div className="flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
+    <div id="toolWorkspace" className="flex flex-col h-full overflow-hidden bg-[var(--bg-base)]">
       <div className="flex-1 overflow-y-auto">
         {activeGroupData.map((g) => (
           <div key={g.name} className="border-b border-[var(--glass-border)]">
             {/* Group header */}
             <div className="flex items-center px-4 py-2 bg-[var(--glass-bg-solid)]">
               <span className="flex-1 text-sm font-semibold text-[var(--text)]">{g.name}</span>
+              {g.name === 'Accounting' && (
+                <button
+                  onClick={openAccounting}
+                  className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5
+                    border border-[var(--accent)] text-[var(--accent)] rounded
+                    hover:bg-[var(--accent)] hover:text-[var(--bg-base)] transition-colors cursor-pointer"
+                >
+                  Open Ledger
+                </button>
+              )}
             </div>
 
             {/* Tool buttons */}

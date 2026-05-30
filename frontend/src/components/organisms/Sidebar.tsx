@@ -9,6 +9,7 @@ interface SidebarProps {
 export function Sidebar({ expanded, onToggle }: SidebarProps) {
   return (
     <div
+      id="sidebar"
       className={`flex border border-[var(--accent)] rounded-[14px] m-2 overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.15)] transition-colors ${
         expanded ? 'backdrop-blur-md' : 'bg-transparent hover:backdrop-blur-md cursor-pointer'
       }`}

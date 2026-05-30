@@ -21,6 +21,7 @@ export function ContextRing({ contextPct, summarizing, onSummarize }: ContextRin
 
   return (
     <button
+      id="inputContextRing"
       onClick={onSummarize}
       disabled={summarizing}
       title={contextPct < 1 ? 'Context empty' : `Context: ${Math.round(contextPct)}% — ${fill >= 1 ? 'click to summarize' : `auto-summarizes at ${TRIGGER_PCT}%`}`}
