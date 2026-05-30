@@ -1,1 +1,17 @@
-[]
+[
+  {
+    "url": "https://www.gayporntube.com",
+    "container": "div.box.default",
+    "cards": [
+      {
+        "selector": "div.item.item-col",
+        "fields": {
+          "link": "a[href]",
+          "thumbnail": "img[src]",
+          "preview_video": "img[data-preview]",
+          "title": "p.title"
+        }
+      }
+    ]
+  }
+]

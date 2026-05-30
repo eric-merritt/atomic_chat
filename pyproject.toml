@@ -26,4 +26,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "websockets>=13.0",
     "pytest>=9.0.3",
+    "chromadb>=0.6.0",
+    "sentence-transformers>=3.0.0",
+    "soundfile>=0.13.1",
 ]
