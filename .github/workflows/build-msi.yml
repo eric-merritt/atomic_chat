@@ -66,19 +66,34 @@ jobs:
           Copy-Item dist\atomic-chat-agent.exe msix_layout\
           Copy-Item installer\AppxManifest.xml msix_layout\
 
-      - name: Generate placeholder assets
+      - name: Install Pillow for asset resizing
+        run: pip install pillow
+
+      - name: Stage production assets
         shell: python
         run: |
-          import struct, zlib
-          def make_png(w, h):
-              def chunk(t, d):
-                  c = zlib.crc32(t + d) & 0xffffffff
-                  return struct.pack('>I', len(d)) + t + d + struct.pack('>I', c)
-              ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)
-              raw = b''.join(b'\x00' + bytes([0, 120, 215]) * w for _ in range(h))
-              return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', ihdr) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
-          for name, size in [('Square44x44Logo.png', 44), ('Square150x150Logo.png', 150), ('StoreLogo.png', 50)]:
-              open(f'msix_layout/Assets/{name}', 'wb').write(make_png(size, size))
+          from PIL import Image
+          import pathlib
+          src = pathlib.Path("installer/assets")
+          dst = pathlib.Path("msix_layout/Assets")
+          targets = [
+            ("StoreLogo.png",         "StoreLogo.png",         (300, 300)),
+            ("Square44x44Logo.png",   "Square44x44Logo.png",   ( 44,  44)),
+            ("Square71x71Logo.png",   "Square71x71Logo.png",   ( 71,  71)),
+            ("Square150x150Logo.png", "Square150x150Logo.png", (150, 150)),
+          ]
+          master = src / "StoreLogo.png"
+          for out_name, src_name, (w, h) in targets:
+            source = src / src_name if (src / src_name).exists() else master
+            with Image.open(source) as img:
+              img = img.convert("RGBA")
+              sw, sh = img.size
+              scale = max(w / sw, h / sh)
+              img = img.resize((int(sw * scale), int(sh * scale)), Image.LANCZOS)
+              left = (img.width - w) // 2
+              top  = (img.height - h) // 2
+              img.crop((left, top, left + w, top + h)).save(dst / out_name, "PNG")
+          print("Assets staged.")
 
       - name: Build MSIX
         run: |
