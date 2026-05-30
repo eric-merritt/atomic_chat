@@ -17,6 +17,9 @@ interface WorkspaceContextValue {
   galleryPayload: ApGalleryPayload | null;
   showGallery: (payload: ApGalleryPayload) => void;
   clearGallery: () => void;
+  accountingOpen: boolean;
+  openAccounting: () => void;
+  closeAccounting: () => void;
 }
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
@@ -28,6 +31,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [layout, setLayout] = useState<LayoutState>('default');
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [galleryPayload, setGalleryPayload] = useState<ApGalleryPayload | null>(null);
+  const [accountingOpen, setAccountingOpen] = useState(false);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -87,6 +91,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         layout, setLayout, groups, activeGroups,
         toggleGroup, refreshGroups: loadGroups, selectedTool, selectTool: selectToolCb,
         galleryPayload, showGallery, clearGallery,
+        accountingOpen,
+        openAccounting: () => setAccountingOpen(true),
+        closeAccounting: () => setAccountingOpen(false),
       }}
     >
       {children}

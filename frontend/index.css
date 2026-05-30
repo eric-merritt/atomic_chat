@@ -1,0 +1,61 @@
+
+/* Basic mobile-first responsive adjustments */
+@media (max-width: 768px) {
+  /* Adjust container width for mobile */
+  .container {
+    width: 100%;
+    padding: 0 15px;
+  }
+
+  /* Stack columns vertically */
+  .row {
+    flex-direction: column;
+  }
+
+  /* Make text readable on small screens */
+  body {
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  /* Ensure buttons are touch-friendly */
+  button, .btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 10px 20px;
+  }
+
+  /* Adjust images for mobile */
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+
+  #particleCanvas {
+    display: none;
+  }
+
+  #topBar {
+    flex-direction: column;
+  }
+}
+
+/* Additional mobile optimizations */
+@media (max-width: 480px) {
+  /* Further reduce font sizes for very small screens */
+  body {
+    font-size: 14px;
+  }
+
+  /* Ensure critical content remains accessible */
+  .content {
+    overflow-wrap: break-word;
+  }
+
+
+}
+
+#root {
+  height: 100vh;
+  width: 100vw;
+}

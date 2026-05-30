@@ -29,7 +29,7 @@ Authentication gates all inner providers — unauthenticated users see `LoginPag
 ### Key layers
 
 - **`src/atoms/`** — Pure data types and factory functions (no React). `Message`, `StreamEvent`, `Model`, `Tool`, `Agent`, `User`. These are the shared type definitions, not Jotai atoms.
-- **`src/api/`** — Fetch wrappers for backend endpoints (`/api/chat/stream`, `/api/models`, `/api/tools`, `/api/auth/*`, `/api/conversations`, `/api/preferences`). All use `credentials: 'include'` for session auth.
+- **`src/api/`** — Fetch wrappers for backend endpoints (`/api/chat/stream`, `/api/models`, `/api/tools`, `/api/auth/*`, `/api/conversations`, `/api/preferences`). All use `credentials: 'include'` for session auth — omitting this silently breaks auth with no error.
 - **`src/hooks/`** — React hooks that compose atoms + API calls (`useChat`, `useStream`, `useModels`, `useTools`, `useTheme`, `useAuth`, `useWebSocket`).
 - **`src/providers/`** — Context providers that wrap hooks into React context (`ChatProvider`, `AuthProvider`, `ModelProvider`, `ToolProvider`, `ThemeProvider`, `PreferencesProvider`, `WebSocketProvider`).
 - **`src/components/`** — Atomic design: `atoms/` (Button, Input, Select, Badge, Icon, Modal), `molecules/` (MessageBubble, ModelSelect, ChatInput, ToolChip, ConversationItem), `organisms/` (Sidebar, InputBar, TopBar, MessageList, ConversationList, Lightbox, DashboardNav, ProfilePanel, ApiKeyPanel, ConnectionsPanel).
