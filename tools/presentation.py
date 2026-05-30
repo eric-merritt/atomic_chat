@@ -227,7 +227,8 @@ class ApGallery(BaseTool):
                 'preview_video': item.get('preview_video', '') or '',
                 'page_url': item.get('page_url', '') or '',
             })
-        return tool_result({'type': 'ap_gallery', 'items': validated, 'caption': caption})
+        ctx = {'num': len(validated), 'ref': summary_ref, 'note': 'For use with agent presentation (ap) tools.'} if summary_ref else {'num': len(validated), 'note': 'For use with agent presentation (ap) tools.'}
+        return tool_result({'type': 'ap_gallery', 'items': validated, 'caption': caption, '_ctx': ctx})
 
 
 @register_tool('ap_md')

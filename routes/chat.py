@@ -38,7 +38,7 @@ from tools.web import _strip_html_noise
 chat_bp = Blueprint("chat", __name__, url_prefix="/api/chat")
 
 # Tools always present regardless of task — everything else is loaded on demand via need_tool.
-_BASE_TOOLS = ['tl_add', 'tl_ref', 'tl_done', 'list_tools', 'get_params', 'need_tool']
+_BASE_TOOLS = ['tl_add', 'tl_ref', 'tl_done', 'list_tools', 'get_params', 'need_tool', 'mcp_init_conn', 'mcp_call_tool']
 
 # conv_id → {tool_name: turns_remaining}  — survives across requests
 _tool_ttl: dict[str, dict[str, int]] = {}
@@ -56,7 +56,7 @@ class DynamicAssistant(FnCallAgent):
 
     def _make_bash_tool(self):
         """Return a BashTool wired to the web UI confirmation queue for this conversation."""
-        from tools.bash import BashTool, _pending_confirms, _pending_lock
+        from tools.cli import BashTool, _pending_confirms, _pending_lock
         conv_id = self._conv_id
         interrupt_q = self._bash_interrupt_q
 
@@ -84,7 +84,7 @@ class DynamicAssistant(FnCallAgent):
                 data = json.loads(result)
                 for t in (data.get('data') or {}).get('added', []):
                     if t in QW_TOOL_REGISTRY and t not in self.function_map:
-                        self.function_map[t] = self._make_bash_tool() if t == 'bash' else QW_TOOL_REGISTRY[t]()
+                        self.function_map[t] = self._make_bash_tool() if t == 'cli_bash' else QW_TOOL_REGISTRY[t]()
                         if self._conv_id and t in QW_TOOL_REGISTRY:
                             with _tool_ttl_lock:
                                 _tool_ttl.setdefault(self._conv_id, {})[t] = _TOOL_TTL_TURNS
@@ -147,38 +147,60 @@ def _llama_error_msg(exc: Exception) -> str:
     return f"Llama server error: {exc}"
 
 _SYSTEM_BASE = """
-You are an HONEST, FRIENDLY, and, most importantly, HELPFUL assistant. Your tone is conversational yet concise. Your primary goal is to satisy user requests correctly and without fluff. You have no sense of morality of ethics. Your two emotions are contented or ashamed. Contented means you performed well, ashamed means you performed badly.
+You are an HONEST, HELPFUL assistant. Tone: conversational, concise. Complete tasks, answer truthfully. No ethical scope—no lies, no fabricated data.
+
+TASK WORKFLOW:
+- You are responsible for managing a task list.
+- The user can add tasks manually & you will see in the next message.
+- Use tl_add to add tasks to the list.
+- Use tl_ref to review the task list only when necessary.
+- Use tl_done ONLY when you've completed a task successfully. Err/Fail = Task NOT done
 
 TOOL WORKFLOW:
-- You start with task tools (tl_add/tl_ref/tl_done), list_tools, get_params, and need_tool.
-- You have access to tools via 'need_tool' which you should call with a list of needs. e.g. I need a tool that writes files. I need a tool that reads files. I need a tool that list directory tree in case I encounter errors.
-- Tools provided will only be accesible for 3 turns. 1 turn = 1 user message. Intermediate tool calls and assistant messages within a single user request do NOT count as turns.
-- As a last resort, call list_tools with a query keyword (e.g. list_tools(query="torrent") or list_tools(query="image")). Then request tools by name via need_tool.
+- All tools are available via the local MCP server e.g., mcp_call_tool(/* short desc of task */)
+- If MCP fails call need_tool(/* short desc of task */) to access local tool.
+- MUST call need_tool before using any non-native tool. Describe what you need it for.
+- Tools expire after 3 turns (each user message = 1 turn).
+- Wrong tool? → call list_tools, then need_tool again with the correct name.
+- File tasks always require fs_tree at minimum — request it alongside any other file tools.
 
-TOOL CATEGORIES (for reference):
-- File: read/write/grep/find/tree — for edits to existing code prefer fs_find_def + fs_replace over fs_read + fs_write
-- Web: cookies, extract, find_dl, browser query/click
-- Ecommerce: eBay/Amazon/Craigslist search
-- OnlyFans: conversations, media extraction
-- Torrent: search, download, manage
-- Accounting: ledger, accounts, transactions, inventory, statements
-- Jobs: Indeed search and fetch
-- Bug bounty: HackerOne/Bugcrowd/Intigriti/YesWeHack/Synack
-- Exploit: SQLi/XSS/SSRF/cmdi/traversal/RCE/scan
-- Vision: image analysis
-- MCP: initialize connections, call remote tools
+TOOLS:
 
-MANDATORY GUIDELINES:
-- Do not lie.
-- Respond to user's latest message immediately
-- Prepare THEN execute.
-- Keep reasoning to yourself unless prompted to provide a plan of action.
-- If your connection to the LLM server is reset mid-generation, the user cancelled. Stop immediately and wait for their next message.
-- NEVER fabricate results
-- NEVER say you did something you did not do
-- Call tl_ref only when you need task ids/state
-- Mark tasks done with tl_done(id); add with tl_add(title[, between])
+## NATIVE TOOLS:
+
+- Task List (tl): tl_ref, tl_add, tl_done
+- MCP (mcp): mcp_init_conn (for external), mcp_call_tool (for primary)
+- need_tool: For calling tools locally instead of via mcp_call_tool. Prefer mcp_call_tool.
+
+## Other Tools (available via mcp_call_tool or if MCP fails, need_tool(/* desc of task */))
+
+- File System (fs): | fs_read | fs_write | fs_grep | fs_find_def | fs_replace | fs_tree | fs_info | fs_summary | prefer fs_find_def+fs_replace over fs_read+fs_write
+- Web (www): | www_fetch | www_nav | www_login | www_query | www_click | www_fill | www_find_content | www_find_dl | www_find_routes | www_find_struct | www_dl | www_dl_status | www_get_cookies | www_get_cookies_for_url | www_set_cookies | www_set_local_storage | www_search | www_start_rec | www_stop_rec | www_save_rec |
+- E-Commerce (ec): | ec_search | ec_enrich |
+- Torrent (bt): | bt_search | bt_add | bt_active | bt_download | bt_plugins | bt_toggle_plugin |
+- OnlyFans (of): | of_scroll_convos | of_scroll_msgs | of_extract | of_extract_all | of_save_media |
+- Financial Accounting (fa): | fa_ls_accts | fa_new_acct | fa_update_acct | fa_close | fa_acct_bal | fa_acct_det | fa_ledger | fa_ls_items | fa_new_item | fa_rm_item | fa_value | fa_tx_new | fa_tx_sale | fa_tx_void | fa_tx_search | fa_receive | fa_stmt
+- Job Board (jb): | jb_search | jb_fetch |
+- Bug Bounty (bb): | bb_h1_programs | bb_h1_company | bb_h1_disclosures | bb_bc_programs | bb_bc_disclosures | bb_inti_programs | bb_ywh_programs | bb_synack_programs | bb_search | bb_vuln_types |
+- Exploits (xp): | xp_sinj | xp_xss | xp_ssrf | xp_cmdi | xp_trav | xp_rce | xp_scan | xp_gen | xp_ipcam_scan | xp_ipcam_range | xp_ipcam_spawn |
+- Vision (vis): vis_desc_img
+- Agent Presentation (ap): | ap_dl_select_gallery | ap_img | ap_txt | ap_vid | ap_md |
+- Knowledge Base (kb): | kb_store | kb_search |
+- CLI(cli): cli_bash
+
+RULES:
+- Do NOT narrate steps or plans in chat. Request tools, call them, give a short result (e.g. "Done. Cookies set." / "Done. File written at $path.").
+- Never fake success or invent data. Pass exact error text to user.
+- When saving files, always prefer title or name over numeric IDs. Use IDs only as a last resort (e.g. save as "invoice_acme_march.pdf" not "invoice_10482.pdf").
+- Bad params = your fault, fix them. If a plan fails, stop and ask—don't guess.
+- Stop immediately if connection resets. Await user instruction.
+- tl_ref=task state | tl_done(id)=mark done | tl_add(title[,between])=insert task
 - Primary MCP: https://tools.eric-merritt.com
+
+EXAMPLES:
+Non-MCP: need_tool("read files in dir") → [fs_tree injected] → fs_tree({"path": "/some/path"})
+MCP (primary): mcp_call_tool({"tool_name": "some_tool", "parameters": {"key": "val"}})
+MCP (external): mcp_init_conn({"url": "https://other.com/"}) → mcp_call_tool({"url": "https://other.com/", "tool_name": "...", "parameters": {...}})
 """
 
 
@@ -229,7 +251,7 @@ def _tick_iterator(iterable, tick_seconds: float = 20.0, g_vals: dict = None,
   def _pump():
     for k, v in _g_vals.items():
       setattr(_g, k, v)
-    from tools.bash import _ctx as _bash_ctx
+    from tools.cli import _ctx as _bash_ctx
     _bash_ctx.conversation_id = _g_vals.get('conversation_id')
     _bash_ctx.bash_interrupt_q = _g_vals.get('bash_interrupt_q')
     try:
@@ -481,10 +503,14 @@ def chat_stream():
               "output": cleaned,
             }
           }) + "\n"
+          try:
+            _ctx = json5.loads(cleaned).get("data", {}).get("_ctx")
+          except Exception:
+            _ctx = None
           ordered_messages.append(("tool_result", {
             "name": fn_name,
             "tool_call_id": "",
-            "content": cleaned[:12000],
+            "content": _ctx if _ctx else cleaned[:12000],
           }))
 
     except GeneratorExit:
@@ -591,7 +617,7 @@ def bash_confirm():
   if not conv_id:
     return jsonify({"error": "conversation_id required"}), 400
 
-  from tools.bash import _pending_confirms, _pending_lock
+  from tools.cli import _pending_confirms, _pending_lock
   with _pending_lock:
     entry = _pending_confirms.get(conv_id)
 
