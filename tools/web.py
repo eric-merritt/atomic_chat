@@ -173,38 +173,55 @@ def _load_page(ref: str) -> dict | None:
 #   - different consumer (ap_gallery, not other web tools)
 #   - lets us evolve TTL/eviction independently if needed
 
-_summary_store: dict[str, dict] = {}
-_summary_lock = Lock()
-_SUMMARY_TTL = 3600  # 1 hour — match _STORE_TTL; summary is useless once its page is evicted
+_SUMMARY_TTL = 3600 * 24 * 7  # 7 days
+
+
+def _get_user_id() -> str | None:
+    try:
+        from flask_login import current_user
+        return current_user.id if current_user.is_authenticated else None
+    except RuntimeError:
+        return None
 
 
 def _store_summary(summary: dict) -> str:
-    """TODO: stash `summary` dict server-side, return a short ref ID.
+    from datetime import datetime, timezone
+    from auth.db import SessionLocal
+    import sqlalchemy as sa
 
-    Mirror the _store_page pattern:
-      - generate an 8-char uuid hex ref
-      - evict entries older than _SUMMARY_TTL
-      - save {'summary': summary, 'ts': <now>} under the ref
-      - return the ref string
-    """
     ref = uuid.uuid4().hex[:8]
-    now = time.time()
-    with _summary_lock:
-        expired = [k for k, v in _summary_store.items() if now - v['ts'] > _SUMMARY_TTL]
-        for k in expired:
-            del _summary_store[k]
-        _summary_store[ref] = { 'summary': summary, 'ts': now}
+    user_id = _get_user_id()
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        db.execute(
+            sa.text("DELETE FROM summary_refs WHERE created_at < NOW() - INTERVAL ':ttl seconds'"),
+            {"ttl": _SUMMARY_TTL},
+        )
+        db.execute(
+            sa.text("INSERT INTO summary_refs (ref, user_id, data, created_at) VALUES (:ref, :uid, :data, :ts)"),
+            {"ref": ref, "uid": user_id, "data": json.dumps(summary), "ts": now},
+        )
+        db.commit()
+    finally:
+        db.close()
     return ref
 
 
-def _load_summary(ref: str) -> dict | None:
-    """TODO: return the stored summary dict for `ref`, or None if missing/expired.
+def _load_summary(ref: str, user_id: str | None = None) -> dict | None:
+    from auth.db import SessionLocal
+    import sqlalchemy as sa
 
-    Mirror the _load_page pattern. Returning None is fine on miss — the caller
-    (ap_gallery) will surface a user-facing error.
-    """
-    with _summary_lock:
-        return _summary_store.get(ref)
+    uid = user_id or _get_user_id()
+    db = SessionLocal()
+    try:
+        row = db.execute(
+            sa.text("SELECT data FROM summary_refs WHERE ref = :ref AND user_id = :uid"),
+            {"ref": ref, "uid": uid},
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+    finally:
+        db.close()
 
 _known_sites_cache: dict = {"mtime": -1.0, "data": []}
 _known_sites_cache_lock = Lock()
@@ -948,7 +965,13 @@ class ExtractUrlTool(BaseTool):
                     'items_count': len(items),
                     'summary_ref': summary_ref,
                 })
-            return tool_result(data={'url': url, 'page_ref': page_ref, **summary})
+            soup_p = beautifulsoup.BeautifulSoup(content, 'html.parser')
+            container = _find_page_nav(soup_p, _PAGINATION_CONTAINERS)
+            pages = _extract_pages(container) if container else {}
+            return tool_result(data={
+                'url': url, 'page_ref': page_ref, **summary,
+                **({"pagination": pages} if pages else {}),
+            })
 
         # Extract with selector
         try:
@@ -958,7 +981,12 @@ class ExtractUrlTool(BaseTool):
             return tool_result(error=f"CSS selector failed: {e}")
 
         if not elements:
-            return tool_result(data={'url': url, 'selector': selector, 'count': 0, 'results': []})
+            container = _find_page_nav(soup, _PAGINATION_CONTAINERS)
+            pages = _extract_pages(container) if container else {}
+            return tool_result(data={
+                'url': url, 'selector': selector, 'count': 0, 'results': [],
+                **({"pagination": pages} if pages else {}),
+            })
 
         if extract == 'text':
             results = [el.get_text(separator=' ', strip=True) for el in elements]
@@ -971,6 +999,102 @@ class ExtractUrlTool(BaseTool):
             return tool_result(error=f"Unknown extract mode '{extract}'. Use text, html, or attr:<name>.")
 
         return tool_result(data={'url': url, 'selector': selector, 'count': len(results), 'results': results})
+
+
+_MAIN_CONTENT_SELECTORS = ['article', 'main', '[role="main"]', '#content', '#main', '.content', '.main']
+
+def _extract_main(soup):
+  for sel in _MAIN_CONTENT_SELECTORS:
+    node = soup.select_one(sel)
+    if node:
+      return node
+  return soup.body or soup
+
+def _extract_links(node, base_url):
+  links = []
+  for a in node.find_all('a', href=True):
+    href = urllib.parse.urljoin(base_url, a['href'])
+    text = a.get_text(separator=' ', strip=True)
+    if href.startswith('http') and text:
+      links.append({'text': text, 'href': href})
+  return links
+
+
+@register_tool('www_fetch')
+class FetchPageTool(BaseTool):
+  description = (
+    'Fetch any URL and return structured page content without needing selectors. '
+    'Returns title, description, headings, main text, links, and pagination if found. '
+    'Use for unknown or new sites. Set js=true for JavaScript-rendered pages.'
+  )
+  parameters = {
+    'type': 'object',
+    'properties': {
+      'url': {'type': 'string', 'description': 'Full URL to fetch.'},
+      'js': {'type': 'boolean', 'description': 'Use headless Firefox for JS-rendered pages. Default: false.'},
+      'wait_seconds': {'type': 'integer', 'description': 'Seconds to wait after JS load. Default: 3.'},
+      'max_text': {'type': 'integer', 'description': 'Max characters of main text to return. Default: 2000.'},
+      'max_links': {'type': 'integer', 'description': 'Max links to return. Default: 30.'},
+    },
+    'required': ['url'],
+  }
+
+  @retry()
+  def call(self, params: str, **kwargs) -> dict:
+    p = json5.loads(params)
+    url = p.get('url', '')
+    js = p.get('js', False)
+    wait_seconds = max(1, min(30, p.get('wait_seconds', 3)))
+    max_text = p.get('max_text', 2000)
+    max_links = p.get('max_links', 30)
+
+    err = _validate_url(url)
+    if err:
+      return tool_result(error=err)
+
+    try:
+      if js:
+        driver = _get_or_create_browser()
+        driver.get(url)
+        time.sleep(wait_seconds)
+        raw_html = driver.page_source
+      else:
+        r = _web_session.get(url, timeout=15)
+        r.raise_for_status()
+        raw_html = r.text
+    except Exception as e:
+      return tool_result(error=f"Failed to fetch {url}: {e}")
+
+    content = _strip_html_noise(raw_html)
+    soup = beautifulsoup.BeautifulSoup(content, 'html.parser')
+
+    title = soup.title.string.strip() if soup.title and soup.title.string else ''
+    description = ''
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    if meta_desc:
+      description = (meta_desc.get('content') or '').strip()
+
+    headings = [
+      h.get_text(separator=' ', strip=True)
+      for h in soup.find_all(['h1', 'h2', 'h3'])
+    ][:10]
+
+    main = _extract_main(soup)
+    text = main.get_text(separator=' ', strip=True)[:max_text]
+    links = _extract_links(main, url)[:max_links]
+
+    container = _find_page_nav(soup, _PAGINATION_CONTAINERS)
+    pages = _extract_pages(container) if container else {}
+
+    return tool_result(data={
+      'url': url,
+      'title': title,
+      **({"description": description} if description else {}),
+      **({"headings": headings} if headings else {}),
+      'text': text,
+      'links': links,
+      **({"pagination": pages} if pages else {}),
+    })
 
 
 _MEDIA_URL_RE = re.compile(
@@ -1655,3 +1779,27 @@ class FindWebStructureTool(BaseTool):
             'card_candidates': top,
             **({"saved_to": str(_KNOWN_SITES_PATH)} if saved else {}),
         })
+
+
+_PAGINATION_CONTAINERS = ["pagination", "pagination-container", "pagination-wrapper"]
+
+def _find_page_nav(soup, container_classes):
+  for cls in container_classes:
+    container = soup.find('div', class_=cls)
+    if container:
+      return container
+  return None
+
+def _extract_pages(pagination_container):
+  pages = {}
+  for link in pagination_container.find_all('a', class_='page-link'):
+    href = link.get('href')
+    if href and 'javascript' not in href:
+      pages[link.text.strip()] = href
+  return pages
+
+def get_page_links(url):
+  response = requests.get(url)
+  soup = beautifulsoup.BeautifulSoup(response.content, 'html.parser')
+  container = _find_page_nav(soup, _PAGINATION_CONTAINERS)
+  return _extract_pages(container) if container else {}
