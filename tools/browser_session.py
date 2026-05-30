@@ -18,7 +18,8 @@ class BrowserNavTool(BaseTool):
     'Navigate the headless browser session to a URL. '
     'Returns {url, title} after any redirects. '
     'Auto-handles Cloudflare challenges. '
-    'Does not extract page content — call www_find_content after.'
+    'Use for multi-step interactions that share browser state (e.g. www_nav → www_fill → www_click). '
+    'Not needed before www_fetch or www_find_content — those manage their own browser session.'
   )
   parameters = {
     'type': 'object',

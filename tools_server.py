@@ -10,8 +10,6 @@ import inspect
 import json
 import logging
 import typing
-from dotenv import load_dotenv
-load_dotenv(override=True)
 
 from mcp.server.fastmcp import FastMCP
 
@@ -43,7 +41,7 @@ _TYPE_MAP = {
 # qwen-agent built-in tool names to exclude from MCP registration
 _BUILTIN_TOOLS = {
   'code_interpreter', 'web_extractor', 'similarity_search',
-  'python', 'retrieval', 'doc_parser', 'storage',
+  'python', 'retrieval', 'doc_parser', 'storage', 'amap_weather',
 }
 
 

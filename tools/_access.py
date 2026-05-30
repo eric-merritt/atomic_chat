@@ -20,8 +20,8 @@ def check_fs_access(tool_name: str, params_str: str):
     if not authenticated:
         return None  # auth_guard already blocks unauthenticated requests
 
-    if current_user.role == "admin" and getattr(g, "auth_via_api_key", False):
-        return None  # full server access
+    if current_user.role == "admin":
+        return None  # admin always has direct server-side access
 
     # Proxy to client agent bridge
     from atomic_client import bridge as _bridge

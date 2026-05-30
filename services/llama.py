@@ -14,7 +14,7 @@ import time
 import requests
 
 from config import (
-  LLAMA_ARG_CTX_SIZE, LLAMA_HOST, LLAMA_PORT, LLAMA_SERVER_URL, MODELS,
+  LLAMA_ARG_CTX_SIZE, LLAMA_BIN, LLAMA_HOST, LLAMA_PORT, LLAMA_SERVER_URL, MODELS,
 )
 
 LLAMA_PID_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs", "llama.pid")
@@ -101,7 +101,7 @@ def spawn_llama_server(model_id: str, timeout_s: int = 120) -> bool:
   os.makedirs(os.path.dirname(LLAMA_LOG_FILE), exist_ok=True)
   log_f = open(LLAMA_LOG_FILE, "ab")
   cmd = [
-    "llama-server",
+    LLAMA_BIN,
     "--model", cfg["path"],
     "--host", LLAMA_HOST,
     "--port", str(LLAMA_PORT),

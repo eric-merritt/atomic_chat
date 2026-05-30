@@ -1,6 +1,4 @@
 import os as _os
-from dotenv import load_dotenv
-load_dotenv(override=True)
 
 from services.logging_setup import configure_logging
 configure_logging()

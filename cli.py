@@ -7,14 +7,11 @@ import time
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 from prompt_toolkit import PromptSession
 from prompt_toolkit.patch_stdout import patch_stdout
 from rich.console import Console
 from rich.live import Live
 from rich.spinner import Spinner
-
-load_dotenv(override=True)
 
 # API host — backend (Flask). In prod both vars point to the same origin.
 ATOMIC_HOST = os.environ.get("ATOMIC_HOST", "http://localhost:5000")

@@ -153,8 +153,7 @@ def ensure_session() -> str:
 
     sid = _browser_auth()
     if not sid:
-        print("[error] Authentication failed.", file=sys.stderr)
-        sys.exit(1)
+        raise RuntimeError("Authentication failed. Check your network connection and try again.")
 
     _save_creds({"session_id": sid})
     return sid
@@ -418,7 +417,7 @@ TOOLS: dict[str, callable] = {
     "fs_find_def": _tool_fs_find_def,
     "fs_write":    _tool_fs_write,
     "fs_replace":  _tool_fs_replace,
-    "bash":        _tool_bash,
+    "cli_bash":    _tool_bash,
 }
 
 
@@ -435,6 +434,10 @@ def execute_tool(name: str, params: dict) -> dict:
 
 # ── Bridge daemon ─────────────────────────────────────────────────────────────
 
+class _ReauthNeeded(Exception):
+    pass
+
+
 def run_bridge(session_id: str, server_url: str, reconnect: bool = True):
     headers = {"Cookie": f"session_id={session_id}"}
 
@@ -443,9 +446,8 @@ def run_bridge(session_id: str, server_url: str, reconnect: bool = True):
         try:
             with ws_connect(server_url, additional_headers=headers) as ws:
                 if not do_challenge_response(ws):
-                    print("[bridge] Authentication failed — re-authenticating...")
                     _save_creds({})
-                    return
+                    raise _ReauthNeeded()
 
                 print("[bridge] Connected and authenticated. Ready.")
 
@@ -482,6 +484,9 @@ def run_bridge(session_id: str, server_url: str, reconnect: bool = True):
         except KeyboardInterrupt:
             print("\n[bridge] Stopped.")
             return
+        except _ReauthNeeded:
+            print("[bridge] Session rejected — re-authenticating...")
+            return  # signal caller to call ensure_session() again
         except Exception as e:
             print(f"[bridge] Disconnected: {e}")
 
@@ -500,8 +505,15 @@ def main():
     parser.add_argument("--no-reconnect", action="store_true", help="Exit instead of reconnecting on disconnect")
     args = parser.parse_args()
 
-    session_id = ensure_session()
-    run_bridge(session_id, server_url=args.server, reconnect=not args.no_reconnect)
+    while True:
+        session_id = ensure_session()
+        run_bridge(session_id, server_url=args.server, reconnect=not args.no_reconnect)
+        # run_bridge returns only on KeyboardInterrupt (handled inside) or _ReauthNeeded —
+        # in the latter case, loop back and re-authenticate.
+        if not args.no_reconnect:
+            print("[agent] Re-authenticating...")
+            continue
+        break
 
 
 if __name__ == "__main__":
