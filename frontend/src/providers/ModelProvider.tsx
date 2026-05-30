@@ -9,6 +9,7 @@ interface ModelContextValue {
   saveDir: string;
   selectModel: (model: Model) => Promise<void>;
   loading: boolean;
+  swapping: boolean;
   error: string | null;
 }
 
@@ -19,6 +20,7 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   const [current, setCurrent] = useState<Model | null>(null);
   const [saveDir, setSaveDir] = useState<string>('~/Downloads');
   const [loading, setLoading] = useState(true);
+  const [swapping, setSwapping] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -40,12 +42,17 @@ export function ModelProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectModel = useCallback(async (model: Model) => {
-    await apiSelectModel(model);
-    setCurrent(model);
+    setSwapping(true);
+    try {
+      await apiSelectModel(model);
+      setCurrent(model);
+    } finally {
+      setSwapping(false);
+    }
   }, []);
 
   return (
-    <ModelContext.Provider value={{ models, current, saveDir, selectModel, loading, error }}>
+    <ModelContext.Provider value={{ models, current, saveDir, selectModel, loading, swapping, error }}>
       {children}
     </ModelContext.Provider>
   );
