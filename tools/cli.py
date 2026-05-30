@@ -18,7 +18,7 @@ _pending_lock = threading.Lock()
 _ctx = threading.local()
 
 
-@register_tool('bash')
+@register_tool('cli_bash')
 class BashTool(BaseTool):
     description = (
         'Execute a shell command. You must provide a plain-English description '

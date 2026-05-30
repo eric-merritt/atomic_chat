@@ -1,9 +1,18 @@
-"""Browser recorder tools: www_start_rec, www_stop_rec, www_save_rec."""
+"""Browser recorder tools: www_start_rec, www_stop_rec, www_save_rec.
+
+Events are streamed continuously from the browser to a per-session NDJSON file
+so the recording survives browser close, crash, and same-origin page navigation.
+The JS-side buffer lives in localStorage (persists across navigation); a Python
+drain thread pulls from it every _REC_DRAIN_INTERVAL seconds and re-injects the
+recorder script if the page changed.
+"""
 
 import json
+import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -14,7 +23,13 @@ from qwen_agent.tools.base import BaseTool, register_tool
 from tools._output import tool_result
 from tools.web import _validate_url
 
+log = logging.getLogger(__name__)
+
+_REC_DRAIN_INTERVAL = 0.25
+_REC_DIR = Path.home() / '.agent_recordings'
+
 _rec_driver = None
+_rec_session: dict | None = None  # {'id', 'path', 'thread', 'stop_event'}
 
 _KNOWN_LOGINS_PATH = Path.home() / '.agent_known_logins.json'
 _USER_STRUCTURES_PATH = Path.home() / '.agent_known_structures.json'
@@ -23,9 +38,21 @@ _REC_JS = """
 (function() {
   if (window.__rec_initialized) return;
   window.__rec_initialized = true;
-  window.__rec_events = window.__rec_events || [];
   window.__rec_done = false;
   window.__rec_pending_label = '';
+
+  function persist(evt) {
+    try {
+      var stored = JSON.parse(localStorage.getItem('__rec_buf') || '[]');
+      stored.push(evt);
+      localStorage.setItem('__rec_buf', JSON.stringify(stored));
+      var total = parseInt(localStorage.getItem('__rec_total') || '0', 10) + 1;
+      localStorage.setItem('__rec_total', String(total));
+      return total;
+    } catch (_) {
+      return null;
+    }
+  }
 
   function stableSelector(el) {
     if (el.id) return '#' + el.id;
@@ -104,8 +131,8 @@ _REC_JS = """
       ancestry: ancestry(target)
     };
     window.__rec_pending_label = '';
-    window.__rec_events.push(evt);
-    counter.textContent = window.__rec_events.length + ' events captured';
+    var total = persist(evt);
+    if (total !== null) counter.textContent = total + ' events captured';
   }
 
   document.addEventListener('click', capture, true);
@@ -113,7 +140,7 @@ _REC_JS = """
 
   var widget = document.createElement('div');
   widget.style.cssText = [
-    'position:fixed', 'top:12px', 'right:12px', 'z-index:2147483647',
+    'position:fixed', 'top:12px', 'left:12px', 'z-index:2147483647',
     'width:250px', 'background:#111', 'color:#fff', 'border-radius:20px',
     'padding:10px 14px', 'font:13px/1.4 monospace', 'box-shadow:0 2px 12px rgba(0,0,0,.5)',
     'display:flex', 'flex-direction:column', 'gap:6px'
@@ -133,7 +160,7 @@ _REC_JS = """
   stopBtn.addEventListener('click', function() { window.__rec_done = true; });
 
   var counter = document.createElement('span');
-  counter.textContent = '0 events captured';
+  counter.textContent = (localStorage.getItem('__rec_total') || '0') + ' events captured';
 
   widget.appendChild(labelInput);
   widget.appendChild(stopBtn);
@@ -144,6 +171,70 @@ _REC_JS = """
 
 _SIGNUP_FORM_ACTIONS = re.compile(r'/signup|/register|/create-account', re.I)
 _SIGNUP_BUTTON_TEXT = re.compile(r'^(sign up|register|create account|get started)$', re.I)
+
+
+_DRAIN_JS = """
+var stored = [];
+try {
+  stored = JSON.parse(localStorage.getItem('__rec_buf') || '[]');
+  localStorage.setItem('__rec_buf', '[]');
+} catch (_) {}
+return stored;
+"""
+
+
+def _append_events(path: Path, events: list) -> None:
+  """Append events to the session NDJSON file. Swallows OSError so the drain
+  thread doesn't die if disk write fails momentarily."""
+  if not events:
+    return
+  try:
+    with open(path, 'a', encoding='utf-8') as fh:
+      for evt in events:
+        fh.write(json.dumps(evt) + '\n')
+  except OSError as exc:
+    log.error('recorder: failed to write events to %s: %s', path, exc)
+
+
+def _read_session_events(path: Path) -> list:
+  """Read all events from the session NDJSON file."""
+  events: list = []
+  if not path.exists():
+    return events
+  try:
+    with open(path, 'r', encoding='utf-8') as fh:
+      for line in fh:
+        line = line.strip()
+        if not line:
+          continue
+        try:
+          events.append(json.loads(line))
+        except json.JSONDecodeError:
+          continue
+  except OSError as exc:
+    log.error('recorder: failed to read session file %s: %s', path, exc)
+  return events
+
+
+def _rec_drain_loop(driver, path: Path, stop_event: threading.Event) -> None:
+  """Drain localStorage events to disk every _REC_DRAIN_INTERVAL seconds, and
+  re-inject the recorder JS when page navigation has wiped window state."""
+  from selenium.common.exceptions import WebDriverException
+  while not stop_event.is_set():
+    try:
+      ready = driver.execute_script('return !!window.__rec_initialized;')
+      if not ready:
+        driver.execute_script(_REC_JS)
+      events = driver.execute_script(_DRAIN_JS) or []
+    except WebDriverException as exc:
+      log.warning('recorder: driver lost during drain (%s); stopping', exc)
+      stop_event.set()
+      break
+    except Exception:
+      log.exception('recorder: unexpected drain error')
+      events = []
+    _append_events(path, events)
+    stop_event.wait(_REC_DRAIN_INTERVAL)
 
 
 def _create_rec_driver(url: str):
@@ -184,7 +275,7 @@ class StartRecorderTool(BaseTool):
   }
 
   def call(self, params: str, **kwargs) -> dict:
-    global _rec_driver
+    global _rec_driver, _rec_session
     p = json5.loads(params)
     url = p.get('url', '')
 
@@ -195,50 +286,90 @@ class StartRecorderTool(BaseTool):
     if _rec_driver is not None:
       return tool_result(error="A recording session is already active. Call www_stop_rec first.")
 
+    session_id = uuid.uuid4().hex[:8]
+    _REC_DIR.mkdir(parents=True, exist_ok=True)
+    session_path = _REC_DIR / f'{session_id}.ndjson'
+
     try:
       driver = _create_rec_driver(url)
       driver.get(url)
       time.sleep(2)
+      # clear any stale buffer from a previous session on this origin
+      driver.execute_script(
+        "try { localStorage.removeItem('__rec_buf'); localStorage.removeItem('__rec_total'); } catch (_) {}"
+      )
       driver.execute_script(_REC_JS)
-      _rec_driver = driver
     except Exception as exc:
-      _rec_driver = None
       return tool_result(error=f"Failed to start recording session: {exc}")
 
-    session_id = uuid.uuid4().hex[:8]
-    return tool_result(data={'session_id': session_id, 'status': 'recording', 'url': url})
+    stop_event = threading.Event()
+    thread = threading.Thread(
+      target=_rec_drain_loop,
+      args=(driver, session_path, stop_event),
+      daemon=True,
+      name=f'rec-drain-{session_id}',
+    )
+    _rec_driver = driver
+    _rec_session = {
+      'id': session_id,
+      'path': session_path,
+      'thread': thread,
+      'stop_event': stop_event,
+    }
+    thread.start()
+    return tool_result(data={
+      'session_id': session_id,
+      'status': 'recording',
+      'url': url,
+      'session_path': str(session_path),
+    })
 
 
 @register_tool('www_stop_rec')
 class StopRecorderTool(BaseTool):
   description = (
     'End the current recording session and return captured events. '
+    'Events have been streamed continuously to disk during recording, so the '
+    'returned list is the full session even if the browser was closed unexpectedly. '
     'Idempotent — safe to call when no session is active. '
     'Call www_save_rec afterward to persist the recorded flow.'
   )
   parameters = {'type': 'object', 'properties': {}, 'required': []}
 
   def call(self, params: str, **kwargs) -> dict:
-    global _rec_driver
-    if _rec_driver is None:
+    global _rec_driver, _rec_session
+    if _rec_driver is None or _rec_session is None:
       return tool_result(data={'events': [], 'status': 'no session'})
 
     driver = _rec_driver
-    events = []
+    session = _rec_session
+
+    session['stop_event'].set()
+    session['thread'].join(timeout=5)
+
     final_url = ''
     try:
-      events = driver.execute_script('return window.__rec_events || [];') or []
+      final_events = driver.execute_script(_DRAIN_JS) or []
+      _append_events(session['path'], final_events)
       final_url = driver.current_url
     except Exception:
-      pass  # driver window may have been closed by user
+      pass  # driver may already be gone — disk already has the bulk
 
     try:
       driver.quit()
     except Exception:
       pass
 
+    events = _read_session_events(session['path'])
+
     _rec_driver = None
-    return tool_result(data={'events': events, 'final_url': final_url})
+    _rec_session = None
+    return tool_result(data={
+      'events': events,
+      'final_url': final_url,
+      'session_path': str(session['path']),
+      'event_count': len(events),
+    })
 
 
 @register_tool('www_save_rec')
