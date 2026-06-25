@@ -17,20 +17,18 @@ PIDFILE_TOOLS="$LOGDIR/tools.pid"
 PIDFILE_BACKEND="$LOGDIR/backend.pid"
 PIDFILE_FRONTEND="$LOGDIR/frontend.pid"
 
-# Defaults (override via env or .env)
-# llama-server binary — the freshly built CUDA-13 binary, not the stale
-# /usr/local/bin one left over from the previous CUDA-12 install.
-LLAMA_BIN="${LLAMA_BIN:-/home/ermer/models/llama.cpp/build/bin/llama-server}"
+# Defaults (override via env or .env)# llama-server binary — the freshly built CUDA-13 binary, not the stale
+LLAMA_BIN="${LLAMA_BIN:-/usr/local/bin/llama-server}"
 # Must match an entry in config.py MODELS so backend-triggered swaps line up.
 MODEL_ALIAS="${MODEL_ALIAS:-qwen3.6:27b-iq4_xs}"
 SUMMARY_MODEL_ALIAS="${SUMMARY_MODEL_ALIAS:-qwen3.5:4b-q5_k_m}"
 MODEL="${MODEL:-/home/ermer/models/Qwen/Qwen3.6-27B-Abliterated/Qwen3.6-27B-IQ4_XS.gguf}"
 SUMMARY_MODEL="${SUMMARY_MODEL:-/home/ermer/models/Qwen/Qwen3.5-4B/Qwen3.5-4B-Q5_K_M.gguf}"
 SUMMARY_NGL="${SUMMARY_NGL:-auto}"
-MODEL_NGL="${MODEL_NGL:-28}"
+MODEL_NGL="${MODEL_NGL:-36}"
 DRAFT_MODEL="${DRAFT_MODEL:-/home/ermer/models/Qwen/Qwen3.5-0.8B/Qwen3.5-0.8B_Q4_K_M.gguf}"
 DRAFT_NGL="${DRAFT_NGL:-0}"
-MODEL_CTX="${MODEL_CTX:-32000}"
+MODEL_CTX="${MODEL_CTX:-16000}"
 LLAMA_PORT="${LLAMA_PORT:-5173}"
 LLAMA_SUMMARY_PORT="${LLAMA_SUMMARY_PORT:-5175}"
 LLAMA_VISION_PORT="${LLAMA_VISION_PORT:-14530}"
@@ -67,6 +65,13 @@ stop_llama() {
     stop_pid "$PIDFILE_LLAMA_VISION"  "llama-vision"
 }
 
+stop_neo4j() {
+    if docker ps --filter name=neo4j --format '{{.Names}}' 2>/dev/null | grep -q neo4j; then
+        docker stop neo4j >/dev/null 2>&1
+        echo "  ⛔ Stopped Neo4j"
+    fi
+}
+
 is_running() {
     [[ -f "$1" ]] && kill -0 "$(cat "$1")" 2>/dev/null
 }
@@ -94,10 +99,10 @@ wait_for_llama() {
 # ─── Commands ──────────────────────────────────────────────────────────────
 CMD="${1:-start}"
 case "$CMD" in
-    stop)       stop_llama; stop_app; exit 0 ;;
+    stop)       stop_llama; stop_app; stop_neo4j; exit 0 ;;
     stop-app)   stop_app;   exit 0 ;;
     stop-llama) stop_llama; exit 0 ;;
-    restart)    stop_llama; stop_app; sleep 1 ;;
+    restart)    stop_llama; stop_app; stop_neo4j; sleep 1 ;;
     shell)      ;;
     status)
         echo "=== Service Status ==="
@@ -118,13 +123,46 @@ else
     stop_app
 fi
 
+# ─── 0. Neo4j ─────────────────────────────────────────────────────────────
+if ! docker ps --filter name=neo4j --format '{{.Names}}' 2>/dev/null | grep -q neo4j; then
+    echo "🗄️  Starting Neo4j..."
+    docker start neo4j 2>/dev/null || {
+        echo "   Neo4j container not found, creating..."
+        docker run -d \
+            --name neo4j \
+            -p 7687:7687 \
+            -p 7474:7474 \
+            -e NEO4J_AUTH=neo4j/atomic_chat_dev \
+            -e NEO4J_PLUGINS='["apoc"]' \
+            -e NEO4J_apoc_export_file_enabled=true \
+            -e NEO4J_apoc_import_file_enabled=true \
+            -e NEO4J_apoc_import_file_use__neo4j__config=true \
+            -v "$DIR/neo4j/data:/data" \
+            -v "$DIR/neo4j/logs:/logs" \
+            -v "$DIR/neo4j/plugins:/plugins" \
+            -v "$DIR/neo4j/import:/import" \
+            neo4j:5.26
+    }
+    # Wait for Neo4j bolt port
+    NEO4J_DEADLINE=$(( SECONDS + 30 ))
+    while (( SECONDS < NEO4J_DEADLINE )); do
+        if docker exec neo4j cypher-shell -u neo4j -p atomic_chat_dev "RETURN 1" >/dev/null 2>&1; then
+            echo "  ✅ Neo4j ready"
+            break
+        fi
+        sleep 1
+    done
+else
+    echo "⚡ Neo4j already running, skipping"
+fi
+
 # ─── 1. llama.cpp Server ──────────────────────────────────────────────────
 if is_running "$PIDFILE_LLAMA"; then
     echo "⚡ llama-server already running (PID $(cat "$PIDFILE_LLAMA")), skipping"
 else
     echo "🚀 Starting llama-server on :$LLAMA_PORT | Model: $MODEL_ALIAS ($MODEL)"
     nohup "$LLAMA_BIN" \
-        --model "$MODEL" \
+        --model "$QWEN_LATEST" \
         --host 0.0.0.0 \
         --port "$LLAMA_PORT" \
         --jinja \

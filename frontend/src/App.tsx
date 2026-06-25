@@ -7,6 +7,7 @@ import { ToolProvider } from './providers/ToolProvider';
 import { ChatProvider } from './providers/ChatProvider';
 import { WebSocketProvider } from './providers/WebSocketProvider';
 import { PreferencesProvider } from './providers/PreferencesProvider';
+import { CookieProvider } from './providers/CookieProvider';
 import { WorkspaceProvider } from './providers/WorkspaceProvider';
 import { ChatPage } from './pages/ChatPage';
 import { LoginPage } from './pages/LoginPage';
@@ -36,20 +37,23 @@ function AuthGate() {
 
   return (
     <PreferencesProvider>
-      <ModelProvider>
-        <ToolProvider>
-          <ChatProvider>
-            <WorkspaceProvider>
-              <WebSocketProvider enabled={false}>
-                <Routes>
-                  <Route path="/" element={<ChatPage />} />
-                  <Route path="/dashboard" element={<DashboardPage />} />
-                </Routes>
-              </WebSocketProvider>
-            </WorkspaceProvider>
-          </ChatProvider>
-        </ToolProvider>
-      </ModelProvider>
+      <CookieProvider>
+        <ModelProvider>
+          <ToolProvider>
+            <ChatProvider>
+              <WorkspaceProvider>
+                <WebSocketProvider enabled={false}>
+                  <Routes>
+                    <Route path="/" element={<ChatPage />} />
+                    <Route path="/graph" element={<ChatPage />} />
+                    <Route path="/dashboard" element={<DashboardPage />} />
+                  </Routes>
+                </WebSocketProvider>
+              </WorkspaceProvider>
+            </ChatProvider>
+          </ToolProvider>
+        </ModelProvider>
+      </CookieProvider>
     </PreferencesProvider>
   );
 }

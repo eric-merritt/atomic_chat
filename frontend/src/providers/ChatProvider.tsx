@@ -1,14 +1,16 @@
 import { createContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 import type { Message } from '../atoms/message';
 import { createMessage } from '../atoms/message';
-import { cancelChat, respondToBashConfirm, summarizeContext as apiSummarize } from '../api/chat';
+import { cancelChat, summarizeContext as apiSummarize } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
 import { getConversation } from '../api/conversations';
 import { useStream } from '../hooks/useStream';
 import { useModels } from '../hooks/useModels';
-interface BashConfirmPrompt {
-  command: string;
-  description: string;
+
+export interface TaskReview {
+  id: string;
+  title: string;
+  reason: string;
 }
 
 interface ChatContextValue {
@@ -24,9 +26,8 @@ interface ChatContextValue {
   contextPct: number;
   summarizing: boolean;
   summarizeContext: () => void;
-  pendingBashConfirm: BashConfirmPrompt | null;
-  approveBashCommand: () => void;
-  declineBashCommand: () => void;
+  tasksUnderReview: TaskReview[];
+  clearTasksUnderReview: () => void;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -37,7 +38,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
   const [summarizing, setSummarizing] = useState(false);
-  const [pendingBashConfirm, setPendingBashConfirm] = useState<BashConfirmPrompt | null>(null);
+  const [tasksUnderReview, setTasksUnderReview] = useState<TaskReview[]>([]);
   const streamingRef = useRef(false);
   const lastEventRef = useRef(0);
   const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -184,8 +185,8 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             })
             break
           }
-          case 'bash_confirm':
-            setPendingBashConfirm({ command: ev.command, description: ev.description });
+          case 'task_review':
+            setTasksUnderReview(ev.tasks);
             break;
           case 'context_pct':
             setContextPct(ev.pct);
@@ -260,28 +261,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       .finally(() => setSummarizing(false));
   }, [conversationId, summarizing, streaming, loadConversation]);
 
-  const approveBashCommand = useCallback(() => {
-    if (!conversationId) return;
-    setPendingBashConfirm(null);
-    respondToBashConfirm(conversationId, true).catch((e: unknown) =>
-      console.error('[ChatProvider] bash approve failed:', e)
-    );
-  }, [conversationId]);
-
-  const declineBashCommand = useCallback(() => {
-    if (!conversationId) return;
-    setPendingBashConfirm(null);
-    respondToBashConfirm(conversationId, false).catch((e: unknown) =>
-      console.error('[ChatProvider] bash decline failed:', e)
-    );
-  }, [conversationId]);
+  const clearTasksUnderReview = useCallback(() => setTasksUnderReview([]), []);
 
   return (
     <ChatContext.Provider value={{
       messages, sendMessage, cancelStream, clearHistory, streaming,
       ready: !!currentModel, conversationId, loadConversation, newConversation,
       contextPct, summarizing, summarizeContext,
-      pendingBashConfirm, approveBashCommand, declineBashCommand,
+      tasksUnderReview, clearTasksUnderReview,
     }}>
       {children}
     </ChatContext.Provider>

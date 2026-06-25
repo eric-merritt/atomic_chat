@@ -7,7 +7,7 @@ export type StreamEvent =
   | { type: 'meta'; conversationId: string | null }
   | { type: 'context_pct'; pct: number }
   | { type: 'heartbeat' }
-  | { type: 'bash_confirm'; command: string; description: string };
+  | { type: 'task_review'; tasks: { id: string; title: string; reason: string }[] };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function parseStreamLine(raw: any): StreamEvent | null {
@@ -46,12 +46,8 @@ export function parseStreamLine(raw: any): StreamEvent | null {
   if ('heartbeat' in raw) {
     return { type: 'heartbeat' };
   }
-  if ('bash_confirm' in raw) {
-    return {
-      type: 'bash_confirm',
-      command: raw.bash_confirm.command,
-      description: raw.bash_confirm.description,
-    };
+  if ('task_review' in raw) {
+    return { type: 'task_review', tasks: raw.task_review };
   }
   return null;
 }

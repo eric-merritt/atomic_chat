@@ -13,8 +13,16 @@ import typing
 
 from mcp.server.fastmcp import FastMCP
 
-import tools  # noqa: F401 — triggers @register_tool side-effects
 from qwen_agent.tools.base import TOOL_REGISTRY as QW_TOOL_REGISTRY
+
+# Snapshot qwen-agent's built-in tools BEFORE importing our package, so we can
+# exclude them reliably by identity rather than a hand-maintained name list
+# (which drifted: it missed simple_doc_parser/front_page_search/hybrid_search/
+# keyword_search/vector_search/extract_doc_vocabulary/image_*/web_search, letting
+# qwen's doc tools leak to the top of the MCP tool list).
+_BUILTIN_TOOLS = set(QW_TOOL_REGISTRY.keys())
+
+import tools  # noqa: E402,F401 — triggers @register_tool side-effects for our tools
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +45,6 @@ _TYPE_MAP = {
   "number": float,
   "boolean": bool,
 }
-
-# qwen-agent built-in tool names to exclude from MCP registration
-_BUILTIN_TOOLS = {
-  'code_interpreter', 'web_extractor', 'similarity_search',
-  'python', 'retrieval', 'doc_parser', 'storage', 'amap_weather',
-}
-
 
 def _register_qwen_tool(tool_cls):
   """Register a qwen-agent BaseTool subclass as an MCP tool.

@@ -82,6 +82,10 @@ def register_auth_bps():
   app.register_blueprint(health_bp)
   from routes.mcp_registry import mcp_registry_bp
   app.register_blueprint(mcp_registry_bp)
+  from routes.cookies import cookies_bp
+  app.register_blueprint(cookies_bp)
+  from routes.graph import graph_bp
+  app.register_blueprint(graph_bp)
   app.before_request(auth_guard)
 
 @app.teardown_appcontext
@@ -178,6 +182,24 @@ TOOL_REGISTRY = [_tool_meta(cls) for cls in QW_TOOL_REGISTRY.values()
 def main():
   import sys
   register_auth_bps()
+
+  # Lazy Neo4j sync on startup (non-blocking)
+  try:
+    from services.neo4j_context import clear_database, ensure_schema, ingest_graph_json, get_driver
+    driver = get_driver()
+    with driver.session() as session:
+      result = session.run("MATCH (n:GraphNode) RETURN count(n) AS cnt").single()
+      count = result["cnt"] if result else 0
+    if count == 0:
+      print("Neo4j empty — ingesting graph.json...")
+      clear_database()
+      ensure_schema()
+      ingest_graph_json()
+      print("Neo4j ingestion complete")
+    else:
+      print(f"Neo4j already has {count} nodes — skipping ingestion")
+  except Exception as e:
+    print(f"Neo4j startup sync skipped (will use graph.json fallback): {e}")
 
   port = 5000
   for arg in sys.argv:

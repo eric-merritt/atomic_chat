@@ -645,10 +645,172 @@ def _page_summary(content: str, url: str) -> dict:
         }
 
 
+# ── Credential-based login fallback ─────────────────────────────────────────
+
+# Selector pairs for detecting and filling login forms
+_LOGIN_SELECTORS = [
+    # Common username/password fields
+    ("input[type='email']", "input[type='password']"),
+    ("input[name='email']", "input[name='password']"),
+    ("input[name='username']", "input[name='password']"),
+    ("input[name='user']", "input[name='pass']"),
+    ("input[name='login']", "input[name='password']"),
+    ("input[id='email']", "input[id='password']"),
+    ("input[id='username']", "input[id='password']"),
+    ("input[id='user']", "input[id='pass']"),
+    ("input[id='login']", "input[id='password']"),
+    ("input[autocomplete='username']", "input[autocomplete='current-password']"),
+]
+
+_LOGIN_BTN_SELECTORS = [
+    "button[type='submit']",
+    "input[type='submit']",
+    "button.login-button",
+    "button#login-submit",
+    "input#login-submit",
+    "form button",
+]
+
+
+def _try_credential_auth(url: str, driver, user_id: int = None) -> bool:
+    """Try to log in using stored credentials when no cookies exist.
+
+    Returns True if login succeeded, False otherwise.
+    """
+    from urllib.parse import urlparse, urljoin
+
+    try:
+        from auth.credentials import load_credentials
+    except ImportError:
+        return False
+
+    # Find credential matching the URL's domain
+    host = urlparse(url).hostname or ""
+    domain = host.lstrip("www.")
+    cred = None
+    for alias, entry in load_credentials().items():
+        cred_url = entry.get("url", "")
+        cred_host = urlparse(cred_url).hostname or ""
+        if cred_host == host or cred_host.endswith(domain) or domain.endswith(cred_host.lstrip("www.")):
+            if entry.get("username") and entry.get("password"):
+                cred = entry
+                break
+
+    if not cred:
+        return False
+
+    username = cred.get("username", "")
+    password = cred.get("password", "")
+    if not username or not password:
+        return False
+
+    # Try the URL itself first, then common login paths
+    try_urls = [url]
+    if url.count("/") <= 3:  # Only root URL
+        try_urls.extend([
+            urljoin(url, "/login"),
+            urljoin(url, "/signin"),
+            urljoin(url, "/auth"),
+        ])
+
+    for try_url in try_urls:
+        try:
+            driver.get(try_url)
+            time.sleep(1)
+
+            # Find username/password field pair
+            for user_sel, pass_sel in _LOGIN_SELECTORS:
+                user_fields = driver.find_elements("css selector", user_sel)
+                pass_fields = driver.find_elements("css selector", pass_sel)
+                if user_fields and pass_fields:
+                    # Fill credentials
+                    user_fields[0].clear()
+                    user_fields[0].send_keys(username)
+                    pass_fields[0].clear()
+                    pass_fields[0].send_keys(password)
+
+                    # Submit
+                    for btn_sel in _LOGIN_BTN_SELECTORS:
+                        btns = driver.find_elements("css selector", btn_sel)
+                        if btns:
+                            btns[0].click()
+                            break
+                    else:
+                        # Fallback: press Enter in password field
+                        from selenium.webdriver.common.keys import Keys
+                        pass_fields[0].send_keys(Keys.RETURN)
+
+                    time.sleep(3)
+
+                    # Check if we're still on a login page (failed)
+                    current = driver.current_url
+                    if "login" in current.lower() or "signin" in current.lower():
+                        continue  # Try next URL
+
+                    # Success — cookies should now be in the browser session
+                    # Capture them into _stored_cookies
+                    _capture_browser_cookies(driver, host)
+                    return True
+
+        except Exception:
+            continue  # Try next URL
+
+    return False
+
+
+def _capture_browser_cookies(driver, target_host: str) -> None:
+    """Extract cookies from the browser session and store in _stored_cookies."""
+    user_id = _get_user_id()
+    if user_id is None:
+        return
+
+    try:
+        all_cookies = driver.get_cookies()
+        # Normalize to dot-domain
+        domains_seen = set()
+        for c in all_cookies:
+            c_domain = c.get("domain", "")
+            if not c_domain:
+                c_domain = "." + target_host
+            elif not c_domain.startswith("."):
+                c_domain = "." + c_domain
+            domains_seen.add(c_domain)
+
+        from urllib.parse import urlparse
+        host = target_host.lstrip("www.")
+        parts = host.split(".")
+        root_domain = "." + ".".join(parts[-2:]) if len(parts) > 2 else "." + host
+
+        user_cookies = _stored_cookies.setdefault(user_id, {})
+        for c in all_cookies:
+            c_name = c.get("name", "")
+            c_value = c.get("value", "")
+            if not c_name:
+                continue
+
+            # Store under root domain
+            if root_domain not in user_cookies:
+                user_cookies[root_domain] = []
+
+            # Upsert
+            existing = user_cookies[root_domain]
+            found = False
+            for i, ec in enumerate(existing):
+                if ec["name"] == c_name:
+                    existing[i] = {"name": c_name, "value": c_value}
+                    found = True
+                    break
+            if not found:
+                existing.append({"name": c_name, "value": c_value})
+
+    except Exception:
+        pass
+
+
 # ── Cookie Management ───────────────────────────────────────────────────────
 
-# Domain → list of cookie dicts, shared across all web tools
-_stored_cookies: dict[str, list[dict[str, str]]] = {}
+# {user_id: {domain: [cookie dicts]}} — scoped to authenticated user
+_stored_cookies: dict[int, dict[str, list[dict[str, str]]]] = {}
 
 
 @register_tool('www_set_cookies')
@@ -781,12 +943,17 @@ def _validate_url(url: str) -> str | None:
     return None
 
 
-def _get_stored_cookies_for_url(url: str) -> list[str]:
+def _get_stored_cookies_for_url(url: str, user_id: int = None) -> list[str]:
     """Return stored cookies matching a URL's domain as name=value strings."""
     from urllib.parse import urlparse
+    if user_id is None:
+        user_id = _get_user_id()
+    if user_id is None:
+        return []
+    user_cookies = _stored_cookies.get(user_id, {})
     host = urlparse(url).hostname or ""
     result = []
-    for domain, cookies in _stored_cookies.items():
+    for domain, cookies in user_cookies.items():
         # Match .example.com against www.example.com, foo.example.com, etc.
         if host == domain.lstrip(".") or host.endswith(domain):
             for c in cookies:
@@ -822,9 +989,110 @@ class RetrieveCookiesTool(BaseTool):
     }
 
     def call(self, params: str, **kwargs) -> dict[str, list[dict[str, str]]]:
-        p = json5.loads(params)
-        stored_cookies = _stored_cookies
-        return stored_cookies
+        user_id = _get_user_id()
+        if user_id is None:
+            return {}
+        return _stored_cookies.get(user_id, {})
+
+
+# ── Cookie sync from frontend (extension-collected) ─────────────────────────
+
+def sync_cookies_from_frontend(domain: str, name: str, value: str, meta: dict | None = None, user_id: int = None):
+    """Store a single cookie collected by the browser extension.
+
+    Called by the /api/cookies/sync route. Populates _stored_cookies[user_id] so
+    agent tools (www_fetch, www_find_content, etc.) can apply them.
+    Also injects into the headless browser if one is active.
+    """
+    if user_id is None:
+        user_id = _get_user_id()
+    if user_id is None:
+        return  # No authenticated user — skip
+    dot_domain = domain if domain.startswith(".") else "." + domain
+
+    # Store in per-user dict
+    user_cookies = _stored_cookies.setdefault(user_id, {})
+    if dot_domain not in user_cookies:
+        user_cookies[dot_domain] = []
+    # Upsert: replace if same name exists
+    existing = user_cookies[dot_domain]
+    for i, c in enumerate(existing):
+        if c["name"] == name:
+            existing[i] = {"name": name, "value": value}
+            break
+    else:
+        existing.append({"name": name, "value": value})
+
+    # Also apply to the shared requests session
+    _apply_cookies(f"https://{dot_domain.lstrip('.')}", [f"{name}={value}"], dot_domain)
+
+    # Inject into headless browser if active
+    global _browser_driver
+    if _browser_driver is not None:
+        try:
+            cookie_dict = {"name": name, "value": value, "domain": dot_domain}
+            if meta:
+                if meta.get("path"):
+                    cookie_dict["path"] = meta["path"]
+                if meta.get("secure") is not None:
+                    cookie_dict["secure"] = meta["secure"]
+                if meta.get("httpOnly") is not None:
+                    cookie_dict["httpOnly"] = meta["httpOnly"]
+                if meta.get("sameSite"):
+                    cookie_dict["sameSite"] = meta["sameSite"]
+                if meta.get("expirationDate"):
+                    cookie_dict["expiry"] = int(meta["expirationDate"])
+            _browser_driver.add_cookie(cookie_dict)
+        except Exception:
+            pass  # Best-effort for live browser
+
+
+@register_tool('www_sync_cookies')
+class SyncCookiesTool(BaseTool):
+    description = (
+        'Sync all cookies collected by the browser extension (from the frontend cookie store) '
+        'into the headless browser session. Call this ONCE at the start of a browsing session '
+        'to make all available cookies active. '
+        'Returns the number of domains and cookies synced.'
+    )
+    parameters = {
+        'type': 'object',
+        'properties': {},
+        'required': [],
+    }
+
+    @retry()
+    def call(self, params: str, **kwargs) -> dict:
+        user_id = _get_user_id()
+        user_cookies = _stored_cookies.get(user_id, {}) if user_id else {}
+        if not user_cookies:
+            return tool_result(data={"domains_synced": 0, "cookies_synced": 0, "note": "No cookies stored"})
+
+        try:
+            driver = _get_or_create_browser()
+        except Exception as e:
+            return tool_result(error=f"No browser session available: {e}")
+
+        total_cookies = 0
+        for domain, cookies in user_cookies.items():
+            root = domain.lstrip(".")
+            try:
+                driver.get(f"https://{root}")
+                time.sleep(0.5)
+                for c in cookies:
+                    driver.add_cookie({
+                        "name": c["name"],
+                        "value": c["value"],
+                        "domain": domain,
+                    })
+                    total_cookies += 1
+            except Exception:
+                pass  # Skip domains that fail to load
+
+        return tool_result(data={
+            "domains_synced": len(user_cookies),
+            "cookies_synced": total_cookies,
+        })
 
 # ── Web Operations ───────────────────────────────────────────────────────────
 
@@ -904,6 +1172,18 @@ class ExtractUrlTool(BaseTool):
         try:
             if js:
                 driver = _get_or_create_browser()
+                # Check if we have cookies for this URL's domain
+                user_id = _get_user_id()
+                has_cookies = False
+                if user_id:
+                    from urllib.parse import urlparse as _urlparse
+                    host = _urlparse(url).hostname or ""
+                    user_cookies = _stored_cookies.get(user_id, {})
+                    for d, ck in user_cookies.items():
+                        if host == d.lstrip(".") or host.endswith(d):
+                            has_cookies = True
+                            break
+
                 if cookies or local_storage:
                     from urllib.parse import urlparse as _urlparse
                     parsed = _urlparse(url)
@@ -919,6 +1199,10 @@ class ExtractUrlTool(BaseTool):
                             if '=' in pair:
                                 k, _, v = pair.partition('=')
                                 driver.execute_script("localStorage.setItem(arguments[0], arguments[1]);", k.strip(), v.strip())
+                elif not has_cookies:
+                    # No cookies — try credential-based login as fallback
+                    _try_credential_auth(url, driver, user_id)
+
                 driver.get(url)
                 time.sleep(wait_seconds)
                 raw_html = driver.page_source
@@ -1002,6 +1286,32 @@ class ExtractUrlTool(BaseTool):
 
 
 _MAIN_CONTENT_SELECTORS = ['article', 'main', '[role="main"]', '#content', '#main', '.content', '.main']
+
+def _find_page_nav(soup, class_fragments):
+  """Return the first element whose class list contains any of the given
+  fragments (case-insensitive substring match), or None. Used to locate a
+  pagination container before extracting its page links."""
+  for element in soup.find_all(class_=True):
+    classes = ' '.join(element.get('class', [])).lower()
+    if any(fragment.lower() in classes for fragment in class_fragments):
+      return element
+  return None
+
+
+def _extract_pages(container):
+  """Map page label → absolute href for every anchor in a pagination
+  container. Skips anchors without an http(s) href so fragments and
+  javascript: links are dropped. Returns {} when none qualify."""
+  pages = {}
+  for anchor in container.find_all('a', href=True):
+    href = anchor['href']
+    if not href.startswith('http'):
+      continue
+    label = anchor.get_text(strip=True)
+    if label:
+      pages[label] = href
+  return pages
+
 
 def _extract_main(soup):
   for sel in _MAIN_CONTENT_SELECTORS:
@@ -1783,23 +2093,3 @@ class FindWebStructureTool(BaseTool):
 
 _PAGINATION_CONTAINERS = ["pagination", "pagination-container", "pagination-wrapper"]
 
-def _find_page_nav(soup, container_classes):
-  for cls in container_classes:
-    container = soup.find('div', class_=cls)
-    if container:
-      return container
-  return None
-
-def _extract_pages(pagination_container):
-  pages = {}
-  for link in pagination_container.find_all('a', class_='page-link'):
-    href = link.get('href')
-    if href and 'javascript' not in href:
-      pages[link.text.strip()] = href
-  return pages
-
-def get_page_links(url):
-  response = requests.get(url)
-  soup = beautifulsoup.BeautifulSoup(response.content, 'html.parser')
-  container = _find_page_nav(soup, _PAGINATION_CONTAINERS)
-  return _extract_pages(container) if container else {}

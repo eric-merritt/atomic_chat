@@ -70,3 +70,13 @@ export async function updateConversationTask(conversationId: string, taskId: str
 export async function deleteConversationTask(conversationId: string, taskId: string) {
   await fetch(`/api/conversations/${conversationId}/tasks/${taskId}`, { ...OPTS, method: 'DELETE' });
 }
+
+// Fired on TaskList close: hand the list to the task agent so user-added tasks
+// get decomposed into worker subtasks. `userAdded` = titles the user typed in.
+export async function snapshotConversationTasks(conversationId: string, userAdded: string[]) {
+  const resp = await fetch(`/api/conversations/${conversationId}/tasks/snapshot`, {
+    ...OPTS, method: 'POST', headers: HEADERS,
+    body: JSON.stringify({ user_added: userAdded }),
+  });
+  return resp.json();
+}

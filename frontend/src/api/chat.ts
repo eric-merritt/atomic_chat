@@ -31,16 +31,3 @@ export async function summarizeContext(conversationId: string): Promise<{ contex
   if (!resp.ok) throw new Error(`Summarize failed: ${resp.status}`);
   return resp.json();
 }
-
-export async function respondToBashConfirm(
-  conversationId: string,
-  approved: boolean,
-): Promise<void> {
-  const resp = await fetch('/api/chat/bash_confirm', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ conversation_id: conversationId, approved }),
-    credentials: 'include',
-  });
-  if (!resp.ok) throw new Error(`Bash confirm failed: ${resp.status}`);
-}

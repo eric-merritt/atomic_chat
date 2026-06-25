@@ -69,7 +69,7 @@ export function MessageList({ onImageClick }: MessageListProps) {
   }, [messages, visibleDate]);
 
   return (
-    <div id="messageList" className="relative m-2 flex flex-col overflow-hidden">
+    <div id="messageList" className="relative m-2 flex flex-col h-full overflow-hidden">
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto px-6 pb-5 flex flex-col gap-2 backdrop-blur-sm border border-[var(--accent)] rounded-[14px]">
         {visibleDate > 0 && (
           <DateSeparator timestamp={visibleDate} />

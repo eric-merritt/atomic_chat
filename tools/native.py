@@ -122,7 +122,33 @@ _ROUTER_SYSTEM = (
 )
 
 def _route_tools(description: str) -> list[str]:
+    """Route tools using Neo4j graph summaries. Falls back to LLM-based routing."""
     from config import SUMMARIZE_MODEL, SUMMARIZE_SERVER_URL, LLAMA_SERVER_URL
+
+    # class.__name__ → registered name: the graph keys tools by CLASS name
+    # (e.g. 'BrowserClickTool') but the registry is keyed by the tool's `name`
+    # attribute (e.g. 'www_click').
+    class_to_name = {cls.__name__: reg for reg, cls in QW_TOOL_REGISTRY.items()}
+
+    def _to_registered(graph_name: str) -> str:
+        if graph_name in QW_TOOL_REGISTRY:
+            return graph_name
+        return class_to_name.get(graph_name, graph_name)
+
+    # Primary: Neo4j-based scoring against tool summaries
+    try:
+        from services.neo4j_context import score_tools_for_task
+        scored = score_tools_for_task(description, limit=15)
+        if scored:
+            # Top-scoring tools that exist in registry (after name translation)
+            names = [_to_registered(t["name"]) for t in scored]
+            names = [n for n in names if n in QW_TOOL_REGISTRY]
+            if names:
+                return names[:10]
+    except Exception as e:
+        print(f'[tool_router] Neo4j routing error: {e}', flush=True)
+
+    # Fallback: original LLM-based routing
     catalog_dict = _filter_catalog(description)
     catalog = '\n'.join(f'  {name}: {desc}' for name, desc in catalog_dict.items())
     prompt = (
@@ -152,40 +178,5 @@ def _route_tools(description: str) -> list[str]:
             names = json.loads(match.group())
             return [n for n in names if isinstance(n, str) and n in QW_TOOL_REGISTRY]
     except Exception as e:
-        print(f'[need_tool] router error: {e}', flush=True)
+        print(f'[tool_router] LLM routing error: {e}', flush=True)
     return []
-
-
-@register_tool('need_tool')
-class NeedToolTool(BaseTool):
-    description = (
-        'Request a specific tool you need for the current task. '
-        'Describe what you need to do; the router will return the exact tool name(s). '
-        'Those tools will immediately be available for your next call.'
-    )
-    parameters = {
-        'type': 'object',
-        'properties': {
-            'description': {
-                'type': 'string',
-                'description': 'What you need to accomplish (e.g. "extract content from a web URL", "read a file").',
-            },
-        },
-        'required': ['description'],
-    }
-
-    def call(self, params: str, **kwargs) -> dict:
-        p = json5.loads(params)
-        desc = (p.get('description') or '').strip()
-        if not desc:
-            return tool_result(error='description is required')
-        tools = _route_tools(desc)
-        if not tools:
-            return tool_result(data={
-                'message': 'Router could not identify a tool. Try list_tools(query=...) to browse manually.',
-                'added': [],
-            })
-        return tool_result(data={
-            'added': tools,
-            'message': f'Tool(s) {tools} are now available. Call get_params(tool_name) if you need parameter details.',
-        })

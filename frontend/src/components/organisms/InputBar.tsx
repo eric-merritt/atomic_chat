@@ -1,7 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { ChatInput } from "../molecules/ChatInput";
 import { ContextRing } from "../atoms/ContextRing";
-import { BashConfirmBar } from "../molecules/BashConfirmBar";
 import { useChat } from "../../hooks/useChat";
 
 interface DroppedImage {
@@ -98,7 +97,6 @@ export function InputBar() {
         droppedImage={droppedImage}
         onClearImage={() => setDroppedImage(null)}
       />
-      <BashConfirmBar />
     </div>
   );
 }

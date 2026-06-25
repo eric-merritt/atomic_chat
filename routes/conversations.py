@@ -127,3 +127,28 @@ def delete_task(conv_id, task_id):
     if not ok:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"ok": True})
+
+
+@conv_bp.route("/<conv_id>/tasks/snapshot", methods=["POST"])
+@login_required
+def snapshot_tasks(conv_id):
+    """Fired on TaskList close: hand the current list to the task agent so any
+    user-added/edited tasks get decomposed into worker subtasks, just like a task
+    typed in chat. `user_added` lists the titles the user entered manually."""
+    data = request.get_json(force=True) or {}
+    user_added = [t for t in (data.get("user_added") or []) if isinstance(t, str)]
+
+    tasks = store.list_tasks(current_user.id, conv_id)
+    if tasks is None:
+        return jsonify({"error": "Conversation not found"}), 404
+
+    from agents.agent_taskmgr import queue_user_tasks, run_taskmgr
+    queue_user_tasks(conv_id, user_added)
+    try:
+        run_taskmgr(conv_id, "", tasks)
+    except Exception as taskmgr_err:
+        # Never fail the close on a taskmgr hiccup; the queue persists for next turn.
+        return jsonify({"ok": True, "decomposed": False, "error": str(taskmgr_err)})
+
+    return jsonify({"ok": True, "decomposed": True,
+                    "tasks": store.list_tasks(current_user.id, conv_id)})

@@ -6,6 +6,7 @@ import {
   updateConversationTask,
   deleteConversationTask,
   createConversation,
+  snapshotConversationTasks,
   type ConversationTaskDTO,
 } from "../../api/conversations";
 import { CSSProperties } from "react";
@@ -81,9 +82,11 @@ const TEST_TASKS = [
 ];
 
 export function TaskList({ sidebarExpanded, style }: TaskListProps) {
-  const { conversationId, streaming, loadConversation } = useChat();
+  const { conversationId, streaming, loadConversation, tasksUnderReview, clearTasksUnderReview } = useChat();
   const [tasks, setTasks] = useState<ConversationTaskDTO[]>([]);
   const [open, setOpen] = useState(false);
+  // Ids the task-manager disputed this turn; awaiting the user's final say.
+  const [reviewIds, setReviewIds] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<string[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -96,9 +99,17 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
   const convIdRef = useRef(conversationId);
   convIdRef.current = conversationId;
 
+  // Titles the user typed in manually since the last close — sent to the task
+  // agent on close so it decomposes them into worker subtasks.
+  const userAddedRef = useRef<string[]>([]);
+
   const load = useCallback(
     async (cid?: string) => {
-      const id = cid ?? conversationId;
+      // Prefer the explicit arg, then the live ref (set synchronously above),
+      // then the closure value. The ref avoids the stale-null case on the first
+      // turn of a new conversation, where conversationId in this closure lags
+      // behind the id the backend just created and added tasks to.
+      const id = cid ?? convIdRef.current ?? conversationId;
       if (!id) return;
       const data = await getConversationTasks(id);
       setTasks(data.tasks);
@@ -129,8 +140,8 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
           console.error("TaskList: no conversation id");
           return;
         }
-        const result = await createConversationTask(cid, trimmed);
-        console.log("TaskList: created task", result);
+        await createConversationTask(cid, trimmed);
+        userAddedRef.current.push(trimmed);  // decompose on close
         setDrafts((d) => d.filter((_, i) => i !== di));
         load(cid);
       } catch (err) {
@@ -204,6 +215,67 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
     prevStreamingRef.current = streaming;
   }, [streaming, load]);
 
+  // Refresh when the conversation id first becomes available. On the first turn
+  // of a new conversation the backend creates the id (and adds tasks) mid-stream;
+  // the streaming-end effect above may have already fired with a null id, so this
+  // catches the null→id transition and loads the freshly-created task list.
+  useEffect(() => {
+    if (conversationId) load(conversationId);
+  }, [conversationId, load]);
+
+  // The task-manager disputed one or more tl_done claims: backend already
+  // reverted them to pending. Auto-open the list, glow them, and let the user
+  // ratify (leave = done on close) or reject (click = stays pending).
+  useEffect(() => {
+    if (tasksUnderReview.length === 0) return;
+    setReviewIds(new Set(tasksUnderReview.map((t) => t.id)));
+    setOpen(true);
+    load();
+  }, [tasksUnderReview, load]);
+
+  // Clicking a glowing task = user agrees it's NOT done → drop it from review,
+  // leave it pending.
+  const rejectReview = useCallback((taskId: string) => {
+    setReviewIds((prev) => {
+      const next = new Set(prev);
+      next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  // Closing the popover ratifies every still-glowing task as done (the user left
+  // them) — PATCH each to done, then clear the review state.
+  const confirmReviewsOnClose = useCallback(async () => {
+    if (reviewIds.size === 0) return;
+    const cid = convIdRef.current;
+    if (!cid) return;
+    await Promise.all(
+      [...reviewIds].map((taskId) =>
+        updateConversationTask(cid, taskId, { status: "done" }).catch((err) =>
+          console.error("TaskList: confirm review failed", err),
+        ),
+      ),
+    );
+    setReviewIds(new Set());
+    clearTasksUnderReview();
+    load(cid);
+  }, [reviewIds, clearTasksUnderReview, load]);
+
+  // Closing the popover always ratifies any pending reviews first, then hands the
+  // list to the task agent so user-added tasks get decomposed into subtasks.
+  const closePopover = useCallback(() => {
+    confirmReviewsOnClose();
+    setOpen(false);
+    const cid = convIdRef.current;
+    if (cid) {
+      const added = userAddedRef.current;
+      userAddedRef.current = [];
+      snapshotConversationTasks(cid, added)
+        .then(() => load(cid))
+        .catch((err) => console.error("TaskList: snapshot failed", err));
+    }
+  }, [confirmReviewsOnClose, load]);
+
   // Close popover on outside click
   useEffect(() => {
     if (!open) return;
@@ -212,12 +284,12 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
         popoverRef.current &&
         !popoverRef.current.contains(e.target as Node)
       ) {
-        setOpen(false);
+        closePopover();
       }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
+  }, [open, closePopover]);
 
   const taskCount = tasks.length;
   const doneCount = tasks.filter((t) => t.status === "done").length;
@@ -314,7 +386,7 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
                 </span>
               )}
               <button
-                onClick={() => setOpen(false)}
+                onClick={closePopover}
                 className="absolute right-3 text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer text-sm leading-none"
               >
                 &times;
@@ -322,6 +394,22 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
             </div>
             <div className="w-8 shrink-0" />
           </div>
+
+          {/* Review banner — explains the yellow glow */}
+          {reviewIds.size > 0 && (
+            <div
+              className="flex-none px-3 py-1 font-mono text-center"
+              style={{
+                fontSize: "10px",
+                color: "#ffdd00",
+                background: "color-mix(in srgb, #ffdd00 12%, transparent)",
+                borderBottom: "1px solid color-mix(in srgb, #ffdd00 40%, transparent)",
+              }}
+            >
+              Task manager flagged the glowing tasks — click any that aren't truly
+              done; close to confirm the rest.
+            </div>
+          )}
 
           {/* Body — scrollable task list */}
           <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden flex">
@@ -380,12 +468,14 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleStatus(t);
+                          if (reviewIds.has(t.id)) rejectReview(t.id);
+                          else toggleStatus(t);
                         }}
                         className="shrink-0 cursor-pointer hover:brightness-150 transition-all"
                         style={{
-                          color:
-                            t.status === "done"
+                          color: reviewIds.has(t.id)
+                            ? "#ffdd00"
+                            : t.status === "done"
                               ? "var(--accent)"
                               : isBlocked
                                 ? "var(--danger, #ef4444)"
@@ -394,9 +484,16 @@ export function TaskList({ sidebarExpanded, style }: TaskListProps) {
                           background: "none",
                           border: "none",
                           padding: 0,
+                          textShadow: reviewIds.has(t.id)
+                            ? "0 0 6px #ffdd00, 0 0 10px #ffdd00"
+                            : undefined,
                         }}
                         title={
-                          t.status === "done" ? "Mark pending" : "Mark done"
+                          reviewIds.has(t.id)
+                            ? "The task manager wants you to review this for true completion. Click if it's NOT done; leave it and close to confirm done."
+                            : t.status === "done"
+                              ? "Mark pending"
+                              : "Mark done"
                         }
                       >
                         {STATUS_ICONS[t.status] ?? "\u25CB"}

@@ -43,9 +43,9 @@ LLAMA_SERVER_URL = os.environ.get(
 # → GGUF file on disk + launch args.
 MODELS = {
     "qwen3.6:27b-iq4_xs": {
-        "path": "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/Qwen3.6-27B-Ablit-IQ4_XS.gguf",
-        "ngl": 42,
-        "ctx": 4096,
+        "path": "$QWEN_LATEST",
+        "ngl": 28,
+        "ctx": 32000,
     },
     "qwen3.6:27b-iq3_xs": {
         "path": "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/Qwen3.6-27B-Ablit-IQ3_XS.gguf",
@@ -150,6 +150,20 @@ def qwen_llm_cfg(model: str = "", num_ctx: int = 0) -> dict:
   'model': model or DEFAULT_MODEL,
   'model_type': 'oai',
   'model_server': LLAMA_SERVER_URL + '/v1',
+  'api_key': 'EMPTY',
+  'generate_cfg': {
+    'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
+  },
+  }
+
+
+def qwen_summary_cfg(num_ctx: int = 0) -> dict:
+  """Build a qwen-agent LLM config pointing at the summary llama.cpp instance."""
+  server = SUMMARIZE_SERVER_URL or LLAMA_SERVER_URL
+  return {
+  'model': SUMMARIZE_MODEL,
+  'model_type': 'oai',
+  'model_server': server + '/v1',
   'api_key': 'EMPTY',
   'generate_cfg': {
     'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
