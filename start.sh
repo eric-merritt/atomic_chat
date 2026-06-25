@@ -27,6 +27,8 @@ SUMMARY_NGL="${SUMMARY_NGL:-auto}"
 MODEL_NGL="${MODEL_NGL:-36}"
 DRAFT_MODEL="${DRAFT_MODEL:-/home/ermer/models/Qwen/Qwen3.5-0.8B/Qwen3.5-0.8B_Q4_K_M.gguf}"
 DRAFT_NGL="${DRAFT_NGL:-0}"
+# Qwen's vision projector — lives beside the model gguf; gives the main server its vision stack.
+MMPROJ="${MMPROJ:-/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/gguf_quants/mmproj-BF16.gguf}"
 MODEL_CTX="${MODEL_CTX:-16000}"
 LLAMA_PORT="${LLAMA_PORT:-5173}"
 LLAMA_SUMMARY_PORT="${LLAMA_SUMMARY_PORT:-5175}"
@@ -158,6 +160,7 @@ else
     echo "🚀 Starting llama-server on :$LLAMA_PORT | Model: $MODEL_ALIAS ($MODEL)"
     nohup "$LLAMA_BIN" \
         --model "$QWEN_LATEST" \
+        --mmproj "$MMPROJ" \
         --host 0.0.0.0 \
         --port "$LLAMA_PORT" \
         --jinja \
