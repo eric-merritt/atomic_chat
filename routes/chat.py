@@ -637,6 +637,13 @@ def chat_stream():
     prefs = current_user.preferences or {}
     model_name = prefs.get("model")
 
+    # Capture user identity as plain scalars now, while the session is live.
+    # generate() streams lazily (stream_with_context) and its body runs after
+    # the request session may have closed — touching current_user there raises
+    # DetachedInstanceError. fs tools need these on the pump thread (blank g).
+    fs_user_id = current_user.id
+    fs_user_role = getattr(current_user, "role", None)
+
     if not model_name:
         return jsonify({"error": "No model selected"}), 400
 
@@ -792,8 +799,9 @@ def chat_stream():
                     "conversation_id": conversation_id,
                     # current_user is blank on the pump thread (copy_current_request_context
                     # gives it a fresh, empty g), so carry the identity fs tools need.
-                    "fs_user_id": current_user.id,
-                    "fs_user_role": getattr(current_user, "role", None),
+                    # Captured as scalars above to avoid a detached-User refresh here.
+                    "fs_user_id": fs_user_id,
+                    "fs_user_role": fs_user_role,
                 },
             ):
                 if responses is _HEARTBEAT:
