@@ -12,7 +12,6 @@ mkdir -p "$LOGDIR"
 # PID tracking
 PIDFILE_LLAMA="$LOGDIR/llama.pid"
 PIDFILE_LLAMA_SUMMARY="$LOGDIR/llama_summary.pid"
-PIDFILE_LLAMA_VISION="$LOGDIR/llama_vision.pid"
 PIDFILE_TOOLS="$LOGDIR/tools.pid"
 PIDFILE_BACKEND="$LOGDIR/backend.pid"
 PIDFILE_FRONTEND="$LOGDIR/frontend.pid"
@@ -31,9 +30,6 @@ DRAFT_NGL="${DRAFT_NGL:-0}"
 MODEL_CTX="${MODEL_CTX:-16000}"
 LLAMA_PORT="${LLAMA_PORT:-5173}"
 LLAMA_SUMMARY_PORT="${LLAMA_SUMMARY_PORT:-5175}"
-LLAMA_VISION_PORT="${LLAMA_VISION_PORT:-14530}"
-VISION_MODEL="${VISION_MODEL:-/home/ermer/models/llava/llava-v1.5-7b-Q4_K_M-complete.gguf}"
-VISION_MMPROJ="${VISION_MMPROJ:-/home/ermer/models/llava/Llava-v1.5-7b-mmproj-model-f16.gguf}"
 TOOLS_PORT="${TOOLS_PORT:-5100}"
 BACKEND_PORT="${BACKEND_PORT:-5000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5174}"
@@ -62,7 +58,6 @@ stop_app() {
 stop_llama() {
     stop_pid "$PIDFILE_LLAMA"         "llama-server"
     stop_pid "$PIDFILE_LLAMA_SUMMARY" "llama-summary"
-    stop_pid "$PIDFILE_LLAMA_VISION"  "llama-vision"
 }
 
 stop_neo4j() {
@@ -106,7 +101,7 @@ case "$CMD" in
     shell)      ;;
     status)
         echo "=== Service Status ==="
-        for pf in "$PIDFILE_LLAMA" "$PIDFILE_LLAMA_SUMMARY" "$PIDFILE_LLAMA_VISION" "$PIDFILE_TOOLS" "$PIDFILE_BACKEND" "$PIDFILE_FRONTEND"; do
+        for pf in "$PIDFILE_LLAMA" "$PIDFILE_LLAMA_SUMMARY" "$PIDFILE_TOOLS" "$PIDFILE_BACKEND" "$PIDFILE_FRONTEND"; do
             n=$(basename "$pf" .pid)
             if is_running "$pf"; then echo "  ✅ $n: RUNNING (PID $(cat "$pf"))";
             else echo "  ❌ $n: STOPPED"; fi
@@ -179,7 +174,7 @@ else
         -ngld "$DRAFT_NGL" \
         > "$LOGDIR/llama.log" 2>&1 &
     echo $! > "$PIDFILE_LLAMA"
-    wait_for_llama "$LLAMA_PORT" "$PIDFILE_LLAMA" "llama" || { echo "❌ Main llama-server failed to come up — aborting before summary/vision contend for VRAM"; exit 1; }
+    wait_for_llama "$LLAMA_PORT" "$PIDFILE_LLAMA" "llama" || { echo "❌ Main llama-server failed to come up — aborting before summary contends for VRAM"; exit 1; }
 fi
 
 if is_running "$PIDFILE_LLAMA_SUMMARY"; then
@@ -200,25 +195,6 @@ else
         > "$LOGDIR/llama_summary.log" 2>&1 &
     echo $! > "$PIDFILE_LLAMA_SUMMARY"
     wait_for_llama "$LLAMA_SUMMARY_PORT" "$PIDFILE_LLAMA_SUMMARY" "llama_summary" || echo "  ⚠️  summary did not come up — continuing (chat will work, summaries will be degraded)"
-fi
-
-if is_running "$PIDFILE_LLAMA_VISION"; then
-    echo "⚡ llama-vision already running (PID $(cat "$PIDFILE_LLAMA_VISION")), skipping"
-else
-    echo "🚀 Starting llama-vision on :$LLAMA_VISION_PORT | Model: llava-v1.5-7b"
-    # Vision runs 100% on CPU — hide the GPU so no CUDA context/VRAM is allocated.
-    CUDA_VISIBLE_DEVICES="" nohup "$LLAMA_BIN" \
-        --model "$VISION_MODEL" \
-        --mmproj "$VISION_MMPROJ" \
-        --host 127.0.0.1 \
-        --no-webui \
-        --port "$LLAMA_VISION_PORT" \
-        -ngl 0 \
-        --no-mmproj-offload \
-        --parallel 1 \
-        --alias llava-v1.5-7b \
-        > "$LOGDIR/llama_vision.log" 2>&1 &
-    echo $! > "$PIDFILE_LLAMA_VISION"
 fi
 
 # ─── 2. MCP Tools Server ──────────────────────────────────────────────────
