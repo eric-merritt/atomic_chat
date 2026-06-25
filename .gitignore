@@ -14,3 +14,5 @@ keys/
 logs/
 .client-venv/
 .llama-cpp-build/
+# Built browser-extension package (rebuilt from manifest.json + *.js)
+tools/khan_cookie_ext/cookie_sync.xpi
