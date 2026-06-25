@@ -485,6 +485,33 @@ def _clean_tool_result(result_str: str) -> str:
     return result_str
 
 
+def _unwrap_mcp_call(tool_args: str):
+    """Resolve the real tool wrapped inside an mcp_call_tool call.
+
+    Returns (real_name, params):
+      - (name, params) when the wrapped tool_name is present and parseable.
+      - ("mcp_call_tool", {}) when args are fully parseable but carry no
+        tool_name (a genuine bare call).
+      - (None, None) when args are still streaming in and can't be parsed yet,
+        signalling the caller to defer emitting until the next yield.
+    """
+    raw = (tool_args or "").strip()
+    try:
+        parsed = json5.loads(raw or "{}")
+    except Exception:
+        return None, None  # incomplete JSON — args still arriving
+
+    real = (parsed.get("tool_name") or "").strip()
+    if real:
+        return real, (parsed.get("parameters") or {})
+    # Parsed cleanly but no usable tool_name. If the key is present-but-empty
+    # the name is still streaming, so keep waiting. An empty/"{}" payload is
+    # likewise pre-stream. Otherwise it's a genuine bare mcp_call_tool.
+    if "tool_name" in parsed or raw in ("", "{}"):
+        return None, None
+    return "mcp_call_tool", {}
+
+
 _HEARTBEAT = object()
 
 
@@ -844,23 +871,18 @@ def chat_stream():
                                     evidence_log.append(f"[claimed done] tl_done({tool_args[:120]})")
 
                                 if tool_name == "mcp_call_tool":
-                                    try:
-                                        parsed = json5.loads(tool_args or "{}")
-                                        real = (parsed.get("tool_name") or "").strip()
-                                        if real:
-                                            mcp_real_names.append(real)
-                                            tool_name = real
-                                            tool_args = json.dumps(
-                                                parsed.get("parameters") or {}
-                                            )
-                                        else:
-                                            mcp_real_names.append("mcp_call_tool")
-                                    except Exception as e:
-                                        _log(
-                                            f"[MCP] mcp_call_tool arguments were not valid JSON — using generic "
-                                            f"tool name. Args preview: {(tool_args or '')[:80]!r}. Error: {e}"
-                                        )
-                                        mcp_real_names.append("mcp_call_tool")
+                                    real, params = _unwrap_mcp_call(tool_args)
+                                    if real is None:
+                                        # Args still streaming in — the real tool name
+                                        # isn't present yet. Stop here and re-check this
+                                        # same call on the next yield, when args are fuller,
+                                        # so the UI shows the real name, not mcp_call_tool.
+                                        break
+                                    mcp_real_names.append(real)
+                                    if real != "mcp_call_tool":
+                                        tool_name = real
+                                        tool_args = json.dumps(params)
+
                                 _log(f"[TOOL_CALL] {tool_name}({tool_args[:200]})")
                                 yield (
                                     json.dumps(
@@ -873,7 +895,7 @@ def chat_stream():
                                     )
                                     + "\n"
                                 )
-                            seen_fn_count = len(fn_calls_so_far)
+                                seen_fn_count += 1
                     else:
                         if not content.startswith(prev_content):
                             _log(
