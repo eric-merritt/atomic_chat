@@ -1,5 +1,5 @@
 import { createContext, useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
-import type { Message } from '../atoms/message';
+import type { Message, ToolCallPair } from '../atoms/message';
 import { createMessage } from '../atoms/message';
 import { cancelChat, summarizeContext as apiSummarize } from '../api/chat';
 import { clearHistory as apiClearHistory } from '../api/history';
@@ -28,6 +28,81 @@ interface ChatContextValue {
   summarizeContext: () => void;
   tasksUnderReview: TaskReview[];
   clearTasksUnderReview: () => void;
+}
+
+interface LoadedRow {
+  id: string;
+  role: string;
+  content: string;
+  images?: { src: string; filename: string; sizeKb: number }[];
+  tool_calls?: { name?: string; tool?: string; id?: string; input?: string }[];
+  created_at: string;
+}
+
+function toolRowToPair(row: LoadedRow): ToolCallPair {
+  const meta = row.tool_calls?.[0] || {};
+  let result: unknown = row.content;
+  try { result = JSON.parse(row.content); } catch { /* keep raw string */ }
+  return {
+    tool: meta.tool || meta.name || 'tool',
+    params: {},
+    result,
+    status: 'done',
+    contentOffset: 0,
+  };
+}
+
+function blankAssistant(pairs: ToolCallPair[], timestamp: number): Message {
+  return { ...createMessage('assistant', ''), toolPairs: pairs, timestamp };
+}
+
+// Persisted conversations store each tool result as its own role="tool" row,
+// emitted BEFORE the assistant text that the tool calls belong to. The live
+// renderer expects tool calls inside an assistant message's toolPairs, so on
+// load we fold consecutive tool rows into the next assistant message (or a
+// blank assistant bubble if the turn ended on tool rows).
+function buildLoadedMessages(rows: LoadedRow[]): Message[] {
+  const out: Message[] = [];
+  let pendingPairs: ToolCallPair[] = [];
+
+  for (const row of rows) {
+    if (row.role === 'tool') {
+      pendingPairs.push(toolRowToPair(row));
+      continue;
+    }
+    const timestamp = new Date(row.created_at).getTime();
+    if (row.role === 'assistant') {
+      out.push({
+        id: row.id,
+        role: 'assistant',
+        content: row.content,
+        images: row.images || [],
+        toolCalls: [],
+        toolPairs: pendingPairs,
+        timestamp,
+      });
+      pendingPairs = [];
+      continue;
+    }
+    // user / error row: flush any orphaned tool pairs into their own bubble first
+    if (pendingPairs.length) {
+      out.push(blankAssistant(pendingPairs, timestamp));
+      pendingPairs = [];
+    }
+    out.push({
+      id: row.id,
+      role: row.role as 'user' | 'error',
+      content: row.content,
+      images: row.images || [],
+      toolCalls: [],
+      toolPairs: [],
+      timestamp,
+    });
+  }
+  if (pendingPairs.length) {
+    out.push(blankAssistant(pendingPairs, Date.now()));
+  }
+  return out;
 }
 
 export const ChatContext = createContext<ChatContextValue | null>(null);
@@ -61,18 +136,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   const loadConversation = useCallback(async (id: string) => {
     const data = await getConversation(id, 1, 50);
     if (data.messages) {
-      const loaded: Message[] = data.messages.map((m: { id: string; role: string; content: string; images?: { src: string; filename: string; sizeKb: number }[]; tool_calls?: { tool: string; input: string }[]; created_at: string }) =>
-        ({
-          id: m.id,
-          role: m.role as 'user' | 'assistant' | 'error',
-          content: m.content,
-          images: m.images || [],
-          toolCalls: m.tool_calls || [],
-          toolPairs: [],
-          timestamp: new Date(m.created_at).getTime(),
-        })
-      );
-      setMessages(loaded);
+      setMessages(buildLoadedMessages(data.messages));
       setConversationId(id);
     }
   }, []);
