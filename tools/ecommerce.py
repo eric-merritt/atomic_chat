@@ -5,6 +5,15 @@ Flow tools (3): Cross-platform orchestration tools owned by the dispatcher agent
 """
 
 import os
+import sys
+
+# Project root on sys.path so `from tools.x` / `from config` resolve no matter
+# how this file is launched (by path, as a module, or from inside tools/).
+ROOT = os.path.expanduser("~") + "/devproj/python/atomic_chat"
+if ROOT not in sys.path:
+  sys.path.insert(0, ROOT)
+
+
 import re
 import time
 import random

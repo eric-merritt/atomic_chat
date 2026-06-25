@@ -3,6 +3,15 @@ immediately with a PID and output-file path. The command keeps running after the
 tool returns; the model reads its output from the file on a later call."""
 
 import os
+import sys
+
+# Project root on sys.path so `from tools.x` / `from config` resolve no matter
+# how this file is launched (by path, as a module, or from inside tools/).
+ROOT = os.path.expanduser("~") + "/devproj/python/atomic_chat"
+if ROOT not in sys.path:
+  sys.path.insert(0, ROOT)
+
+
 import shlex
 import tempfile
 import subprocess

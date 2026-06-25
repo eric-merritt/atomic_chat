@@ -4,6 +4,16 @@ These tools have no side effects — they return structured data that the fronte
 renders as rich media. Prefix: ap_ (agent presentation).
 """
 
+import os
+import sys
+
+# Project root on sys.path so `from tools.x` / `from config` resolve no matter
+# how this file is launched (by path, as a module, or from inside tools/).
+ROOT = os.path.expanduser("~") + "/devproj/python/atomic_chat"
+if ROOT not in sys.path:
+  sys.path.insert(0, ROOT)
+
+
 import json5
 from qwen_agent.tools.base import BaseTool, register_tool
 

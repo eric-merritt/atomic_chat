@@ -5,6 +5,15 @@ pre-obtained cookies. DO NOT pass raw credentials (email/password) to any tool.
 """
 
 import os
+import sys
+
+# Project root on sys.path so `from tools.x` / `from config` resolve no matter
+# how this file is launched (by path, as a module, or from inside tools/).
+ROOT = os.path.expanduser("~") + "/devproj/python/atomic_chat"
+if ROOT not in sys.path:
+  sys.path.insert(0, ROOT)
+
+
 import time
 import requests
 from selenium import webdriver

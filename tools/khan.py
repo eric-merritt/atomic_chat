@@ -6,8 +6,17 @@ Three tools following the course → unit → lesson hierarchy:
   khan_lesson_scrape  → video transcript or article paragraphs
 """
 
-import json
 import os
+import sys
+
+# Project root on sys.path so `from tools.x` / `from config` resolve no matter
+# how this file is launched (by path, as a module, or from inside tools/).
+ROOT = os.path.expanduser("~") + "/devproj/python/atomic_chat"
+if ROOT not in sys.path:
+  sys.path.insert(0, ROOT)
+
+
+import json
 import re
 import time
 import urllib.parse
