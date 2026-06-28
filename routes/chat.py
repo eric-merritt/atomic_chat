@@ -26,6 +26,7 @@ from config import (
     LLAMA_ARG_CTX_SIZE,
     LLAMA_PORT,
     LLAMA_SERVER_URL,
+    TOOL_ROUTER,
     qwen_llm_cfg,
 )
 from context import (
@@ -752,10 +753,16 @@ def chat_stream():
         "mcp_call_tool",
     ]
 
-    # Single Neo4j pass: the tools described in the injected prompt block are the
+    # Single router pass: the tools described in the injected prompt block are the
     # exact tools placed in function_list, so anything the model is told about is
-    # actually callable (fixes "Tool X does not exists.").
-    neo4j_ctx, neo4j_tools = _build_neo4j_tool_context(user_msg[:500])
+    # actually callable (fixes "Tool X does not exists."). Backend is flag-gated:
+    # "toolsdb" reads the codebase-memory-mcp SQLite graph (FTS5 + summaries),
+    # "neo4j" (default) uses the graphify->Neo4j tool island.
+    if TOOL_ROUTER == "toolsdb":
+        from services.toolsdb_context import build_toolsdb_context
+        neo4j_ctx, neo4j_tools = build_toolsdb_context(user_msg[:500])
+    else:
+        neo4j_ctx, neo4j_tools = _build_neo4j_tool_context(user_msg[:500])
 
     def _resolve_tools(surfaced: list[str]) -> list[str]:
         names = [n for n in surfaced if n in QW_TOOL_REGISTRY]

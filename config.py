@@ -26,14 +26,20 @@ def _resolve_ctx_size() -> int:
 
 LLAMA_ARG_CTX_SIZE = _resolve_ctx_size()
 
+# The summary server runs a smaller window than the main model (SUMMARY_CTX /
+# config.SUMMARY_LLAMA). Budget the summary agent against ITS window, not the main one, or
+# qwen-agent sends oversized prompts and the summary server 400s on overflow.
+SUMMARY_CTX_SIZE = int(os.environ.get("SUMMARY_CTX", "16000")) - 1000
+
 # ── llama-server process ──
-# Freshly built CUDA-13 binary; the stale /usr/local/bin one was removed after
-# the CUDA 12→13 reinstall. Override via LLAMA_BIN if the build moves.
+# The binary actually serving in production is /usr/local/bin/llama-server.
+# A newer build also exists at ~/models/llama.cpp/build/bin/llama-server —
+# override via LLAMA_BIN to switch to it.
 LLAMA_BIN = os.environ.get(
     "LLAMA_BIN", "/home/ermer/models/llama.cpp/build/bin/llama-server"
 )
 LLAMA_HOST = os.environ.get("LLAMA_HOST", "127.0.0.1")
-LLAMA_PORT = int(os.environ.get("LLAMA_PORT", "5173"))
+LLAMA_PORT = int(os.environ.get("LLAMA_PORT", "7368"))
 LLAMA_SERVER_URL = os.environ.get(
     "LLAMA_SERVER_URL", f"http://{LLAMA_HOST}:{LLAMA_PORT}"
 )
@@ -44,42 +50,27 @@ LLAMA_SERVER_URL = os.environ.get(
 MODELS = {
     "qwen3.6:27b-iq4_xs": {
         "path": "$QWEN_LATEST",
-        "ngl": 28,
-        "ctx": 32000,
-    },
-    "qwen3.6:27b-iq3_xs": {
-        "path": "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/Qwen3.6-27B-Ablit-IQ3_XS.gguf",
-        "ngl": 42,
-        "ctx": 4096,
+        "ngl": 44,
+        "ctx": 24000,
     },
     "qwen3.5:27b-iq4_xs": {
         "path": "/home/ermer/models/Qwen/Qwen3.5-27B/Qwen3.5-27B-IQ4_XS.gguf",
         "ngl": 44,
         "ctx": 32000,
     },
-    "qwen3.5:27b-q4km": {
-        "path": "/home/ermer/models/Qwen/Qwen3.5-27B/Qwen3.5-27B-Q4_K_M.gguf",
-        "ngl": 64,
-        "ctx": 32000,
+    "qwen3.5:9b-iq4_xs": {
+	"path": "/home/ermer/models/Qwen/Qwen3.5-9B-Ablit/Qwen3.5-9B-Ablit-IQ4_XS.gguf",
+	"ngl": "auto",
+	"ctx": 16000,
     },
-    "qwen3.5:9b-q8": {
-        "path": "/home/ermer/models/Qwen/Qwen3.5-9B/Qwen3.5-9B-Q8_0.gguf",
-        "ngl": 99,
-        "ctx": 64000,
-    },
-    "qwen3.5:9b-q4km": {
-        "path": "/home/ermer/models/Qwen/Qwen3.5-9B/Qwen3.5-9B-Q4_K_M.gguf",
-        "ngl": 99,
-        "ctx": 100000,
-    },
-    "qwen3.5:9b-q4ks": {
-        "path": "/home/ermer/models/Qwen/Qwen3.5-9B/Qwen3.5-9B-Q4_K_S.gguf",
-        "ngl": 99,
-        "ctx": 100000
-    }
 }
 
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "qwen3.6:27b-iq4_xs")
+
+# Tool router backend: "neo4j" (graphify graph via Neo4j, keyword fulltext) or
+# "toolsdb" (codebase-memory-mcp SQLite graph, FTS5 + graphify summaries).
+# Default stays neo4j until toolsdb is validated in live chat.
+TOOL_ROUTER = os.environ.get("TOOL_ROUTER", "neo4j")
 
 import re as _re
 _params_match = _re.search(r'(\d+b)', DEFAULT_MODEL.lower())
@@ -102,12 +93,73 @@ RATE_LIMITS = {
 MAX_RETRIES = 2
 
 
-LLAMA_SUMMARY_PORT = int(os.environ.get("LLAMA_SUMMARY_PORT", "5175"))
-SUMMARIZE_MODEL = os.environ.get("SUMMARIZE_MODEL", "qwen3.5:4b-q5_k_m")
+LLAMA_SUMMARY_PORT = int(os.environ.get("LLAMA_SUMMARY_PORT", "9925"))
+SUMMARIZE_MODEL = os.environ.get("SUMMARIZE_MODEL", "qwen3.5:9b-iq4_xs")
 SUMMARIZE_SERVER_URL = os.environ.get(
     "SUMMARIZE_SERVER_URL", f"http://{LLAMA_HOST}:{LLAMA_SUMMARY_PORT}"
 )
 CONTEXT_SUMMARIZE_THRESHOLD = float(os.environ.get("CONTEXT_SUMMARIZE_THRESHOLD", "0.75"))
+
+
+# ── Service ports ──
+# Single source of truth shared by launch.py and each service. FRONTEND_PORT
+# must match frontend/vite.config.ts (Vite owns its own port at runtime).
+TOOLS_PORT = int(os.environ.get("TOOLS_PORT", "8463"))
+BACKEND_PORT = int(os.environ.get("BACKEND_PORT", "8297"))
+FRONTEND_PORT = int(os.environ.get("FRONTEND_PORT", "6612"))
+
+
+# ── llama-server launch specs ──
+# How launch.py starts each llama-server via the compiled binary. Every value is
+# env-overridable. Defaults mirror the production cmdline exactly. The MODELS
+# registry above is a separate concern (runtime catalog / token budgeting).
+MMPROJ_PATH = os.environ.get(
+    "MMPROJ",
+    "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/gguf_quants/mmproj-BF16.gguf",
+)
+
+MAIN_LLAMA = {
+  "name": "llama",
+  "bin": LLAMA_BIN,
+  "model": os.environ.get(
+    "MODEL",
+    "/home/ermer/models/Qwen/Qwen3.6-27B-Ablit/gguf_quants/Qwen3.6-27B-Abliterated-IQ4_XS.gguf",
+  ),
+  # NOTE: intentionally NOT DEFAULT_MODEL — .env sets DEFAULT_MODEL to a 3.5
+  # label while the loaded gguf and serving alias are 3.6. Preserves prior behavior.
+  "alias": os.environ.get("MODEL_ALIAS", "qwen3.6:27b-iq4_xs"),
+  "host": "0.0.0.0",
+  "port": LLAMA_PORT,
+  "ngl": int(os.environ.get("MODEL_NGL", "44")),
+  "ctx": int(os.environ.get("MODEL_CTX", "24000")),
+  "flash_attn": True,
+  "cache_type": "q8_0",
+  "mmproj": MMPROJ_PATH,
+  "draft_model": os.environ.get(
+    "DRAFT_MODEL",
+    "/home/ermer/models/Qwen/Qwen3.5-0.8B/Qwen3.5-0.8B_Q4_K_M.gguf",
+  ),
+  "draft_ngl": int(os.environ.get("DRAFT_NGL", "99")),
+}
+
+SUMMARY_LLAMA = {
+  "name": "llama_summary",
+  "bin": LLAMA_BIN,
+  "model": os.environ.get(
+    "SUMMARY_MODEL",
+    "/home/ermer/models/Qwen/Qwen3.5-9B-Ablit/Qwen3.5-9B-Ablit-IQ4_XS.gguf",
+  ),
+  "alias": os.environ.get("SUMMARY_MODEL_ALIAS", SUMMARIZE_MODEL),
+  "host": LLAMA_HOST,
+  "port": LLAMA_SUMMARY_PORT,
+  "ngl": os.environ.get("SUMMARY_NGL", "auto"),
+  "ctx": int(os.environ.get("SUMMARY_CTX", "18000")),
+  "flash_attn": True,
+  "cache_type": "q8_0",
+  "mmproj": None,
+  "draft_model": None,
+  "draft_ngl": 0,
+}
 
 
 # ── Bridge RSA key pair ──────────────────────────────────────────────────────
@@ -166,6 +218,9 @@ def qwen_summary_cfg(num_ctx: int = 0) -> dict:
   'model_server': server + '/v1',
   'api_key': 'EMPTY',
   'generate_cfg': {
-    'max_input_tokens': num_ctx or LLAMA_ARG_CTX_SIZE,
+    'max_input_tokens': num_ctx or SUMMARY_CTX_SIZE,
+    # cache_prompt:false → llama.cpp keeps no prompt-cache prefix across turns,
+    # so the summary server's context is cleared on every request.
+    'extra_body': { 'cache_prompt': False },
   },
   }
