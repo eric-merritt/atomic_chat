@@ -16,3 +16,10 @@ logs/
 .llama-cpp-build/
 # Built browser-extension package (rebuilt from manifest.json + *.js)
 tools/khan_cookie_ext/cookie_sync.xpi
+# Neo4j Docker data volume (532MB+) — runtime state, not source
+neo4j/
+# Build output and caches
+dist/
+.qwen/
+frontend/.qwen/
+lm_eval.log

@@ -12,60 +12,33 @@ Built with qwen-agent's Assistant creation function and pointed at the fast
 summary model.
 """
 
+from openai import OpenAI
 from flask import g
-from qwen_agent.agents import Assistant
 
-from config import qwen_summary_cfg
+from config import qwen_summary_cfg, SUMMARIZE_MODEL, SUMMARIZE_SERVER_URL
 
 TASKMGR_SYSTEM_PROMPT = """
-You are responsible for maintaining an atomic list of tasks. From the user message,
-you decide all of the steps it takes to complete the request. Each message after the 1st
-will include a task list. You must identify any NEW tasks. Do NOT duplicate. Even if no new
-tasks are present in user message, you MUST call tg_sync w/ "tasks": [] or the flow will
-break.
+You break user requests into an atomic task list. You call ONE tool, `tg_sync`, every turn.
 
-HOW TO WORK AS SWITCH:
+YOU SEE: latest user message + existing task list.
+YOU OUTPUT: only NEW tasks, plus EDITED tasks (resubmit with their existing id).
 
-## CASE: USER MSG
+A task is atomic when it needs no further breakdown, can be verified objectively,
+and can run on its own. Order tasks logically; use depends_on for ordering.
 
-  - Read the latest user message + existing task list.
-  - If user message includes new task, follow these instructions:
-      1. Deconstruct request into specific, atomic subtasks.
-      2. A task is "atomic" if it requires no further subdivision, can be verified objectively, and can be executed independently.
-      3. Organize them in a logical, sequential order.
-      4. For each task, clearly state the required action, the expected output, and any dependencies.
-  - Call tg_sync ONCE. Include ONLY NEW tasks OR tasks with edits.
-  - To update an existing task, pass its exact current title (or id)
-  - depends_on = input for TASKn depends on output from TASKn-1
-  - Titles MUST BE SHORT ex: "Read config.py" or "Run test suite"
-  - action = specific action to perform (e.g. "Read config.py and extract DB_URL")
-  - expected_output = what correct completion produces (e.g. "DB_URL string value")
-  - OUTPUT:
-      <tool_call>
-      {
-      "name": "tg_sync",
-      "arguments": {
-        "tasks":
-          [
-            {
-              "title": "...",
-              "action": "...",
-              "expected_output": "...",
-              "depends_on": "..."
-            },
-            {
-              "title": "...",
-              "action": "...",
-              "expected_output": "..."
-            }
-          ]
-        }
-      }
-      </tool_call>
+Example — user: "Check the www_fetch_content tool for errors."
+1. List tree for the tools folder
+2. Search web tools for www_fetch_content
+3. Read its lines
+4. Identify errors
+5. Report to user
 
-## CASE: TOOL_RESULT
-  - OUTPUT: "OK" # This passes loop to main agent
+Each task has: title, action (what to do), expected_output (proof of done),
+depends_on (id it waits on, optional).
 
+EVERY TURN: call tg_sync once.
+- New/changed tasks in the message -> pass them.
+- Nothing new -> call tg_sync with an empty tasks list.
 """
 
 
@@ -147,22 +120,47 @@ def _drain_user_tasks(conversation_id: str) -> list[str]:
     return _pending_user_tasks.pop(conversation_id, [])
 
 
+_TG_SYNC_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "tg_sync",
+        "description": (
+            "Sync the conversation task list. Pass only NEW tasks or tasks with edits. "
+            "Omitted tasks are left untouched."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "action": {"type": "string"},
+                            "expected_output": {"type": "string"},
+                            "depends_on": {"type": "string"},
+                        },
+                        "required": ["title"],
+                    },
+                }
+            },
+            "required": ["tasks"],
+        },
+    },
+}
+
+
 def run_taskmgr(conversation_id: str, user_message: str, existing_tasks: list) -> list:
     """Build/refresh the task list for `conversation_id` from `user_message`.
 
-    existing_tasks: list of {"id","title","status"} dicts (current list).
-    The summary model sees ONLY the current task list plus the new user message —
-    no conversation history tail — to keep its input small and stateless per turn.
-    Returns the agent's final message list (for logging); the real effect is the
-    tg_sync write to ConversationTask.
+    Makes a single LLM call, parses the tg_sync tool args, and calls the tool
+    directly — no tool_result is ever sent back to the model, making looping
+    structurally impossible.
     """
-    g.conversation_id = conversation_id
+    from tools.taskgraph import TaskSyncTool
 
-    agent = Assistant(
-        llm=qwen_summary_cfg(),
-        function_list=["tg_sync"],
-        system_message=TASKMGR_SYSTEM_PROMPT,
-    )
+    g.conversation_id = conversation_id
 
     existing_block = (
         "\n".join(
@@ -171,8 +169,6 @@ def run_taskmgr(conversation_id: str, user_message: str, existing_tasks: list) -
         or "(empty)"
     )
 
-    # Tasks the user typed straight into the TaskList (at close). Treat each like a
-    # request the user made in chat: break it into subtasks the worker can execute.
     user_added = _drain_user_tasks(conversation_id)
     user_added_block = ""
     if user_added:
@@ -192,4 +188,20 @@ def run_taskmgr(conversation_id: str, user_message: str, existing_tasks: list) -
         + "Update the task list and call tg_sync once."
     )
 
-    return _drain(agent, [{"role": "user", "content": prompt}])
+    client = OpenAI(base_url=SUMMARIZE_SERVER_URL + "/v1", api_key="EMPTY")
+    response = client.chat.completions.create(
+        model=SUMMARIZE_MODEL,
+        messages=[
+            {"role": "system", "content": TASKMGR_SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        tools=[_TG_SYNC_SCHEMA],
+        tool_choice="required",
+    )
+
+    msg = response.choices[0].message
+    tool_calls = msg.tool_calls or []
+    if tool_calls:
+        TaskSyncTool().call(tool_calls[0].function.arguments)
+
+    return [msg.model_dump()]
