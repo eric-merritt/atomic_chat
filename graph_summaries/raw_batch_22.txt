@@ -1,0 +1,5 @@
+function::auth/db.py::init_db | This function creates all database tables based on the defined models. It is intended for development use, while Alembic should be used for production migrations.
+function::auth/db.py::get_db | This function returns a new local database session instance. It serves as a factory for obtaining database connections.
+function::auth/middleware.py::load_user | This function retrieves a user object from the database using the provided user ID. It utilizes the get_db helper to establish the database session.
+function::auth/middleware.py::load_user_from_request | This function attempts to authenticate a user by checking for a valid session cookie or an API key in the request headers. It returns the associated user object if authentication succeeds, or None otherwise.
+function::auth/middleware.py::is_public_path | This function checks if the given path is in the list of public paths or if it is a non-API route. It returns True if the path does not require authentication, and False otherwise.

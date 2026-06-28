@@ -1,0 +1,7 @@
+function::tools/web.py::_extract_main | This function extracts the main content from an HTML document. It likely removes navigation and footer elements to isolate the primary text.
+function::tools/web.py::_extract_links | This function extracts all hyperlinks from the provided HTML content. It returns a list of URLs found within the document.
+class::tools/web.py::FetchPageTool | This class defines a tool for fetching the content of a web page. It handles the HTTP request and returns the raw HTML or text.
+class::tools/web.py::FindDownloadLinkTool | This class defines a tool to find a specific download link on a page. It searches the content for a URL matching the provided criteria.
+function::tools/web.py::_run_download | This function executes the download of a file from a given URL. It saves the content to a specified local path.
+function::tools/web.py::_fetch_with_headers | This function performs an HTTP GET request with custom headers. It returns the response content from the server.
+function::tools/web.py::_run_hls_download | This function handles the download of an HLS stream. It processes the playlist and saves the media segments.

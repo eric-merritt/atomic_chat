@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/Avatar.tsx::Avatar | This function renders an image if a source is provided, otherwise it displays a user icon placeholder. It applies rounded styling and handles size and class name props for both states.
+function::frontend/src/components/atoms/Badge.tsx::Badge | This function renders a span element with specific styling for a badge component. It includes the provided children content and applies accent colors and border styles.
+class::frontend/src/components/atoms/Button.tsx::ButtonProps | This interface defines the props for the Button component, extending standard HTML button attributes. It adds a variant property and requires children content.
+function::frontend/src/components/atoms/Button.tsx::Button | This function renders a button element with styling based on the provided variant prop. It passes through additional props and includes the children content.
+class::frontend/src/components/atoms/Checkbox.tsx::CheckboxProps | This interface defines the props for a checkbox component including checked state and indeterminate state. It also defines event handlers for change and click events along with a class name.

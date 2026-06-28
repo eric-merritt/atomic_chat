@@ -1,0 +1,5 @@
+function::auth/routes.py::cli_deny | This function denies a pending CLI authentication token by updating its status to "denied". It returns a JSON response indicating the operation was successful.
+function::auth/routes.py::cli_poll | This function polls the status of a CLI authentication token and returns the current status or session ID. It handles expired tokens by removing them and returning an expired status.
+function::auth/seed.py::seed_admin | This function interactively creates a new admin user by prompting for username, email, and password. It validates inputs, checks for existing users, hashes the password, and saves the user to the database.
+function::auth/seed.py::promote_admin | This function promotes an existing user to the admin role by updating their record in the database. It checks if the user exists and if they are not already an admin before performing the update.
+class::auth/subtasks.py::SubTask | This class defines a SQLAlchemy model for subtasks with fields for ID, task ID, step number, tool name, status, and JSON data. It includes a property to check readiness and a method to convert the object to a dictionary.

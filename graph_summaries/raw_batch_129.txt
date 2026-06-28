@@ -1,0 +1,5 @@
+function::routes/chat.py::_confirm | This function handles command confirmation by either waiting for an asynchronous approval event or prompting the user for input synchronously. It returns a boolean indicating whether the command was approved to run.
+function::routes/chat.py::_call_tool | This method executes a tool call and checks if the result indicates a need for a new tool. If a new tool is required, it dynamically registers it into the function map and sets its time-to-live.
+function::routes/chat.py::_llama_error_msg | This function traverses an exception chain to extract a human-readable error message related to the llama server. It provides specific feedback for common issues like connection errors, timeouts, or context overflow.
+function::routes/chat.py::_str | This helper function converts an exception object to a lowercase string. It is used internally to normalize error messages for pattern matching.
+function::routes/chat.py::_clean_tool_result | The provided code block for this function is empty. Therefore, no summary can be generated based on the available content.

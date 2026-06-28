@@ -1,0 +1,5 @@
+function::tests/conftest.py::db_session | This function creates a database session fixture that starts a transaction for each test. It ensures the transaction is rolled back and resources are closed after the test completes.
+function::tests/conftest.py::test_user | This function creates a test user fixture with predefined credentials. It adds the user to the database session and flushes the changes.
+function::tests/conftest.py::ledger_with_defaults | This function creates a ledger fixture associated with the test user. It initializes the ledger with standard default accounts using a helper function.
+function::tests/test_accounting_fifo_lifo.py::_load | This function checks if the input result is already a dictionary. If not, it parses the JSON string into a dictionary object.
+function::tests/test_accounting_fifo_lifo.py::stocked_ledger | This function sets up a ledger fixture with initial cash and two inventory layers at different costs. It returns the database session containing this seeded data.

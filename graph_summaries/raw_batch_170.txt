@@ -1,0 +1,5 @@
+function::tests/test_tool_output.py::test_retries_on_failure | This test verifies that the retry decorator successfully retries a function up to the maximum limit. It asserts that the function returns the expected value after the third attempt.
+function::tests/test_tool_output.py::flaky | This helper function simulates a flaky operation that fails twice before succeeding. It increments a counter and raises an error until the counter reaches three.
+function::tests/test_tool_output.py::test_raises_after_max_retries | This test ensures that the retry decorator raises an exception after exhausting all retries. It uses a function that always fails to verify the error propagation.
+function::tests/test_tool_output.py::always_fail | This helper function is designed to always raise a ConnectionError. It is used to test scenarios where retries are exhausted.
+function::tests/test_tools_ecommerce.py::test_ecommerce_tools_registered | This test checks that the ecommerce tools are correctly registered in the tool registry. It asserts that the expected tool names are present in the registry keys.

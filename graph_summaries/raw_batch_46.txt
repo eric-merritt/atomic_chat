@@ -1,0 +1,5 @@
+function::frontend/src/api/history.ts::clearHistory | This function sends an asynchronous DELETE request to the /api/history endpoint. It includes credentials in the request to clear the user's history.
+class::frontend/src/api/mcp.ts::McpServer | This interface defines the structure for an MCP server object with various properties. It includes fields for id, name, vendor, url, category, tier, and other metadata.
+class::frontend/src/api/mcp.ts::McpCatalogResponse | This interface defines the structure for the MCP catalog response object. It includes schema version, timestamp, categories, count, and an array of McpServer objects.
+class::frontend/src/api/mcp.ts::McpFilters | This interface defines optional filter parameters for querying MCP servers. It allows filtering by tier, category, and self-hostable status.
+function::frontend/src/api/mcp.ts::fetchMcpServers | This function fetches MCP servers from the API with optional filters applied as query parameters. It returns the parsed JSON response or throws an error if the request fails.

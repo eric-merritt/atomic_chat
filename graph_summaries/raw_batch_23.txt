@@ -1,0 +1,5 @@
+function::auth/middleware.py::auth_guard | This function acts as a before-request hook to block unauthenticated access to protected API routes. It returns a 401 error if the user is not authenticated and the path is not public.
+function::auth/middleware.py::admin_required | This function is a decorator that restricts access to admin-only routes. It returns a 403 error if the user is not authenticated or does not have the admin role.
+function::auth/middleware.py::decorated | This inner function checks if the current user is authenticated and has an admin role. It returns a 403 error if the check fails, otherwise it executes the wrapped function.
+class::auth/models.py::Base | This class inherits from DeclarativeBase to serve as the base for SQLAlchemy models. It does not define any additional attributes or methods.
+function::auth/models.py::_uuid | This function generates a new UUID version 4. It returns the UUID as a string.

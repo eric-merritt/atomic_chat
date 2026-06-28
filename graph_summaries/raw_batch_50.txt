@@ -1,0 +1,5 @@
+function::frontend/src/api/tools.ts::transform | This function processes a raw tools response by building an index and merging available and selected tools. It sorts the combined list by original index and groups the tools into categories for the final output.
+function::frontend/src/api/tools.ts::fetchTools | This function fetches the tools data from the /api/tools endpoint. It handles errors and returns the transformed response data.
+function::frontend/src/api/tools.ts::toggleTool | This function toggles the selection state of a specific tool by name. It checks the current state, calls the appropriate select or deselect endpoint, and returns the updated transformed data.
+function::frontend/src/api/tools.ts::toggleCategory | This function toggles the selection state for all tools within a specified category. It determines if all tools in the category are selected, then selects or deselects them individually via API calls.
+class::frontend/src/api/workflowGroups.ts::ToolParam | This interface defines the structure for a tool parameter. It includes properties for type, required status, and description.

@@ -1,0 +1,5 @@
+function::auth/routes.py::init_oauth | This function initializes the OAuth extension for the Flask application. It registers GitHub and Google providers using credentials from environment variables if they are present.
+function::auth/routes.py::_find_or_create_oauth_user | This function attempts to find an existing user by their OAuth provider ID or email address. If no user exists, it generates a unique username and creates a new user record in the database.
+function::auth/routes.py::_store_oauth_token | This function saves or updates the OAuth access and refresh tokens for a specific user and provider. It ensures the token data is persisted in the database.
+function::auth/routes.py::oauth_github | This function checks if GitHub OAuth is configured and returns an error if it is not. Otherwise, it redirects the user to the GitHub authorization page with the specified callback URI.
+function::auth/routes.py::oauth_github_callback | This function handles the GitHub OAuth callback by exchanging the code for a token and fetching the user's profile and email. It then creates or updates the user, stores the token, logs them in, and redirects them to the home page.

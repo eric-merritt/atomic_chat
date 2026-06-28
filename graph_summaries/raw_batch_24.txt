@@ -1,0 +1,5 @@
+function::auth/models.py::_now | This function returns the current date and time in UTC timezone. It serves as a helper to ensure consistent timestamp generation.
+class::auth/models.py::User | This class defines the User model with fields for authentication, profile, and preferences. It also establishes relationships with sessions, API keys, and OAuth tokens.
+function::auth/models.py::get_id | This method returns the unique identifier of the user instance. It is likely used for compatibility with authentication libraries like Flask-Login.
+class::auth/models.py::UserSession | This class defines the UserSession model to track active user sessions. It includes fields for expiration, IP address, and user agent.
+class::auth/models.py::ApiKey | This class defines the ApiKey model for managing user API keys. It stores the key hash, prefix, label, and usage status.

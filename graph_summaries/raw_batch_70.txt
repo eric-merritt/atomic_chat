@@ -1,0 +1,5 @@
+class::frontend/src/components/atoms/Modal.tsx::ModalProps | This interface defines the props required for the Modal component. It includes state for visibility, a close handler, and child elements.
+function::frontend/src/components/atoms/Modal.tsx::Modal | This function renders a modal dialog with a backdrop and handles escape key events to close. It returns null if the modal is not open.
+class::frontend/src/components/atoms/ParticleCanvas.tsx::Particle | This interface defines the structure for a single particle object. It includes properties for position, movement, appearance, and color.
+function::frontend/src/components/atoms/ParticleCanvas.tsx::hexToRgb | This function converts a hexadecimal color string into an RGB array. It parses the hex value and extracts the red, green, and blue components.
+class::frontend/src/components/atoms/ParticleCanvas.tsx::ParticleCanvasProps | This interface defines the props for the ParticleCanvas component. It specifies a theme string property.

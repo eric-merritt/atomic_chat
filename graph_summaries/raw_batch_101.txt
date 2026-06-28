@@ -1,0 +1,10 @@
+function::tools/bug_bounty.py::call | This function fetches the hall of fame page from a bug bounty platform. It parses the HTML content to extract disclosure information.
+class::tools/bug_bounty.py::IntigritiProgramsTool | This class defines a tool to fetch bug bounty programs from Intigriti. It returns program listings including challenge information and rewards.
+function::tools/bug_bounty.py::call | This function fetches the programs page from Intigriti. It parses the HTML content to extract program listings.
+class::tools/bug_bounty.py::YesWeHackProgramsTool | This class defines a tool to fetch bug bounty programs from YesWeHack. It returns program listings with challenge information.
+function::tools/bug_bounty.py::call | This function fetches the programs page from YesWeHack. It parses the HTML content to extract program listings.
+class::tools/bug_bounty.py::SynackProgramsTool | This class defines a tool to fetch bug bounty programs from Synack. It returns enterprise security program listings.
+function::tools/bug_bounty.py::call | This function fetches the programs page from Synack. It parses the HTML content to extract program listings.
+class::tools/bug_bounty.py::BugBountySearchTool | This class defines a tool to search for bug bounty programs across multiple platforms. It aggregates results from HackerOne, Bugcrowd, Intigriti, YesWeHack, and Synack.
+function::tools/bug_bounty.py::call | This function searches for bug bounty programs on HackerOne. It constructs the search URL and prepares to fetch results.
+class::tools/bug_bounty.py::BugBountyVulnTypesTool | This class defines a tool to get common vulnerability types and testing methodologies. It returns OWASP Top 10 and other vulnerability classes with descriptions.

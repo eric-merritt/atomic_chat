@@ -1,0 +1,5 @@
+function::auth/conversations_jsonl.py::create_task | This function creates a new task entry with a unique ID, pending status, and provided metadata. It appends the task to the conversation's meta data and saves the updated information.
+function::auth/conversations_jsonl.py::update_task | This function locates a specific task by its ID within the conversation's metadata. It updates the task's title, status, or dependency fields if provided and saves the changes.
+function::auth/conversations_jsonl.py::delete_task | This function removes a specific task from the conversation's task list by its ID. It saves the updated metadata and returns true if the task was successfully deleted.
+function::auth/credentials.py::_machine_key | This function generates a unique machine-local key by hashing the hostname, username, and a version string. It returns the SHA-256 digest of this combined identity string.
+function::auth/credentials.py::_get_key | This function retrieves an encryption key by checking for an existing master password file. If the file exists, it hashes its content; otherwise, it falls back to the machine-specific key.

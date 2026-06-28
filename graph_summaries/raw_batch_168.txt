@@ -1,0 +1,5 @@
+function::tests/test_tool_autiscovery.py::test_all_tools_list_non_empty | This test verifies that the ALL_TOOLS list in the tools module is not empty. It ensures that at least one tool has been registered in the system.
+function::tests/test_tool_autodiscovery.py::test_new_browser_session_tools_auto_discovered | This test checks that browser session tools are automatically discovered without manual entry. It asserts that specific browser navigation and login tools exist in the registry.
+function::tests/test_tool_autodiscovery.py::test_new_recorder_tools_auto_discovered | This test verifies that recorder tools are automatically discovered without manual entry. It asserts that start, stop, and save recorder tools exist in the registry.
+class::tests/test_tool_output.py::TestToolResult | This class contains tests for the tool_result function to ensure it returns correct dictionary structures. It validates success, error, and empty argument scenarios.
+function::tests/test_tool_output.py::test_success_returns_dict | This test verifies that calling tool_result with data returns a success dictionary. It checks that the status, data, and error fields are set correctly.

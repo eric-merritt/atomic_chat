@@ -1,0 +1,5 @@
+function::frontend/src/components/ErrorBoundary.tsx::componentDidCatch | This method logs the caught error and error information to the console. It serves as a debugging aid for errors caught by the boundary.
+function::frontend/src/components/ErrorBoundary.tsx::render | This method renders a fallback UI with a retry button if an error state is detected. Otherwise, it renders the child components normally.
+class::frontend/src/components/atoms/AccountSelect.tsx::AccountSelectProps | This interface defines the required and optional properties for the AccountSelect component. It includes value, onChange handler, accounts list, and styling options.
+function::frontend/src/components/atoms/AccountSelect.tsx::AccountSelect | This function renders a select dropdown that groups active accounts by their type. It filters inactive accounts and orders the groups according to a predefined sequence.
+class::frontend/src/components/atoms/AmountInput.tsx::AmountInputProps | This interface defines the props for the AmountInput component. It specifies a numeric value, change handler, and optional styling or placeholder attributes.

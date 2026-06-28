@@ -1,0 +1,5 @@
+function::tests/test_integration.py::check | This function attempts to initialize an MCP client session with a local server to verify connectivity. It returns True if the connection succeeds and False if any exception occurs.
+function::tests/test_integration.py::skip_if_no_agents | This function checks if an agent is available on port 8101. It skips the current test with a helpful message if the agent is not running.
+function::tests/test_integration.py::test_filesystem_agent_lists_tools | This test connects to the local MCP server and retrieves the list of available tools. It asserts that both read_file and write_file tools are present in the list.
+function::tests/test_integration.py::run | This async function connects to the local MCP server and retrieves the list of available tools. It asserts that both read_file and write_file tools are present in the list.
+function::tests/test_integration.py::test_filesystem_agent_read_file | This test creates a temporary file with specific content and then calls the read_file tool via the MCP server. It asserts that the returned content matches the written text and cleans up the file afterwards.

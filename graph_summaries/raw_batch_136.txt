@@ -1,0 +1,5 @@
+function::routes/health.py::ready | This function checks the health status of the database and llama server dependencies. It returns a JSON payload with the status and latency details, along with an appropriate HTTP status code.
+function::routes/mcp_registry.py::_load_catalog | This function loads the mcp_servers.json file with a cache based on the file's modification time. It handles errors gracefully by returning a default empty catalog structure if the file is missing or invalid.
+function::routes/mcp_registry.py::_filter_servers | This function filters a list of server dictionaries based on optional tier, category, and self_hostable parameters. It returns the filtered list of servers that match the specified criteria.
+function::routes/mcp_registry.py::list_servers | This function retrieves the server catalog and filters the servers based on query parameters. It returns a JSON response containing the filtered list of servers and metadata.
+function::routes/mcp_registry.py::get_server | This function searches the server catalog for a specific server by its ID. It returns the server details if found, or a 404 error message if the server does not exist.

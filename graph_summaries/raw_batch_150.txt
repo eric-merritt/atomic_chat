@@ -1,0 +1,9 @@
+function::tests/test_accounting_primitives.py::test_resolve_account | This test verifies that the _resolve_account function correctly retrieves an existing account by name. It asserts that the returned account object is not None and has the correct asset type.
+
+function::tests/test_accounting_primitives.py::test_resolve_account_not_found | This test checks the behavior of _resolve_account when a non-existent account name is provided. It asserts that the function returns None in this case.
+
+function::tests/test_accounting_primitives.py::test_create_default_accounts | This test ensures that the default accounts are created for a new ledger. It queries the database and asserts that all expected account names are present.
+
+function::tests/test_accounting_reporting.py::_load | This helper function loads a result from JSON if it is a string. It returns the input directly if it is already a dictionary.
+
+function::tests/test_accounting_reporting.py::active_ledger | This fixture creates a ledger with several sample transactions for reporting tests. It records an owner investment, revenue, and an expense, then returns the session.

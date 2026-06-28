@@ -1,0 +1,10 @@
+function::tools/bug_bounty.py::_get_program_url | This method constructs a full URL by appending an optional path to the base URL. It returns just the base URL if no path is provided.
+class::tools/bug_bounty.py::HackerOneProgramsTool | This class defines a tool to fetch active bug bounty programs from HackerOne. It returns program listings including company names, scopes, and reward information.
+function::tools/bug_bounty.py::call | This method parses input parameters to determine the target URL for fetching program or company data. It retrieves the HTML content, strips noise, and processes the result.
+class::tools/bug_bounty.py::HackerOneDisclosuresTool | This class defines a tool to fetch vulnerability disclosures from HackerOne. It returns public security reports and details about the vulnerabilities found.
+function::tools/bug_bounty.py::call | This method parses input parameters to filter disclosures by company or vulnerability type. It fetches the HTML content, strips noise, and parses the disclosure data.
+class::tools/bug_bounty.py::HackerOneCompanyTool | This class defines a tool to fetch bug bounty program details for a specific company on HackerOne. It returns the program scope, reward structure, and submission guidelines.
+function::tools/bug_bounty.py::call | This method validates that a company parameter is provided and constructs the specific company URL. It fetches the HTML content, strips noise, and parses the page data.
+class::tools/bug_bounty.py::BugcrowdProgramsTool | This class defines a tool to fetch active bug bounty programs from Bugcrowd. It returns program listings including company names, scopes, and reward information.
+function::tools/bug_bounty.py::call | This method parses input parameters to filter programs by company or type. It fetches the HTML content, strips noise, and parses the program listings.
+class::tools/bug_bounty.py::BugcrowdDisclosuresTool | This class defines a tool to fetch vulnerability disclosures from Bugcrowd. It returns public security reports from Bugcrowd's Hall of Fame.

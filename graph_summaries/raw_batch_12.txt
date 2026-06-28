@@ -1,0 +1,5 @@
+class::auth/accounting_models.py::JournalLine | This class defines a SQLAlchemy model for the journal_lines table with columns for debit, credit, and account references. It includes a check constraint to ensure that only one side (debit or credit) has a positive value.
+class::auth/accounting_models.py::InventoryItem | This class defines a SQLAlchemy model for the inventory_items table with fields for sku, description, and price. It establishes relationships with the Ledger and InventoryLayer models.
+class::auth/accounting_models.py::InventoryLayer | This class defines a SQLAlchemy model for the inventory_layers table to track quantity and cost details. It links to an InventoryItem and an optional JournalEntry.
+function::auth/conv_store.py::_db | This function imports the get_db function from auth.db and returns the result of calling it. It serves as a helper to retrieve the database session.
+function::auth/conv_store.py::create_conversation | This function creates a new conversation entry based on the specified storage backend configuration. If using the database, it saves the conversation object and returns it as a dictionary.

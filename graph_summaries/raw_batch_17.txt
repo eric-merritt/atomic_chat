@@ -1,0 +1,5 @@
+function::auth/conversations_jsonl.py::_read_meta | This function reads and parses the JSON metadata file for a specific user and conversation. It returns None if the file does not exist or if parsing fails.
+function::auth/conversations_jsonl.py::_write_meta | This function serializes a metadata dictionary to JSON and writes it to the corresponding file path. It creates the file for the specified user and conversation ID.
+function::auth/conversations_jsonl.py::_read_messages | This function reads a JSONL file containing messages for a specific conversation. It parses each line into a dictionary and ignores any lines that fail to parse.
+function::auth/conversations_jsonl.py::create_conversation | This function generates a new conversation ID and creates a metadata dictionary with default values. It saves the metadata and creates an empty message file for the new conversation.
+function::auth/conversations_jsonl.py::list_conversations | This function retrieves all conversation metadata files for a user and applies optional filters for folder and search terms. It sorts the results by update time, applies pagination, and returns the formatted list.

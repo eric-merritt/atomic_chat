@@ -1,0 +1,5 @@
+function::frontend/src/api/conversations.ts::getConversationTasks | This function fetches the list of tasks associated with a specific conversation ID from the API. It returns the parsed JSON response containing the task data.
+function::frontend/src/api/conversations.ts::createConversationTask | This function sends a POST request to create a new task for a specific conversation with a title and optional dependency. It returns the parsed JSON response from the server.
+function::frontend/src/api/conversations.ts::updateConversationTask | This function sends a PATCH request to update the details of an existing task within a conversation. It returns the parsed JSON response from the server.
+function::frontend/src/api/conversations.ts::deleteConversationTask | This function sends a DELETE request to remove a specific task from a conversation. It does not return any data.
+function::frontend/src/api/history.ts::fetchHistory | This function fetches the chat history from the API and handles potential errors. It maps the raw history data into message objects and returns them in a structured response.

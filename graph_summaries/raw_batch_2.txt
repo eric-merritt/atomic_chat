@@ -1,0 +1,5 @@
+function::alembic/versions/d43a6b2d16db_add_conversation_tasks_table.py::upgrade | This function creates the conversation_tasks table with columns for id, conversation_id, message_id, title, status, and created_at. It also creates an index on the conversation_id column.
+function::alembic/versions/d43a6b2d16db_add_conversation_tasks_table.py::downgrade | This function drops the index on the conversation_id column. It also drops the conversation_tasks table.
+function::alembic/versions/e7b1a3f29c01_add_depends_on_to_conversation_tasks.py::upgrade | This function adds a depends_on column to the conversation_tasks table. This column is a self-referential foreign key that allows tasks to depend on other tasks.
+function::alembic/versions/e7b1a3f29c01_add_depends_on_to_conversation_tasks.py::downgrade | This function removes the depends_on column from the conversation_tasks table.
+function::alembic/versions/f03010185fb5_add_usage_events.py::upgrade | This function creates the usage_events table with columns for id, user_id, conversation_id, model, prompt_tokens, completion_tokens, and created_at. It also creates indexes on user_id and created_at.

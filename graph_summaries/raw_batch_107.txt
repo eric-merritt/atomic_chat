@@ -1,0 +1,7 @@
+function::tools/exploit.py::_exploit_reolink | This function returns exploit details for Reolink devices based on the specified exploit type. It handles credentials and RCE types by returning associated CVE information.
+class::tools/exploit.py::XpIpCamSpawn | This class defines a tool to spawn exploits for vulnerable IP cameras across multiple vendors. It targets specific CVEs including buffer overflows, auth bypass, RCE, and hardcoded credentials.
+class::tools/exploit.py::IPCameraScanTool | This class defines a tool for IP camera network scanning and vendor detection. It returns scanned ports, open services, detected vendor, and vendor confidence.
+class::tools/exploit.py::IPCameraRangeIdentify | This class defines a tool to identify public IP address ranges for IP camera scanning. It queries threat intelligence and IP databases to find public IP ranges associated with residential or commercial networks.
+function::tools/filesystem.py::_resolve | This function resolves a file path by expanding user home directories and handling relative paths. It places bare filenames into the default workspace directory if they are not absolute.
+function::tools/filesystem.py::_page_for | This function calculates the page number and start line argument for file reading. It returns a dictionary containing the 1-indexed page number and the calculated read start line.
+class::tools/filesystem.py::ReadTool | This class defines a tool to read a file and return its contents with line numbers. It returns at most 200 lines per call and supports pagination.

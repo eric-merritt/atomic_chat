@@ -1,0 +1,5 @@
+function::alembic/versions/80923e8fefe3_add_subtasks_table.py::downgrade | This function removes the index on the task_id column in the subtasks table. It also drops the entire subtasks table from the database.
+function::alembic/versions/a1b2c3d4e5f6_add_summary_refs.py::upgrade | This function creates a new table named summary_refs with columns for ref, user_id, data, and created_at. It sets ref as the primary key and adds an index on user_id.
+function::alembic/versions/a1b2c3d4e5f6_add_summary_refs.py::downgrade | This function drops the summary_refs table from the database. It reverses the changes made by the corresponding upgrade function.
+function::alembic/versions/af34c6d3d40d_initial_auth_schema.py::upgrade | This function is a placeholder for the upgrade schema operation. It currently contains no executable code and does nothing.
+function::alembic/versions/af34c6d3d40d_initial_auth_schema.py::downgrade | This function is a placeholder for the downgrade schema operation. It currently contains no executable code and does nothing.

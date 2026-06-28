@@ -1,0 +1,5 @@
+function::routes/chat.py::_group_turns | This function is not defined in the provided code snippet. It likely groups chat turns based on the function name.
+function::routes/chat.py::_turn_transcript | This function is not defined in the provided code snippet. It likely generates a transcript for a specific turn.
+function::routes/chat.py::summarize_context | This function defines a POST route for summarizing context. It is decorated with the chat blueprint route.
+function::routes/conversations.py::create_conversation | This function creates a new conversation entry in the store using data from the request JSON. It returns a JSON response with the created conversation or an error if storage is disabled.
+function::routes/conversations.py::list_conversations | This function retrieves a list of conversations for the current user with optional filtering and pagination. It returns the resulting list as a JSON response.

@@ -1,0 +1,5 @@
+function::routes/models.py::list_models | This function retrieves the list of available model aliases and identifies the currently loaded model. It returns this information along with the save directory path in a JSON response.
+function::routes/models.py::select_model | This function validates the requested model alias and switches the llama-server to that model if it is different from the current one. It then updates the user's preferences to save this selection and returns the new model status.
+function::routes/preferences.py::get_preferences | This function retrieves the current user's preferences from the session object. It returns the preferences dictionary in a JSON response.
+function::routes/preferences.py::update_preferences | This function updates the current user's preferences with the data provided in the request body. It commits the changes to the database and returns the updated preferences.
+function::routes/preferences.py::update_profile | This function updates the current user's username and email after validating length constraints and uniqueness. It returns the updated user profile information in a JSON response.

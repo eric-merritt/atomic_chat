@@ -1,0 +1,5 @@
+function::atomic_client/agent.py::execute_tool | This function retrieves a tool by name from the TOOLS dictionary and executes it with the provided parameters. It returns a standardized dictionary containing the status, data, and any potential error messages.
+class::atomic_client/agent.py::_ReauthNeeded | This class defines a custom exception named _ReauthNeeded. It is used to signal that re-authentication is required.
+function::atomic_client/agent.py::run_bridge | This function establishes a WebSocket connection to the server and handles the challenge-response authentication process. It continuously receives messages, executes tool calls if requested, and manages reconnection logic based on the provided flags.
+function::atomic_client/agent.py::main | This function parses command-line arguments for the server URL and reconnect behavior. It enters a loop to ensure a valid session and then runs the bridge, handling re-authentication if necessary.
+class::atomic_client/agent.py::_Tee | This class implements a simple tee object that writes output to two different streams simultaneously. It supports write, flush, and isatty methods to mimic a file-like object.

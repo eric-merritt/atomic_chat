@@ -1,0 +1,10 @@
+function::tools/web.py::_abs | This function resolves a relative URL against a base URL using urllib. It returns an empty string if the input URL is falsy.
+function::tools/web.py::_item | This function creates a dictionary containing a title and URL. It conditionally adds preview photo and video fields if they are provided.
+function::tools/web.py::_rel | This function strips a card selector prefix from an absolute field selector. It handles cases with or without the trailing greater-than symbol.
+function::tools/web.py::_page_summary | This function parses HTML content using BeautifulSoup to detect the content type. It defines helper functions for URL resolution and item creation.
+function::tools/web.py::_abs | This function resolves a relative URL against a base URL using urllib. It returns an empty string if the input URL is falsy.
+function::tools/web.py::_item | This function creates a dictionary containing a title and URL. It conditionally adds preview photo and video fields if they are provided.
+class::tools/web.py::SetCookiesTool | This class defines a tool for setting persistent session cookies for a specific domain. It warns against repeated calls and specifies the parameter schema.
+function::tools/web.py::call | This method parses JSON parameters to extract cookies and domain. It validates the inputs and begins processing the cookie string.
+class::tools/web.py::SetLocalStorageTool | This class defines a tool for setting LocalStorage key-value pairs in a headless browser. It requires a browser session and persists values for its lifetime.
+function::tools/web.py::call | This method parses JSON parameters to extract a URL and items string. It validates the URL and checks if the items string is provided.

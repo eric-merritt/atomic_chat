@@ -1,0 +1,5 @@
+function::frontend/src/components/molecules/UsageBar.tsx::dismiss | This function adds the current threshold to a set of dismissed items. It then saves this updated set and updates the local state.
+function::frontend/src/components/molecules/UserMenu.tsx::UserMenu | This component renders a user avatar button that toggles a dropdown menu. The menu contains navigation links to the dashboard and a logout option.
+function::frontend/src/components/organisms/AccountingWorkspace.tsx::AccountsPanel | This component fetches account data and displays it in a table with loading and error states. It renders account details such as name, type, normal balance, and number.
+class::frontend/src/components/organisms/AccountingWorkspace.tsx::TBLine | This interface defines the structure for a trial balance line item. It includes properties for account name, type, debit, and credit values.
+function::frontend/src/components/organisms/AccountingWorkspace.tsx::TrialBalancePanel | This component fetches and displays a trial balance table for a specific date. It includes a date picker, refresh button, and totals for debits and credits.

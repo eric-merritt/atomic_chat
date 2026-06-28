@@ -1,0 +1,9 @@
+class::frontend/src/components/organisms/ApiKeyPanel.tsx::ApiKey | This code defines a TypeScript interface named ApiKey. It specifies the structure for API key data including id, prefix, label, and timestamps.
+
+function::frontend/src/components/organisms/ApiKeyPanel.tsx::ApiKeyPanel | This React component renders a panel to manage API keys, including a list view and a create button. It handles fetching keys from the API, displaying them in a table, and triggering a modal for creation.
+
+function::frontend/src/components/organisms/ApiKeyPanel.tsx::k | This code snippet maps over an array of API keys to render individual rows. It passes key details and a revoke handler to the ApiKeyRow component for each item.
+
+function::frontend/src/components/organisms/ConnectionsPanel.tsx::e | This code snippet defines an onChange event handler for an input element. It calls the onTier function with the selected value from the event target.
+
+function::frontend/src/components/organisms/ConnectionsPanel.tsx::t | This code snippet maps over an array of tier strings to generate option elements. It uses the tier string as the key and value, and looks up the display label from TIER_LABELS.

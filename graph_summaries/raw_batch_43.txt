@@ -1,0 +1,5 @@
+function::frontend/src/api/chat.ts::streamChatAsync | This function initiates a streaming chat request by sending a POST message to the server with optional conversation ID. It returns a reader for the response stream and an abort function to cancel the request.
+function::frontend/src/api/chat.ts::cancelChat | This function sends a POST request to the cancel endpoint to stop the current chat stream. It includes credentials in the request but does not return any data.
+function::frontend/src/api/chat.ts::summarizeContext | This function sends a POST request to summarize the context of a specific conversation. It returns the percentage of context used from the server response.
+function::frontend/src/api/chat.ts::respondToBashConfirm | This function sends a POST request to confirm or deny a bash command execution for a specific conversation. It throws an error if the server response is not okay.
+function::frontend/src/api/conversations.ts::listConversations | This function fetches a list of conversations with optional search, folder, page, and limit parameters. It returns the JSON response containing the conversation data.

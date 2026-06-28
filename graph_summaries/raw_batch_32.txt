@@ -1,0 +1,5 @@
+function::auth/subtasks.py::ready | This method checks if the subtask is ready by verifying that parameters exist and the status is set to ready. It returns a boolean value indicating the readiness state.
+function::auth/subtasks.py::to_dict | This method converts the subtask object into a dictionary containing all its attributes. It includes fields like id, task_id, status, and parameters.
+function::auth/usage.py::_uuid | This function generates a unique identifier using uuid4. It returns the UUID as a string.
+function::auth/usage.py::_now | This function retrieves the current datetime in UTC timezone. It returns the datetime object.
+class::auth/usage.py::UsageEvent | This class defines a SQLAlchemy model for the usage_events table with columns for id, user_id, and token counts. It sets default values for the id and created_at fields using helper functions.

@@ -1,0 +1,5 @@
+function::tests/test_accounting_journal.py::test_void_transaction | This test verifies that voiding a transaction successfully reverses its financial impact. It confirms the account balance returns to zero after the void operation.
+function::tests/test_accounting_journal.py::test_void_already_voided | This test ensures that attempting to void an already voided transaction returns an error. It checks that the error message indicates the transaction is already voided.
+function::tests/test_accounting_journal.py::test_void_a_void | This test prevents voiding a reversal entry by checking for an appropriate error. It ensures that voiding a void operation is not allowed.
+function::tests/test_accounting_journal.py::test_account_ledger | This test creates two transactions and retrieves the ledger for the Cash account. It verifies the entry count and calculates the correct running balance.
+function::tests/test_accounting_ledger.py::_load | This helper function returns the input if it is already a dictionary. Otherwise, it parses the input string as JSON.

@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/ToolButton.tsx::ToolButton | This function renders a styled button component that changes appearance based on a selected state. It accepts a name, selection status, and click handler as props.
+class::frontend/src/components/molecules/AdBanner.tsx::AdBannerProps | This interface defines the props required for the AdBanner component. It specifies a single onClose function property.
+function::frontend/src/components/molecules/AdBanner.tsx::AdBanner | This function renders a promotional banner component with an upgrade link and a close button. It uses CSS variables for styling and includes placeholder text for an ad slot.
+class::frontend/src/components/molecules/ApGalleryCard.tsx::ApGalleryItem | This interface defines the structure for a gallery item object. It includes properties for title, url, and optional preview media fields.
+class::frontend/src/components/molecules/ApGalleryCard.tsx::Props | This interface defines the props for the gallery card component. It requires an item object, a selected boolean, and a toggle function.

@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/FilePreviewModal.tsx::renderJson | This function renders a JSON string inside a styled preformatted text block. It handles null values by defaulting to null and applies specific CSS classes for formatting.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::e | This code snippet defines an onClick handler that stops event propagation. It prevents the click event from bubbling up to parent elements.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::t | This code maps over a tabs array to render a button for each tab. It applies dynamic styles based on whether the tab is active or not.
+class::frontend/src/components/atoms/HierarchyRenderer.tsx::HierarchyNode | This interface defines the structure for a hierarchy node with properties like label, depth, and type. It includes optional fields for href and external link status.
+class::frontend/src/components/atoms/HierarchyRenderer.tsx::Props | This interface defines the props required for the component, including a list of nodes and a click handler. It specifies the type for the onFileClick callback function.

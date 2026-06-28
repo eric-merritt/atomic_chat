@@ -1,0 +1,5 @@
+class::frontend/src/components/molecules/SaveConversationModal.tsx::SaveConversationModalProps | This interface defines the props for the SaveConversationModal component. It includes state for open/close, and callbacks for save and discard actions.
+function::frontend/src/components/molecules/SaveConversationModal.tsx::SaveConversationModal | This component renders a modal for saving a conversation with a title input. It handles saving the conversation or discarding changes via button clicks.
+function::frontend/src/components/molecules/SaveConversationModal.tsx::e | This arrow function updates the local title state. It extracts the value from the input event target.
+class::frontend/src/components/molecules/ThinkingIndicator.tsx::ThinkingIndicatorProps | This interface defines the props for the ThinkingIndicator component. It includes a label, elapsed time, and preview text.
+function::frontend/src/components/molecules/ThinkingIndicator.tsx::ThinkingIndicator | This component renders a thinking indicator with animated dots. It displays the label, elapsed time, and optional preview text.

@@ -1,0 +1,6 @@
+class::tools/web.py::DownloadFileTool | This class defines a tool for downloading files from specified URLs. It handles the file transfer and saves the content to the local system.
+class::tools/web.py::DownloadStatusTool | This class provides a tool to check the status of ongoing or completed downloads. It returns information regarding the progress and success of the download task.
+class::tools/web.py::FindAllowedRoutesTool | This class defines a tool to retrieve allowed navigation routes or links. It filters available options based on predefined permissions or constraints.
+class::tools/web.py::BrowserQueryTool | This class implements a tool for querying information from the current browser context. It extracts specific data or answers based on the visible webpage content.
+class::tools/web.py::BrowserClickTool | This class defines a tool to simulate a click action on a web element. It interacts with the browser to trigger events associated with the clicked target.
+class::tools/web.py::FindWebStructureTool | This class provides a tool to analyze and return the structural hierarchy of the webpage. It outputs details about the DOM elements and their relationships.

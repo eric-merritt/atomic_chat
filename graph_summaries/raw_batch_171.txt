@@ -1,0 +1,5 @@
+function::tests/test_tools_ecommerce.py::test_ebay_sort_options | This test verifies that the EBAY_SORT_OPTIONS constant contains the "best_match" option. It also checks that the "price_low" option is present in the same constant.
+function::tests/test_tools_ecommerce.py::test_denver_area_cities | This test imports the CRAIGSLIST_DENVER_AREA constant from the ecommerce tools module. It asserts that the string "denver" is included in that constant.
+function::tests/test_tools_filesystem.py::test_all_15_tools_registered | This test imports the filesystem module to trigger tool registration side effects. It then asserts that all 15 expected filesystem tool names are present in the TOOL_REGISTRY.
+function::tests/test_tools_filesystem.py::test_class_names_importable | This test imports multiple tool classes from the tools.filesystem module. It asserts that ReadTool and CreateDirectoryTool are not None to verify successful import.
+function::tests/test_tools_filesystem.py::test_no_filesystem_tools_list | This test imports the tools.filesystem module as fs. It asserts that the FILESYSTEM_TOOLS attribute does not exist on the module.

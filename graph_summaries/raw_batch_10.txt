@@ -1,0 +1,5 @@
+function::atomic_client/bridge.py::get | This function retrieves a connection object from the registry using the provided user ID. It returns None if no connection is found for that user.
+function::auth/accounting_models.py::_uuid | This function generates a new UUID version 4. It returns the UUID as a string.
+function::auth/accounting_models.py::_utcnow | This function gets the current date and time. It returns the time in UTC timezone.
+class::auth/accounting_models.py::AccountType | This class defines an enumeration for different types of accounting accounts. It includes values for asset, liability, equity, revenue, and expense.
+class::auth/accounting_models.py::NormalBalance | This class defines an enumeration for normal balance types. It includes values for debit and credit.

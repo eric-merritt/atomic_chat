@@ -1,0 +1,5 @@
+class::frontend/src/atoms/user.ts::User | This interface defines the structure for a user object, including fields for id, username, email, role, and avatar. It also specifies the authentication method and optional user preferences.
+class::frontend/src/components/ErrorBoundary.tsx::Props | This interface defines the properties required for the ErrorBoundary component. It includes a mandatory children prop and an optional fallback prop.
+class::frontend/src/components/ErrorBoundary.tsx::State | This interface defines the state structure for the ErrorBoundary component. It includes a boolean flag for error status and an optional error object.
+class::frontend/src/components/ErrorBoundary.tsx::ErrorBoundary | This class implements a React error boundary component that catches rendering errors in its child components. It displays a fallback UI with a retry button when an error occurs.
+function::frontend/src/components/ErrorBoundary.tsx::getDerivedStateFromError | This static method updates the component's state when an error is caught during rendering. It sets the hasError flag to true and stores the error object.

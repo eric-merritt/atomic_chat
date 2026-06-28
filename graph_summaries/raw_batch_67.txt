@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/FilePreviewModal.tsx::r | This code parses the HTTP response body as JSON. It returns a promise that resolves to the parsed JSON object.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::data | This code checks if the parsed data contains an error property. If an error exists, it sets the error state; otherwise, it sets the file data state.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::e | This code catches any errors thrown during the promise chain. It converts the error to a string and updates the error state.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::renderDoc | This function renders an image if the file is an image type. Otherwise, it renders syntax-highlighted code with line numbers or displays loading and error states.
+function::frontend/src/components/atoms/FilePreviewModal.tsx::renderSummary | This function renders file metadata such as path, type, language, size, and line count. It handles loading and error states and formats the output for both image and code files.

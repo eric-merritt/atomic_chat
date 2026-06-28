@@ -1,0 +1,5 @@
+function::alembic/versions/f03010185fb5_add_usage_events.py::downgrade | This function defines the downgrade operation for a database migration. It drops the 'usage_events' table from the database.
+function::atomic_client/agent.py::_find_env_file | This function searches for a specific environment configuration file in several predefined locations. It returns the path to the first existing file found or None if no file exists.
+function::atomic_client/agent.py::_config_dir | This function determines the appropriate configuration directory path based on the operating system and execution environment. It returns a Path object pointing to the user's config folder.
+function::atomic_client/agent.py::_load_creds | This function attempts to read and parse a JSON credentials file from a specific path. It returns an empty dictionary if the file does not exist or if an error occurs during parsing.
+function::atomic_client/agent.py::_save_creds | This function saves a dictionary of credentials as formatted JSON to a file with restricted permissions. It ensures the parent directory exists and truncates the file before writing.

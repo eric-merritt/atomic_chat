@@ -1,0 +1,5 @@
+function::routes/preferences.py::change_password | This function validates the current password and ensures the new password meets length requirements. It then hashes the new password and saves it to the database for local accounts.
+function::routes/tools.py::select_group | This function toggles the selection status of a specified tool group in the user's preferences. It checks for required gate acceptance before updating the database.
+function::routes/tools.py::gate_status | This function retrieves the user's preferences to check the acceptance status of all valid gates. It returns a JSON object mapping each gate to its boolean acceptance state.
+function::routes/tools.py::accept_gate | This function validates the provided gate name and marks it as accepted in the user's preferences. It saves the updated preferences to the database and returns a success message.
+function::services/llama.py::_invalidate_loaded_model_cache | This function clears the currently loaded model cache by setting its value to None. It also resets the expiration timestamp to zero within a thread-safe lock.

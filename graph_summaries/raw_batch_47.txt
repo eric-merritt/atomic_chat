@@ -1,0 +1,5 @@
+class::frontend/src/api/models.ts::ModelsResponse | This interface defines the structure for a response containing a list of models, the current model, and a save directory. It specifies the types for each field to ensure type safety in the application.
+function::frontend/src/api/models.ts::fetchModels | This function fetches the list of available models from the API endpoint and handles potential errors. It parses the response into a structured object containing the model data, current selection, and save directory.
+function::frontend/src/api/models.ts::selectModel | This function sends a POST request to the API to switch the currently selected model. It handles errors by throwing an exception if the request fails.
+function::frontend/src/api/preferences.ts::getPreferences | This function fetches the user's preferences from the authentication API endpoint. It returns the preferences object or an empty object if none are found.
+function::frontend/src/api/preferences.ts::updatePreferences | This function sends a PATCH request to update the user's preferences with the provided partial data. It returns the updated preferences object from the server response.

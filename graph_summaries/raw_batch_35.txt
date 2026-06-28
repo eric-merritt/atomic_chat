@@ -1,0 +1,9 @@
+class::cli.py::_AuthExpired | This code defines a custom exception class named _AuthExpired that inherits from the built-in Exception class. It serves as a signal to indicate that the authentication session has expired.
+
+function::cli.py::_stream_chat | This function sends a chat message to the API and streams the response, handling authentication errors and various event types like tokens, tool calls, and bash confirmations. It prints the output to the console in real-time and returns the updated conversation ID.
+
+function::cli.py::main | This function initializes the CLI session and enters a loop to prompt the user for input, handling commands like 'new' and 'quit'. It calls the streaming chat function, manages authentication expiration by re-authenticating, and catches any other exceptions.
+
+function::compare_weights.py::build_shard_map | This function constructs a dictionary mapping weight keys to their absolute file paths by reading the model's index file or a global layers.json. It returns the map with resolved paths relative to the provided model directory.
+
+function::compare_weights.py::load_tensor | This function retrieves a specific tensor from a shard file using the provided shard map and key. It loads the tensor using safe_open and converts it to float32 precision before returning it.

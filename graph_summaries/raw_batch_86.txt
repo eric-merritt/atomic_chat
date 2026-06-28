@@ -1,0 +1,9 @@
+function::frontend/src/components/molecules/UsageBar.tsx::storageKey | This function generates a unique storage key string based on the current date. It ensures that dismissed usage states are isolated per day.
+
+function::frontend/src/components/molecules/UsageBar.tsx::loadDismissed | This function retrieves the set of dismissed thresholds from local storage using the generated key. It returns an empty set if the data is missing or invalid.
+
+function::frontend/src/components/molecules/UsageBar.tsx::saveDismissed | This function saves the provided set of dismissed thresholds to local storage. It serializes the set into a JSON string before storing it.
+
+class::frontend/src/components/molecules/UsageBar.tsx::UsageBarProps | This interface defines the expected properties for the UsageBar component. It specifies that the component requires a usage object of type UsageStatus.
+
+function::frontend/src/components/molecules/UsageBar.tsx::UsageBar | This component renders a visual bar indicating the current daily usage percentage against a limit. It handles dismissing the notification and persists that state to local storage for the current day.

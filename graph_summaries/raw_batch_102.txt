@@ -1,0 +1,9 @@
+class::tools/cli.py::BashTool | This class defines a tool for executing shell commands with a required plain-English description. It ensures the user is prompted to confirm the command before it runs.
+function::tools/cli.py::call | This method validates the input parameters and checks for filesystem access permissions. It then retrieves the command and description to proceed with execution.
+function::tools/cli.py::_confirm | This method sets up a threading event to handle user confirmation for the command. It places the command details into an interrupt queue and waits for the user's approval.
+function::tools/ecommerce.py::_parse_ebay_listings | This function extracts listing data from eBay search results HTML. It supports both legacy and current layout formats by restricting the search to the main results river.
+function::tools/ecommerce.py::_extract_gpu_model | This function extracts a normalized GPU model name from a listing title using regex patterns. It formats the model name correctly and returns it in uppercase.
+function::tools/ecommerce.py::_parse_shipping_cost | This function parses a shipping string into a numeric cost. It returns zero if the shipping is free or if the string is empty.
+function::tools/ecommerce.py::_validate_query | This function validates the input query string. It returns an error message if the query is empty or contains only whitespace.
+function::tools/ecommerce.py::_ebay_url | This function builds an eBay search URL with the provided query and optional parameters. It encodes the query and adds sorting, price, and condition filters.
+function::tools/ecommerce.py::_fetch_html | This function fetches the HTML content from a given URL. It handles the request with a timeout and returns the decoded text.

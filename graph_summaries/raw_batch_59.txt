@@ -1,0 +1,5 @@
+function::frontend/src/atoms/tool.ts::allSelected | This getter checks if all items are selected by comparing the selected count to the total count. It returns true if the total count is zero or if the counts are equal.
+function::frontend/src/atoms/tool.ts::someSelected | This getter checks if any items are currently selected. It returns true if the selected count is greater than zero.
+function::frontend/src/atoms/tool.ts::count | This getter returns the total count value. It provides access to the current count variable.
+function::frontend/src/atoms/tool.ts::selectedCount | This getter returns the selected count value. It provides access to the current selected count variable.
+class::frontend/src/atoms/user.ts::Preferences | This interface defines a type for user preferences including save mode, theme, and selected tools. It allows these properties to be optional.

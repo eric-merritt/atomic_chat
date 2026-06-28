@@ -1,0 +1,10 @@
+function::tools/recorder.py::_create_rec_driver | This function initializes a visible Firefox WebDriver instance using Selenium. It configures the driver with a specific user agent and a temporary profile directory.
+class::tools/recorder.py::StartRecorderTool | This class defines a tool to start a visible browser recording session. It accepts a URL parameter and returns a session ID immediately.
+function::tools/recorder.py::call | This method validates the input URL and checks for existing active recording sessions. It generates a unique session ID and prepares a file path for storing events.
+class::tools/recorder.py::StopRecorderTool | This class defines a tool to end the current recording session and return captured events. It ensures the session is safely terminated and data is retrieved.
+function::tools/recorder.py::call | This method checks if a recording session is active and stops the background thread. It drains remaining events from the driver and appends them to the session file.
+class::tools/recorder.py::SaveRecorderTool | This class defines a tool to save a recorded browser session as a replayable flow. It supports saving login or structure data and warns if a signup form is detected.
+function::tools/recorder.py::call | This method parses input parameters and validates the name and kind arguments. It checks for required credentials based on the kind of flow being saved.
+function::tools/recorder.py::_detect_signup_form | This function checks if the provided events resemble a signup form. It returns a warning message if signup indicators are found, otherwise it returns None.
+function::tools/recorder.py::_classify_event_for_login | This function converts a raw recorder event into a structured login flow step. It identifies input types like password or email and formats them accordingly.
+function::tools/recorder.py::_save_login_flow | This function processes events into steps and extracts the form action URL. It loads existing login data and prepares to update it with the new flow.

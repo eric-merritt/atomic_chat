@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/StatusText.tsx::StatusText | This function renders a span element with specific styling for muted, small, and light text. It accepts children content and an optional className prop to apply additional styles.
+class::frontend/src/components/atoms/Timestamp.tsx::TimestampProps | This interface defines the shape for the Timestamp component's props. It requires a numeric timestamp and an alignment string that is either left or right.
+function::frontend/src/components/atoms/Timestamp.tsx::formatTime | This function takes a numeric timestamp and converts it into a formatted time string. It returns an empty string if the timestamp is invalid and otherwise displays the hour and minute.
+function::frontend/src/components/atoms/Timestamp.tsx::Timestamp | This component renders a span displaying the formatted time from the provided timestamp. It applies specific styling and alignment based on the align prop.
+class::frontend/src/components/atoms/ToolButton.tsx::ToolButtonProps | This interface defines the props required for the ToolButton component. It includes a name string, a selected boolean, and an onClick function.

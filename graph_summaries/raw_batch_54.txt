@@ -1,0 +1,5 @@
+function::frontend/src/atoms/accounting.ts::isBalanced | This function calculates the total debits and credits from a list of journal lines. It returns true if the difference between them is negligible and the total is positive.
+function::frontend/src/atoms/accounting.ts::fmt | This function formats a number as a string with exactly two decimal places using US locale settings. It returns an empty string if the input number is falsy.
+class::frontend/src/atoms/agent.ts::LoopStep | This interface defines the structure for a single step in an agent loop, including its kind, description, and status. It also includes an optional result field for storing output.
+class::frontend/src/atoms/agent.ts::Plan | This interface defines a plan object containing an ID, a creation timestamp, and an array of loop steps. It represents a structured sequence of actions to be executed.
+class::frontend/src/atoms/api.ts::ApiResponse | This generic interface defines a standard API response structure containing data and an optional error message. It ensures consistent handling of successful and failed API calls.

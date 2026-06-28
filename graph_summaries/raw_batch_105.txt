@@ -1,0 +1,10 @@
+class::tools/exploit.py::XSSTool | This class defines a tool for generating and analyzing Cross-Site Scripting (XSS) payloads. It supports reflected, stored, DOM-based, and attribute clobbering attack patterns.
+function::tools/exploit.py::call | This method parses input parameters and validates the target URL for XSS testing. It initializes a payload library containing reflected XSS payloads.
+class::tools/exploit.py::SSRFTool | This class defines a tool for generating and testing Server-Side Request Forgery (SSRF) payloads. It targets internal networks, cloud metadata services, and local file access.
+function::tools/exploit.py::call | This method parses input parameters and validates the target URL for SSRF testing. It initializes a payload library containing internal network SSRF payloads.
+class::tools/exploit.py::CommandInjectionTool | This class defines a tool for generating OS command injection payloads. It tests basic, chained, redirected, and encoded injection techniques.
+function::tools/exploit.py::call | This method parses input parameters and validates the target URL for command injection testing. It initializes a payload library containing basic command injection payloads.
+class::tools/exploit.py::PathTraversalTool | This class defines a tool for generating path traversal exploit payloads. It tests basic, null-byte, double-encoded, and unicode traversal techniques.
+function::tools/exploit.py::call | This method parses input parameters and validates the target URL for path traversal testing. It initializes a payload library containing basic path traversal payloads.
+class::tools/exploit.py::RCETool | This class defines a tool for generating Remote Code Execution (RCE) exploit patterns. It targets deserialization, template injection, code injection, and file upload vulnerabilities.
+function::tools/exploit.py::call | This method parses input parameters and validates the target URL for RCE testing. It initializes a payload library containing deserialization RCE payloads.

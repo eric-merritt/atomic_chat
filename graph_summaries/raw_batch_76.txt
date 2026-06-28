@@ -1,0 +1,9 @@
+function::frontend/src/components/molecules/ChatInput.tsx::saveHistory | This function saves the provided history array to local storage. It limits the saved data to a maximum number of entries defined by MAX_HISTORY.
+
+class::frontend/src/components/molecules/ChatInput.tsx::DroppedImage | This interface defines the structure for a dropped image object. It includes properties for the file path, preview URL, and filename.
+
+class::frontend/src/components/molecules/ChatInput.tsx::ChatInputProps | This interface defines the props required for the ChatInput component. It includes callbacks for sending, canceling, and clearing, as well as state flags and optional image data.
+
+function::frontend/src/components/molecules/ChatInput.tsx::ChatInput | This component renders a chat input interface with support for text, images, and emoji. It handles message sending, history navigation via arrow keys, and UI states like streaming and disabled modes.
+
+class::frontend/src/components/molecules/ChatPopover.tsx::ChatPopoverProps | This interface defines the props for the ChatPopover component. It includes a boolean for open state and a callback function for closing the popover.

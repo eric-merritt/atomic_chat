@@ -1,0 +1,5 @@
+function::tests/test_config.py::test_config_max_retries | This test verifies that the MAX_RETRIES configuration constant is an integer. It also asserts that the value is non-negative.
+function::tests/test_context.py::test_user_message_conversion | This test checks the conversion of a user message database row to the Qwen format. It asserts that the output matches the expected dictionary with role and content.
+function::tests/test_context.py::test_assistant_message_conversion | This test checks the conversion of an assistant message database row to the Qwen format. It asserts that the output matches the expected dictionary with role and content.
+function::tests/test_context.py::test_tool_result_conversion | This test verifies the conversion of a tool result row containing tool calls to the Qwen format. It asserts that the role is function, the name is read, and the content is preserved.
+function::tests/test_context.py::test_tool_result_missing_tool_calls | This test verifies the conversion of a tool result row with empty tool calls to the Qwen format. It asserts that the role is function and the name defaults to unknown.

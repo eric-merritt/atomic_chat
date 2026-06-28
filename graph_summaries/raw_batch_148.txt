@@ -1,0 +1,5 @@
+function::tests/test_accounting_ledger.py::test_list_accounts_filtered | This test verifies that listing accounts with a specific type filter returns only the expected accounts. It asserts that "Cash" is included in the results while "Revenue" is excluded.
+function::tests/test_accounting_ledger.py::test_get_account_balance_zero | This test checks the balance of the "Cash" account for a specific user. It asserts that the returned balance is exactly zero.
+function::tests/test_accounting_ledger.py::test_update_account_rename | This test verifies the functionality to rename an existing account. It asserts that the account name is successfully updated to the new value.
+function::tests/test_accounting_ledger.py::test_update_account_deactivate | This test verifies the functionality to deactivate an existing account. It asserts that the active status is successfully set to false.
+function::tests/test_accounting_models.py::test_models_importable | This test ensures that all accounting models can be imported from the module. It also verifies that the table names for these models are correctly defined.

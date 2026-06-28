@@ -1,0 +1,5 @@
+function::tests/test_accounting_inventory.py::test_list_inventory | This test registers a widget item and receives 50 units of inventory. It then verifies that the list inventory function returns the correct quantity on hand.
+function::tests/test_accounting_inventory.py::test_deactivate_inventory_item | This test registers a service item and deactivates it. It asserts that the deactivation was successful and the item is marked as inactive.
+function::tests/test_accounting_inventory.py::test_deactivate_with_remaining_inventory | This test registers a widget item and receives 10 units of inventory. It verifies that deactivating the item fails because there is remaining inventory.
+function::tests/test_accounting_journal.py::_load | This helper function checks if the input is already a dictionary. If not, it parses the input string as JSON and returns the result.
+function::tests/test_accounting_journal.py::test_journalize_basic | This test journalizes a basic transaction involving cash and owner's capital. It asserts that the operation was successful and created two journal lines.

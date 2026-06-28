@@ -1,0 +1,10 @@
+function::tools/jobs.py::_parse_cards | This function parses Indeed search result HTML into a list of job dictionaries. It attempts to use structured selectors first and falls back to data-jk attributes if necessary.
+class::tools/jobs.py::JobSearchTool | This class defines a tool for searching Indeed for job postings based on a query. It returns a compact list of job details including title, company, location, and URL.
+function::tools/jobs.py::call | This method processes the search parameters including query, location, radius, and remote status. It validates the inputs and prepares them for the job search request.
+class::tools/jobs.py::JobFetchTool | This class defines a tool to fetch the full description of a single Indeed job posting. It accepts a job key or URL and returns detailed job information.
+function::tools/jobs.py::call | This method parses the input parameters to get the job key or URL. It validates the URL format and constructs the full URL if only a job key is provided.
+class::tools/mcp.py::MCPInitializeConnection | This class defines a tool to connect to an MCP server and list its available tools. It requires a URL parameter that must start with http:// or https://.
+function::tools/mcp.py::_initialize_connection | This method initializes the connection to the MCP server and fetches the available tools. It uses a streamable HTTP client and a session to perform the initialization.
+function::tools/mcp.py::call | This method parses the input parameters and validates the provided URL. It ensures the URL starts with http:// or https:// and ends with a slash.
+class::tools/mcp.py::MCPToolCall | This class defines a tool that directly calls a specific tool on an MCP server. It accepts the server URL, tool name, and parameters to pass to the tool.
+function::tools/mcp.py::_call_remote | This method initializes a session with the MCP server and calls the specified tool. It returns the result of the tool call using the provided parameters.

@@ -1,0 +1,5 @@
+function::context/tokens.py::_init_model | This method initializes a Llama model instance for vocabulary-only tokenization if the model path exists. It catches any exceptions during initialization and logs a warning if the process fails.
+function::context/tokens.py::_tokenize_raw | This method returns the token count of the input text using the initialized model if available. It falls back to a rough estimation by dividing the text length by four if the model is not present.
+function::context/tokens.py::count_tokens_from_messages | This method renders the provided messages into a Qwen template string. It attempts to count tokens via a server call and falls back to raw tokenization if the server is unavailable.
+function::context/tokens.py::count_tokens | This method attempts to count tokens of the input text via a server call. It falls back to raw tokenization if the server call returns None.
+function::context/tokens.py::_get_counter | This function implements a thread-safe singleton pattern to return a TokenCounter instance. It initializes the global counter variable if it is currently None.

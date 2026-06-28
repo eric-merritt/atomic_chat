@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/DateSeparator.tsx::DateSeparator | This component renders a sticky date label centered on the screen using a provided timestamp. It returns null if the formatted date label is empty.
+function::frontend/src/components/atoms/Dot.tsx::Dot | This component renders a small, rounded, pulsing dot with a configurable animation delay. It accepts an optional className for additional styling.
+class::frontend/src/components/atoms/DropdownMenu.tsx::MenuItem | This interface defines the structure for a menu item with a label and an onClick handler. It ensures type safety for the items passed to the dropdown.
+class::frontend/src/components/atoms/DropdownMenu.tsx::DropdownMenuProps | This interface defines the props for the DropdownMenu component, including items, open state, and close handler. It also includes an optional anchor reference and class name.
+function::frontend/src/components/atoms/DropdownMenu.tsx::DropdownMenu | This component renders a dropdown menu portal positioned relative to an anchor element. It handles closing the menu when clicking outside or selecting an item.

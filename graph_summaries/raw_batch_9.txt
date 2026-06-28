@@ -1,0 +1,5 @@
+function::atomic_client/bridge.py::__init__ | This method initializes the connection object by storing the websocket and user ID. It also sets up a threading lock and an empty dictionary for tracking pending requests.
+function::atomic_client/bridge.py::call | This method sends a tool call request to the websocket with a unique ID and waits for a response. It handles errors and timeouts by returning an error status or the received result.
+function::atomic_client/bridge.py::resolve | This method updates the pending request entry with the provided result. It then signals the associated event to unblock the waiting caller.
+function::atomic_client/bridge.py::register | This function creates a new connection instance for the given user ID and websocket. It then stores this connection in the global registry under a lock.
+function::atomic_client/bridge.py::unregister | This function removes the connection for the specified user ID from the global registry. It performs this operation safely within a lock.

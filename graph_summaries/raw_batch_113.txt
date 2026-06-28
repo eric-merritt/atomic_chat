@@ -1,0 +1,10 @@
+function::tools/onlyfans.py::call | This function initializes a browser driver and sets up tools for scrolling and saving media. It enters a loop to scroll through messages and extract media elements from the page.
+class::tools/onlyfans.py::ExtractMediaTool | This class defines a tool to extract media from all conversations in the OnlyFans inbox. It validates the save directory parameter and prepares to process the messages.
+function::tools/onlyfans.py::call | This function navigates to the messages page and scrolls through all conversations. It initializes counters for processed and failed items and prepares to extract media.
+function::tools/presentation.py::_ext | This function parses a URL to extract the file extension from the path. It returns the extension in lowercase format.
+function::tools/presentation.py::_require_str | This function validates that a specific key in a dictionary exists and contains a non-empty string. It returns an error message if the validation fails or None if it passes.
+function::tools/presentation.py::_require_ext | This function checks if the file extension of a URL is within a list of allowed extensions. It returns an error message if the extension is invalid or None if it is valid.
+function::tools/presentation.py::_check_ext | This function validates the URL extension but allows URLs with no extension to pass. It returns an error message if the extension is present but not in the allowed list.
+class::tools/presentation.py::ApImg | This class defines a tool to display an image inline in the chat response. It specifies the required URL parameter and an optional caption.
+function::tools/presentation.py::call | This function parses the input JSON and validates the URL and its extension. It returns a tool result containing the image type, URL, and caption.
+class::tools/presentation.py::ApVid | This class defines a tool to display a video preview inline in the chat response. It is intended for short preview clips and requires a direct video URL.

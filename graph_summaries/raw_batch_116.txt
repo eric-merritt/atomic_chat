@@ -1,0 +1,10 @@
+function::tools/recorder.py::_save_structure_flow | This function updates a JSON file by removing any existing entry with the given name and appending a new entry containing the name and events. It ensures the file has secure permissions and returns a tool result with the file path.
+function::tools/tasklist.py::_ordered_tasks_for_current_conv | This function retrieves the current conversation ID and creates a database session. It returns the session and a list of tasks for that conversation, ordered by creation time.
+function::tools/tasklist.py::_task_dto | This function creates a dictionary representation of a task object. It includes the task's index, ID, title, and status.
+class::tools/tasklist.py::TaskListRefTool | This class defines a tool to reference the current task list. It returns a list of task details including ID, number, title, and status.
+function::tools/tasklist.py::call | This method retrieves the ordered tasks for the current conversation from the database. It formats them into a list of DTOs and returns the result while ensuring the database connection is closed.
+class::tools/tasklist.py::TaskListAddTool | This class defines a tool to add a new task to the current conversation's task list. It allows inserting the task between two existing tasks or appending it to the end.
+function::tools/tasklist.py::call | This method parses the input JSON and validates that a title is provided and an active conversation exists. It extracts optional parameters for positioning and dependencies before proceeding.
+class::tools/tasklist.py::TaskListDoneTool | This class defines a tool to mark a specific task as done by its ID. It requires the task ID as a parameter.
+function::tools/tasklist.py::call | This method parses the input JSON and validates that a task ID is provided. It queries the database to find the specific task within the current conversation.
+function::tools/torrent.py::_qb_login | This function authenticates with the qBittorrent API using the provided username and password. It sends a POST request and checks if the response indicates a successful login.

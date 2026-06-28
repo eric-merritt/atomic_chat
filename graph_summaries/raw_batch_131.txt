@@ -1,0 +1,5 @@
+function::routes/chat.py::chat_stream | This function defines a POST route for the /stream endpoint. It is part of the chat blueprint.
+function::routes/chat.py::generate | This function commits the database transaction. It ensures data changes are saved.
+function::routes/chat.py::_log | This function yields a JSON string containing the context percentage. It appends a newline character to the output.
+function::routes/chat.py::bash_confirm | This function defines a POST route for the /bash_confirm endpoint. It is part of the chat blueprint.
+function::routes/chat.py::chat_cancel | This function defines a POST route for the /cancel endpoint. It is part of the chat blueprint.

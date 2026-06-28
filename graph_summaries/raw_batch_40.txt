@@ -1,0 +1,5 @@
+function::context/tokens.py::count_tokens | This function counts the number of tokens in a list of message dictionaries. It uses an internal counter to perform the calculation.
+function::context/tokens.py::estimate_tokens | This function estimates the token count of a text string by dividing its length by four. It ensures the returned value is at least one.
+function::context/tokens.py::estimate_context_usage | This function calculates the ratio of used context tokens to the maximum allowed context size. It returns a float capped at 1.0.
+function::frontend/src/App.tsx::AuthGate | This component is not defined in the provided code snippet. No summary can be generated from the empty content.
+function::frontend/src/App.tsx::App | This component is not fully defined in the provided code snippet. No summary can be generated from the incomplete content.

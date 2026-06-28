@@ -1,0 +1,10 @@
+function::tools/torrent.py::call | This function retrieves a list of torrents from the qBittorrent API with a specified limit. It handles errors and returns an empty result if no torrents are found.
+class::tools/torrent.py::TorrentDownloadTool | This class defines a tool for downloading torrents via URL or magnet link. It serves as an alias for the torrent_add functionality.
+function::tools/torrent.py::call | This function acts as a wrapper that delegates the call to the TorrentAddTool. It passes the provided parameters and keyword arguments directly to that tool.
+function::tools/vector_store.py::_get_client | This function initializes a persistent ChromaDB client and a sentence transformer embedding function. It ensures the database directory exists and caches the client instance.
+function::tools/vector_store.py::_collection | This function retrieves or creates a specific collection within the vector database. It uses the previously initialized client and embedding function.
+class::tools/vector_store.py::KnowledgeStore | This class defines a tool for storing text content into a persistent vector database. It allows for semantic retrieval of facts and documents later.
+function::tools/vector_store.py::call | This function parses input parameters to extract text, ID, and collection name. It prepares the metadata and retrieves the target collection for storage.
+class::tools/vector_store.py::KnowledgeSearch | This class defines a tool for semantically searching the vector database. It returns relevant documents and their similarity scores based on a query.
+function::tools/vector_store.py::call | This function parses the search query and retrieves the specified collection. It returns an empty result if the collection is empty, otherwise it performs the query.
+function::tools/vector_store.py::_auto_id | This function generates a unique identifier for a given text string. It uses the first 16 characters of the SHA1 hash of the text.

@@ -1,0 +1,5 @@
+function::atomic_client/agent.py::__init__ | This method initializes the object by assigning the provided arguments a and b to the private attributes _a and _b. It sets up the internal state for the agent instance.
+function::atomic_client/agent.py::write | This method writes the provided string s to both internal objects _a and _b. It ensures that data is sent to both underlying streams simultaneously.
+function::atomic_client/agent.py::flush | This method flushes the buffers of both internal objects _a and _b. It ensures that all pending data is written out to both streams.
+function::atomic_client/agent.py::isatty | This method returns False to indicate that the stream is not a terminal. It provides a standard interface method for stream checking.
+class::atomic_client/bridge.py::_Connection | This class manages a WebSocket connection for a specific user, handling tool calls with timeouts and thread-safe sending. It stores pending requests and resolves them when results are received.

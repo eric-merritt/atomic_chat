@@ -1,0 +1,11 @@
+function::tools/onlyfans.py::_get_driver | This function retrieves the currently active Firefox WebDriver session. It raises a RuntimeError if the driver has not been initialized yet.
+function::tools/onlyfans.py::_create_driver_from_cookies | This function initializes an authenticated Firefox WebDriver using a provided list of cookies. It sets the global _active_driver variable for subsequent use.
+function::tools/onlyfans.py::safe_find | This function attempts to find a web element within a parent element using the specified locator strategy. It returns None if an exception occurs during the search.
+class::tools/onlyfans.py::ScrollConversationsTool | This class defines a tool that scrolls the OnlyFans conversations sidebar to load all available conversations. It uses a retry decorator and executes JavaScript to scroll until the height stops changing.
+function::tools/onlyfans.py::call | This method retrieves the driver and finds the conversation scroller element. It executes a loop to scroll down and wait until the element height stabilizes.
+class::tools/onlyfans.py::ScrollMessagesTool | This class defines a tool that scrolls the current conversation to load additional messages. It uses a retry decorator and executes JavaScript to scroll the message container.
+function::tools/onlyfans.py::call | This method retrieves the driver and scrolls the message container to the bottom. It waits for two seconds and returns a success message or an error.
+class::tools/onlyfans.py::SaveMediaTool | This class defines a tool to download and save an OnlyFans media file from a URL to a local path. It requires the URL and file path as parameters.
+function::tools/onlyfans.py::call | This method parses the input parameters to extract the URL and destination path. It calls the DownloadFileTool to perform the download operation.
+class::tools/onlyfans.py::ExtractImagesAndVideosTool | This class defines a tool to extract all images and videos from the current OnlyFans conversation. It requires a save directory path as a parameter.
+function::tools/onlyfans.py::call | This method parses the input parameters to extract the save directory. It is incomplete in the provided snippet but likely proceeds to extract media.

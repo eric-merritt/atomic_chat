@@ -1,0 +1,10 @@
+class::tools/ecommerce.py::_EbaySearchHandler | This class defines a tool for searching eBay listings by keyword with optional filters. It specifies the parameters for query, sort order, and price range.
+function::tools/ecommerce.py::call | This method parses the input parameters and validates the search query. It then retrieves sorting, price, and pagination settings to prepare for the search execution.
+function::tools/ecommerce.py::_parse_amazon_listings | This function extracts listing data from Amazon search results HTML using regular expressions. It attempts to match specific data components to retrieve product information.
+class::tools/ecommerce.py::_AmazonSearchHandler | This class defines a tool for searching Amazon and returning parsed product listings. It specifies the parameters for query, price range, and sorting options.
+function::tools/ecommerce.py::call | This method parses the input parameters and validates that the query is not empty. It constructs the Amazon search URL with the encoded query and other parameters.
+function::tools/ecommerce.py::_parse_craigslist_listings | This function extracts listing data from Craigslist search results HTML. It parses the HTML to find items and determines fulfillment type based on locality.
+function::tools/ecommerce.py::_craigslist_search_city | This function searches a single Craigslist city and returns parsed listings. It constructs the search URL with the query, category, and price filters.
+class::tools/ecommerce.py::_CraigslistSearchHandler | This class defines a tool for searching Craigslist in one city or across multiple cities. It specifies the parameters for query, city, scope, and category.
+function::tools/ecommerce.py::call | This method parses the input parameters and validates the search query. It retrieves the scope, city, category, and price limits to prepare for the search.
+class::tools/ecommerce.py::EcommerceSearchTool | This class defines a tool for searching ecommerce platforms for product listings. It specifies the platform parameter to choose between eBay, Amazon, or Craigslist.

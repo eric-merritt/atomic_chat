@@ -1,0 +1,5 @@
+function::tests/test_accounting_models.py::test_account_type_enum | This test verifies that the AccountType enum values match their expected string representations. It checks asset, liability, equity, revenue, and expense types.
+function::tests/test_accounting_models.py::test_normal_balance_derivation | This test asserts that the NORMAL_BALANCE_MAP correctly maps each AccountType to its corresponding NormalBalance. It verifies debit and credit assignments for all account types.
+function::tests/test_accounting_models.py::test_source_type_enum | This test checks that the SourceType enum values correspond to their expected string literals. It validates manual, fifo_sale, and void entries.
+function::tests/test_accounting_primitives.py::test_get_ledger_not_found | This test ensures that _get_ledger returns None when a non-existent user ID is provided. It verifies the behavior for missing ledger records.
+function::tests/test_accounting_primitives.py::test_get_ledger_found | This test confirms that _get_ledger returns a valid ledger object for an existing user. It also checks that the returned ledger has the correct name.

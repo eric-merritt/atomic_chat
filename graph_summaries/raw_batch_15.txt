@@ -1,0 +1,5 @@
+function::auth/conv_store.py::_msg_to_dict | This function converts a message object into a dictionary representation. It handles optional fields and formats the timestamp to ISO format.
+function::auth/conv_store.py::_task_to_dict | This function converts a task object into a dictionary representation. It includes the task's status, dependencies, and formatted creation timestamp.
+class::auth/conversation_tasks.py::ConversationTask | This class defines the SQLAlchemy model for the conversation_tasks table. It establishes relationships with conversations and other tasks for dependency tracking.
+class::auth/conversations.py::Conversation | This class defines the SQLAlchemy model for the conversations table. It includes a relationship to the user and a cascade-deleted list of messages.
+class::auth/conversations.py::ConversationMessage | This class defines the SQLAlchemy model for the conversation_messages table. It stores message content, images, tool calls, and links back to the parent conversation.

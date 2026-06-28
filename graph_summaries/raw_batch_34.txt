@@ -1,0 +1,5 @@
+function::cli.py::_save_creds | This function creates the parent directory for the credentials file if it does not exist. It then writes the provided credentials dictionary to the file as formatted JSON.
+function::cli.py::_make_session | This function initializes a new requests session object. It configures the session with an API key from environment variables or a session ID from the provided credentials.
+function::cli.py::_check_auth | This function attempts to retrieve the current user's profile from the authentication endpoint. It returns True if the request is successful, otherwise it returns False.
+function::cli.py::_browser_auth | This function initiates a browser-based authentication flow by generating a token and displaying a URL. It polls the server for approval status and returns the session ID if approved.
+function::cli.py::ensure_auth | This function attempts to authenticate using an API key, then a saved session, and finally falls back to browser authentication. It returns a configured requests session object upon successful authentication.

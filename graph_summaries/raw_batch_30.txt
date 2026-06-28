@@ -1,0 +1,9 @@
+function::auth/routes.py::oauth_google | This function initiates the Google OAuth authorization flow by redirecting the user to Google's login page. It first checks if the Google OAuth client is configured and returns an error if it is not.
+
+function::auth/routes.py::oauth_google_callback | This function handles the callback from Google OAuth, retrieving the user's information and creating or finding the corresponding user account. It then creates a new session, logs the user in, and redirects them to the home page with a session cookie.
+
+function::auth/routes.py::_purge_cli_tokens | This function removes expired CLI tokens from the internal dictionary to prevent memory leaks. It iterates through the tokens and deletes any entry where the expiration time is in the past.
+
+function::auth/routes.py::cli_initiate | This function generates a new unique token for CLI authentication and stores it in memory with a pending status. It also purges any expired tokens before creating the new entry and returns the token to the client.
+
+function::auth/routes.py::cli_approve | This function validates a provided CLI token and, if valid, creates a new session for the current user. It updates the token's status to approved, stores the session ID, and returns a success message.

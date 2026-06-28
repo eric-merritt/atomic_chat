@@ -1,0 +1,9 @@
+function::tools/web.py::_find_page_nav | This function is missing its implementation code in the provided block. It likely handles navigation logic for web pages.
+function::tools/web.py::_extract_pages | This function is missing its implementation code in the provided block. It likely extracts page content or metadata.
+function::tools/web.py::get_page_links | This function is missing its implementation code in the provided block. It likely retrieves links from a web page.
+function::tools_server.py::_register_qwen_tool | This function registers a qwen-agent BaseTool subclass as an MCP tool by dynamically creating a function with the correct parameter signature. It extracts the name, description, and schema properties to ensure FastMCP can introspect it properly.
+function::tools_server.py::_wrapper | This asynchronous wrapper function binds arguments to the signature and applies defaults before calling the tool class. It returns the result as a JSON string or handles exceptions by returning an error status.
+function::tools_server.py::main | This function prints startup information including the port, number of registered tools, and transport details. It then starts the MCP server using the streamable-http transport.
+function::tree_walk.py::safe_decode | This function decodes bytes to a string using UTF-8 encoding. It replaces any invalid UTF-8 sequences with a replacement character.
+function::tree_walk.py::walk_tree | This function yields the current node and then recursively yields all its children. It acts as a generator to traverse the tree structure.
+function::tree_walk.py::get_node_name | This function finds the human-readable name of an AST node by checking its children for specific types. It returns the decoded text if a matching type or string is found.

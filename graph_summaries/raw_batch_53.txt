@@ -1,0 +1,5 @@
+class::frontend/src/atoms/accounting.ts::JournalEntryDraft | This interface defines the structure for a draft journal entry containing a date, memo, and lines. It serves as a data model for incomplete accounting transactions.
+class::frontend/src/atoms/accounting.ts::JournalEntryResult | This interface defines the structure for a completed journal entry result including an ID and calculated totals. It includes detailed line items with account types and effects.
+class::frontend/src/atoms/accounting.ts::LedgerResult | This interface defines the structure for a ledger result containing an ID, name, and currency. It also includes a list of accounts that were created within this ledger.
+class::frontend/src/atoms/accounting.ts::ToolResponse | This generic interface defines a standard response structure with a status, data, and error message. It is used to wrap API or tool execution results.
+function::frontend/src/atoms/accounting.ts::emptyLine | This function returns a default JournalLine object with an empty account string and zero values for debit and credit. It provides a template for creating new empty journal lines.

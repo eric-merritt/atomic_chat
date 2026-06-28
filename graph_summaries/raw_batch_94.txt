@@ -1,0 +1,10 @@
+function::tools/accounting.py::call | This function retrieves a list of accounts for the current user from the database. It parses the input parameters and ensures the database connection is closed after execution.
+function::tools/accounting.py::_get_account_balance_impl | This function calculates the balance of a specific account for a user up to a given date. It validates the existence of the ledger and account, returning error messages if they are missing.
+class::tools/accounting.py::GetAccountBalanceTool | This class defines a tool to retrieve the current balance of a single account. It specifies the required account name parameter and an optional date parameter.
+function::tools/accounting.py::call | This function retrieves the balance of a specified account for the current user. It parses the input, calls the implementation function, and closes the database connection.
+function::tools/accounting.py::_update_account_impl | This function updates the name, number, or active status of an existing account. It validates the ledger and account existence before performing the update.
+class::tools/accounting.py::UpdateAccountTool | This class defines a tool to update an account's details such as name or status. It specifies the parameters for the current name and the new values to apply.
+function::tools/accounting.py::call | This function updates an account's details for the current user. It commits the transaction on success or rolls back on error, then closes the database connection.
+function::tools/accounting.py::_journalize_transaction_impl | This function creates a balanced journal entry for a transaction. It validates the date format and checks for the existence of the user's ledger.
+class::tools/accounting.py::JournalizeTransactionTool | This class defines a tool to record a double-entry journal transaction. It requires the date, memo, and lines, ensuring debits equal credits.
+function::tools/accounting.py::call | This function records a journal transaction for the current user. It commits the changes on success, handles errors by rolling back, and closes the database.

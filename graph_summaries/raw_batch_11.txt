@@ -1,0 +1,9 @@
+class::auth/accounting_models.py::ItemType | This code defines an enumeration for item types, specifically goods and services. It provides string values for these two distinct categories.
+
+class::auth/accounting_models.py::SourceType | This code defines an enumeration for various transaction source types. It includes options for manual entries, sales methods, receipts, period closes, and voids.
+
+class::auth/accounting_models.py::Ledger | This class defines a database model for a ledger with fields for user ID, name, and currency. It establishes relationships with accounts, journal entries, and inventory items.
+
+class::auth/accounting_models.py::Account | This class defines a database model for an account with fields for type, name, number, and parent ID. It includes unique constraints and relationships to the ledger, children, and journal lines.
+
+class::auth/accounting_models.py::JournalEntry | This class defines a database model for a journal entry with fields for date, memo, and source type. It establishes relationships with the ledger and its associated journal lines.

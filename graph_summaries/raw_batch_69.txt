@@ -1,0 +1,5 @@
+function::frontend/src/components/atoms/HierarchyRenderer.tsx::HierarchyRenderer | This function renders a list of nodes with indentation based on their depth. It handles external links, clickable files, and standard labels differently.
+class::frontend/src/components/atoms/Icon.tsx::IconProps | This interface defines the properties for the Icon component. It includes name, optional size, and optional className.
+function::frontend/src/components/atoms/Icon.tsx::Icon | This function renders an SVG icon based on the provided name. It sets the size, stroke width, and other attributes.
+class::frontend/src/components/atoms/Input.tsx::InputProps | This interface extends InputHTMLAttributes for an input element. It allows for standard HTML input attributes.
+function::frontend/src/components/atoms/Input.tsx::Input | This function renders a styled text input element. It applies default classes and passes through additional props.

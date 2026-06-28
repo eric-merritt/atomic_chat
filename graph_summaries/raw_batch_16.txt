@@ -1,0 +1,5 @@
+function::auth/conversations_jsonl.py::_now | This function returns the current UTC time as an ISO formatted string. It uses the datetime module to generate the timestamp.
+function::auth/conversations_jsonl.py::_uid | This function generates a unique identifier using uuid4. It returns the identifier as a string.
+function::auth/conversations_jsonl.py::_user_dir | This function creates a directory path for a specific user ID. It ensures the directory exists by creating it if necessary.
+function::auth/conversations_jsonl.py::_meta_path | This function returns the file path for a conversation's metadata JSON file. It constructs the path using the user directory and conversation ID.
+function::auth/conversations_jsonl.py::_jsonl_path | This function returns the file path for a conversation's JSONL file. It constructs the path using the user directory and conversation ID.

@@ -1,0 +1,5 @@
+function::tests/test_tools_web.py::test_find_download_link_registered | This test verifies that the 'www_find_dl' tool is registered in the TOOL_REGISTRY. It imports the tools.web module to ensure the registration occurs.
+function::tests/test_tools_web.py::test_find_allowed_routes_registered | This test checks that the 'www_find_routes' tool is present in the TOOL_REGISTRY. It imports the tools.web module to trigger the registration.
+function::tests/test_tools_web.py::test_browser_query_registered | This test asserts that the 'www_query' tool is registered in the TOOL_REGISTRY. It imports the tools.web module to ensure the tool is available.
+function::tests/test_tools_web.py::test_browser_click_registered | This test confirms that the 'www_click' tool is registered in the TOOL_REGISTRY. It imports the tools.web module to load the tool definition.
+function::tests/test_tools_web.py::test_tool_classes_are_base_tool_subclasses | This test iterates through a list of specific web tool names and retrieves their classes from the registry. It asserts that each retrieved class is a subclass of BaseTool.

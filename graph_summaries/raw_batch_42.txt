@@ -1,0 +1,5 @@
+function::frontend/src/api/auth.ts::fetchMe | This function fetches the current user's session data from the /api/auth/me endpoint. It handles errors by returning a specific message if the server is unreachable or the session check fails.
+function::frontend/src/api/auth.ts::login | This function sends a POST request to /api/auth/login with the provided username and password. It returns the response data or an error object if the login fails or the server is unreachable.
+function::frontend/src/api/auth.ts::register | This function sends a POST request to /api/auth/register with the provided username, email, and password. It returns the response data or an error object if registration fails or the server is unreachable.
+function::frontend/src/api/auth.ts::logout | This function sends a POST request to the /api/auth/logout endpoint to terminate the user session. It does not return any data.
+function::frontend/src/api/auth.ts::oauthRedirect | This function redirects the browser to the OAuth login page for the specified provider. It accepts either 'github' or 'google' as the provider argument.

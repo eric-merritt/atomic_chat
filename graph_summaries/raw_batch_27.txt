@@ -1,0 +1,5 @@
+function::auth/routes.py::_check_password | This function verifies a plaintext password against a hashed password string using bcrypt. It returns a boolean indicating whether the password matches the hash.
+function::auth/routes.py::_create_session | This function creates a new UserSession record in the database with an expiration time and client details. It also updates the user's last login timestamp and commits the transaction.
+function::auth/routes.py::_user_json | This function converts a User object into a dictionary containing specific user attributes. It ensures the preferences field defaults to an empty dictionary if it is null.
+function::auth/routes.py::register | This function handles user registration by validating input, checking for existing users, and creating a new user record. It then creates a session, logs the user in, and returns the user data with a session cookie.
+function::auth/routes.py::login | This function authenticates a user by checking credentials against the database and verifying the password hash. Upon success, it creates a session, logs the user in, and returns the user data with a session cookie.

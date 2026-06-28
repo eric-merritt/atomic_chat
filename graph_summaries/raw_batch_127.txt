@@ -1,0 +1,5 @@
+function::routes/accounting.py::accounts | This function retrieves the list of accounts for the current user by calling the implementation function. It returns the result as a JSON response and ensures the database connection is closed.
+function::routes/accounting.py::create_ledger | This function creates a new ledger with a specified name for the current user. It handles database transactions, commits on success, rolls back on error, and returns a JSON response.
+function::routes/accounting.py::post_journal | This function posts a journal entry with a date, memo, and lines for the current user. It manages database transactions, handles errors, and returns the result as JSON.
+function::routes/accounting.py::trial_balance | This function retrieves the trial balance up to a specified date for the current user. It returns the result as a JSON response and closes the database connection.
+function::routes/bridge.py::get_pubkey | This function serves the server's RSA public key for client challenge-response authentication. It returns the key as plain text with a 200 status code.

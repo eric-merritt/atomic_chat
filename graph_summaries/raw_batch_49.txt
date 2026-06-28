@@ -1,0 +1,5 @@
+class::frontend/src/api/tools.ts::ToolsResponse | This interface defines a type for a response containing available and selected tools. It specifies that both fields are arrays of RawTool objects.
+function::frontend/src/api/tools.ts::getSubcategory | This function takes a name string and returns undefined. It indicates that subcategories are no longer needed with prefixed tool names.
+function::frontend/src/api/tools.ts::inferCategory | This function iterates through category rules to find a matching regex for the given name. It returns the matched category or 'Other' if no match is found.
+function::frontend/src/api/tools.ts::groupIntoCategories | This function groups tools into categories based on inferred names and sorts them by a predefined order. It returns an array of built category objects.
+function::frontend/src/api/tools.ts::buildIndex | This function creates a new map to store tool indices by name. It populates the map with indices from both available and selected tools in the response.

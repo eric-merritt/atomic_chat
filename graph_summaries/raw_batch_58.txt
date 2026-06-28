@@ -1,0 +1,5 @@
+function::frontend/src/atoms/theme.ts::getThemeById | This function searches the THEMES array for an entry with a matching id. It returns the found Theme object or undefined if no match exists.
+class::frontend/src/atoms/tool.ts::ToolParam | This interface defines the structure for a tool parameter including type, description, and requirement status. It also allows for an optional default value of any type.
+class::frontend/src/atoms/tool.ts::Tool | This interface defines the structure for a tool including its name, description, parameters, and category. It also includes a boolean flag to indicate if the tool is currently selected.
+class::frontend/src/atoms/tool.ts::ToolCategory | This interface defines a category containing a name and an array of tools. It also declares read-only properties for selection status and counts.
+function::frontend/src/atoms/tool.ts::buildCategory | This function creates a ToolCategory object from a name and an array of tools. It calculates the total count and selected count, and provides getters for selection states.

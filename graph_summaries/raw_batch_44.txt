@@ -1,0 +1,5 @@
+function::frontend/src/api/conversations.ts::getConversation | This function fetches a specific conversation by its ID with pagination parameters. It returns the parsed JSON response from the API endpoint.
+function::frontend/src/api/conversations.ts::createConversation | This function creates a new conversation by sending a POST request with title, model, and folder data. It returns the parsed JSON response from the API endpoint.
+function::frontend/src/api/conversations.ts::updateConversation | This function updates an existing conversation by sending a PATCH request with the provided ID and data. It returns the parsed JSON response from the API endpoint.
+function::frontend/src/api/conversations.ts::deleteConversation | This function deletes a specific conversation by sending a DELETE request with its ID. It does not return any data after the request completes.
+class::frontend/src/api/conversations.ts::ConversationTaskDTO | This interface defines the structure for a conversation task data transfer object. It includes fields for id, title, status, dependency, and creation timestamp.

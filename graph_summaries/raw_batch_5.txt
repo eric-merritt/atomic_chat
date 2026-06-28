@@ -1,0 +1,5 @@
+function::atomic_client/agent.py::_get_path | This function expands and validates a file path against a list of allowed paths. It raises a PermissionError if the path is invalid or outside the allowed directories.
+function::atomic_client/agent.py::_tool_fs_read | This function reads a file and returns a specific range of lines with line numbers. It uses the helper function to validate the path before reading.
+function::atomic_client/agent.py::_tool_fs_info | This function retrieves metadata about a file or directory, such as size and modification time. It also counts the number of lines if the target is a file.
+function::atomic_client/agent.py::_tool_fs_tree | This function generates a text-based tree representation of a directory structure. It supports options for maximum depth and hiding hidden files.
+function::atomic_client/agent.py::_walk | This nested helper function recursively walks through a directory to build the tree structure. It handles permission errors and filters hidden files based on the provided settings.

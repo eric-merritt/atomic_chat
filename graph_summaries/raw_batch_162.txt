@@ -1,0 +1,5 @@
+function::tests/test_integration_accounting.py::test_mcp_server_registers_accounting | This test verifies that the MCP server has registered the accounting tools. It asserts that both fa_ledger and fa_tx_new are present in the tool names.
+function::tests/test_integration_browser.py::login_flask_app | This function creates and starts a temporary Flask application on port 15432 for testing. It defines routes for a login form, authentication logic, and a dashboard page.
+function::tests/test_integration_browser.py::login_form | This function returns an HTML string containing a login form. The form includes fields for email and password and submits to the /do_login endpoint.
+function::tests/test_integration_browser.py::do_login | This function handles the POST request for login authentication. It checks the credentials and redirects to the dashboard if valid, otherwise returns an unauthorized error.
+function::tests/test_integration_browser.py::dashboard | This function returns a simple HTML string. It displays a welcome message to the user.

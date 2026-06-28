@@ -1,0 +1,3 @@
+function::tree_walk.py::extract_from_file | This function reads a file and checks if its extension is registered in the language registry. It then parses the file content using the registered parser to extract nodes and edges.
+function::tree_walk.py::build_repo_graph | This function recursively iterates through a directory, skipping excluded folders and non-code files. It aggregates nodes and edges from each valid file by calling the extraction function.
+function::tree_walk.py::main | This function sets up an argument parser to accept a root directory, optional languages, and an output path. It validates that the provided root path is a valid directory before proceeding.

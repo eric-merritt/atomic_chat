@@ -1,0 +1,5 @@
+class::routes/chat.py::_BashConfirm | This class acts as a sentinel object to signal that the bash tool requires confirmation from the web UI. It stores the associated data dictionary for the confirmation request.
+function::routes/chat.py::__init__ | This method initializes the _BashConfirm instance with a provided data dictionary. It assigns the data to the instance variable for later access.
+function::routes/chat.py::_tick_iterator | This function is not defined in the provided code block. It appears to be a placeholder or missing implementation.
+function::routes/chat.py::_pump | This function defines a background thread that processes an iterable and puts items into a queue. It handles errors and signals completion by putting specific markers into the queue.
+function::routes/chat.py::_estimate_tokens | This function is not defined in the provided code block. It appears to be a placeholder or missing implementation.

@@ -1,0 +1,5 @@
+function::auth/routes.py::logout | This function retrieves the session ID from cookies and deletes the corresponding session record from the database. It then clears the user session, removes the cookie, and returns a success response.
+function::auth/routes.py::me | This function retrieves the currently authenticated user's data. It returns a JSON response containing the user's information formatted by a helper function.
+function::auth/routes.py::list_keys | This function queries the database for all active API keys belonging to the current user. It returns a JSON list containing the ID, prefix, label, and timestamps for each key.
+function::auth/routes.py::create_key | This function generates a new secure API key and hashes it for storage. It saves the key metadata to the database and returns the raw key along with a security warning.
+function::auth/routes.py::revoke_key | This function finds the specified API key for the current user and marks it as revoked in the database. It returns a 404 error if the key is not found, otherwise it confirms the revocation.

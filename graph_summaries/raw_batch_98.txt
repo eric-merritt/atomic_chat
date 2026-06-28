@@ -1,0 +1,9 @@
+function::tools/accounting.py::_income_statement_impl | This function retrieves revenue and expense accounts for a specific user ledger within a given date range. It prepares the data necessary to generate an income statement.
+function::tools/accounting.py::_balance_sheet_impl | This function initializes variables to calculate total assets, liabilities, and equity for a user's ledger. It queries the database to retrieve account information for the balance sheet.
+function::tools/accounting.py::_close_period_impl | This function retrieves revenue and expense accounts with non-zero balances for a specific ledger. It prepares to perform closing entries for the specified period end date.
+class::tools/accounting.py::ClosePeriodTool | This class defines a tool to close revenue and expense accounts for a period by transferring net income to Owner's Capital. It accepts a period end date as a required parameter.
+function::tools/accounting.py::_cash_flow_statement_impl | This function retrieves the ledger and parses the start and end dates for a cash flow statement. It attempts to resolve the cash account and calculates the day before the start date.
+class::tools/browser_session.py::BrowserNavTool | This class defines a tool to navigate a headless browser session to a specified URL. It handles redirects and Cloudflare challenges automatically.
+function::tools/browser_session.py::call | This function parses the input parameters to extract the URL and wait time. It navigates the browser driver to the URL and handles Cloudflare challenges if enabled.
+class::tools/browser_session.py::BrowserFillTool | This class defines a tool to type a value into an input element on the current browser page. It requires a CSS selector and the value to type.
+function::tools/browser_session.py::call | This function parses the input parameters to get the selector and value. It finds the element by CSS selector and clears its current content.

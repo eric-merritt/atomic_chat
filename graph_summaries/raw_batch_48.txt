@@ -1,0 +1,5 @@
+function::frontend/src/api/preferences.ts::updateProfile | This function sends a PATCH request to the /api/auth/profile endpoint to update the user's username or email. It returns the parsed JSON response from the server.
+function::frontend/src/api/preferences.ts::changePassword | This function sends a POST request to the /api/auth/password endpoint to change the user's password. It returns the parsed JSON response from the server.
+function::frontend/src/api/system.ts::fetchSystemPrompt | This function fetches the system prompt from the /api/system endpoint with credentials included. It returns an object containing the prompt data or an error message if the request fails.
+function::frontend/src/api/system.ts::setSystemPrompt | This function sends a POST request to the /api/system endpoint to update the system prompt. It returns an object containing the updated prompt data or an error message if the request fails.
+class::frontend/src/api/tools.ts::RawTool | This interface defines the structure for a raw tool object with index, name, description, and params fields. It serves as a type definition for tool data in the application.

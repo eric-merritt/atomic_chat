@@ -1,0 +1,10 @@
+function::tools/web.py::_validate_url | This function validates a URL string to ensure it starts with http:// or https://. It returns an error message if the format is invalid, otherwise it returns None.
+function::tools/web.py::_get_stored_cookies_for_url | This function retrieves stored cookies that match the domain of the provided URL. It handles domain matching logic to include subdomains and returns the cookies as name=value strings.
+class::tools/web.py::RetrieveDomainSpecificCookiesTool | This class defines a tool for retrieving cookies associated with a specific URL from the session environment. It accepts a URL parameter and returns the list of matching cookies.
+function::tools/web.py::call | This method parses the input parameters to extract the URL. It then calls the helper function to retrieve and return the stored cookies for that URL.
+class::tools/web.py::RetrieveCookiesTool | This class defines a tool for retrieving all stored cookies from the session environment. It does not require any input parameters and returns the entire cookie store.
+function::tools/web.py::call | This method parses the input parameters and accesses the global stored cookies variable. It returns the complete dictionary of stored cookies.
+function::tools/web.py::call | This method parses the input to get a CSS selector and validates that it is not empty. It attempts to get a browser driver and find an element using the provided selector.
+class::tools/web.py::WebSearchTool | This class is defined but contains no visible code in the provided snippet. It likely serves as a placeholder or base for a web search tool.
+function::tools/web.py::call | This function is defined but contains no visible code in the provided snippet. It likely serves as a placeholder or method stub.
+class::tools/web.py::ExtractUrlTool | This class is defined but contains no visible code in the provided snippet. It likely serves as a placeholder or base for a URL extraction tool.

@@ -1,0 +1,5 @@
+function::frontend/src/api/workflowGroups.ts::fetchGateStatus | This function fetches the gate status from the API endpoint. It returns a record mapping gate names to boolean values.
+function::frontend/src/api/workflowGroups.ts::acceptGate | This function sends a POST request to accept a specific gate. It throws an error if the request fails.
+function::frontend/src/api/workflowGroups.ts::selectGroup | This function sends a POST request to select or deselect a group. It returns the updated list of selected groups.
+class::frontend/src/atoms/accounting.ts::AccountSummary | This interface defines the structure for an account summary object. It includes fields for id, name, type, number, balance, and active status.
+class::frontend/src/atoms/accounting.ts::JournalLine | This interface defines the structure for a journal line item. It includes fields for account, debit, and credit.

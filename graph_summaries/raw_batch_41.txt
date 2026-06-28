@@ -1,0 +1,5 @@
+function::frontend/src/api/accounting.ts::fetchAccounts | This function fetches a list of account summaries from the accounting API endpoint. It handles errors and returns a standardized response object containing the count and accounts data.
+function::frontend/src/api/accounting.ts::createLedger | This function creates a new ledger by sending a POST request with the specified name to the API. It returns the result or an error object if the request fails.
+function::frontend/src/api/accounting.ts::postJournalEntry | This function posts a journal entry draft to the accounting API endpoint. It returns the result of the operation or an error object if the request fails.
+function::frontend/src/api/accounting.ts::fetchTrialBalance | This function fetches the trial balance data from the API, optionally filtering by a specific date. It handles errors and returns a standardized response object.
+class::frontend/src/api/auth.ts::AuthResponse | This interface defines the structure for an authentication response. It includes optional fields for the user object and an error message.
