@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Atomic Chat Cookie Bridge",
+  "version": "1.0.0",
+  "description": "Syncs browser cookies to Atomic Chat, excluding OAuth flow cookies.",
+  "permissions": ["cookies", "storage", "scripting", "tabs"],
+  "host_permissions": ["<all_urls>", "http://localhost/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:6612/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Atomic Chat Cookie Bridge"
+  }
+}

@@ -279,11 +279,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const tokens = filterStopWords(graphSearch.toLowerCase().split(/\s+/));
     const matched = new Set<string>();
     graphData.nodes.forEach((n) => {
-      const haystack = [
-        n.label,
-        n.summary || "",
-        n.file || "",
-      ].join(" ").toLowerCase();
+      const haystack = [n.label, n.summary || "", n.file || ""]
+        .join(" ")
+        .toLowerCase();
       if (tokens.some((t) => haystack.includes(t))) {
         matched.add(n.id);
       }

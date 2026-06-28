@@ -6,10 +6,14 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: '0.0.0.0',
-    port: 5174,
+    allowedHosts: ['agent.eric-merritt.com'],
+    port: 6612,
+    // Never auto-migrate to the next free port — fail loudly on a conflict
+    // instead of silently stealing another service's port.
+    strictPort: true,
     proxy: {
-      '/api': 'http://localhost:5000',
-      '/static': 'http://localhost:5000',
+      '/api': 'http://localhost:8297',
+      '/static': 'http://localhost:8297',
     },
   },
   build: {

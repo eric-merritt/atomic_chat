@@ -14,9 +14,9 @@ from rich.live import Live
 from rich.spinner import Spinner
 
 # API host — backend (Flask). In prod both vars point to the same origin.
-ATOMIC_HOST = os.environ.get("ATOMIC_HOST", "http://localhost:5000")
+ATOMIC_HOST = os.environ.get("ATOMIC_HOST", "http://localhost:8297")
 # UI host — frontend (Vite dev server proxies /api → Flask). Only differs in local dev.
-ATOMIC_UI_HOST = os.environ.get("ATOMIC_UI_HOST", "http://localhost:5173")
+ATOMIC_UI_HOST = os.environ.get("ATOMIC_UI_HOST", "http://localhost:6612")
 CREDS_PATH = Path.home() / ".config" / "atomic_chat" / "credentials.json"
 
 console = Console()

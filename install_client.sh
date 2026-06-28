@@ -2,7 +2,7 @@
 # install.sh — Atomic Chat Installer
 #
 # Path 1: Full Local Stack  — self-hosted LLM + backend + frontend, no cloud
-#                             After install: ./start.sh
+#                             After install: uv run python launch.py
 # Path 2: Cloud Client Only — agent bridge to agent.eric-merritt.com
 #                             After install: ./agent
 
@@ -505,7 +505,7 @@ fi
 printf "\n${GREEN}${BOLD}══════════════════════════════════${RESET}\n"
 printf "${GREEN}${BOLD}  Installation complete!${RESET}\n"
 printf "${GREEN}${BOLD}══════════════════════════════════${RESET}\n\n"
-info "Start everything:  ./start.sh"
+info "Start everything:  uv run python launch.py"
 printf "\n"
 info "Or launch llama-server manually:"
 printf "  %s \\\\\n    --model \"%s\" \\\\\n    --port %s \\\\\n    -ngl %s\n\n" \

@@ -1,0 +1,14 @@
+# Exclude the standalone neo4j knowledge-graph pipeline (lives beside root).
+# tree_walk.py + its build scripts + emitted graph results.
+tree_walk.py
+scripts/
+graph.json
+graph.gexf
+graph_summaries/
+frontend/graph.json
+
+# NOTE: tools/ is hardcoded into the MCP binary's default-ignore set
+# (alongside scripts/docs/keys/logs). .cbmignore negation (!tools/) does NOT
+# override it, and the indexer does not follow symlinks. The tool *callers*
+# and the _LazyToolRef / workflow_groups machinery are still in the graph;
+# the tool *implementation bodies* are not. No config workaround exists.

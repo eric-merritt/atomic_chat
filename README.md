@@ -34,7 +34,7 @@ The script will:
 
 **Start:**
 ```bash
-./start.sh
+uv run python launch.py
 # UI opens at http://localhost:<frontend-port>
 ```
 

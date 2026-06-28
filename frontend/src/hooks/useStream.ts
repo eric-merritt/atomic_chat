@@ -72,7 +72,7 @@ export function useStream() {
         const err = e as Error;
         let msg: string;
         if (err.name === 'TypeError' && err.message.toLowerCase().includes('fetch')) {
-          msg = 'Connection lost — unable to reach the chat server. Check that the backend is running on port 5000.';
+          msg = 'Connection lost — unable to reach the chat server. Check that the backend is running on port 8297.';
         } else if (err.message) {
           msg = err.message;
         } else {

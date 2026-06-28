@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { font-family: monospace; width: 220px; padding: 12px; margin: 0; background: #111; color: #eee; }
+    h3 { margin: 0 0 10px; font-size: 13px; color: #adf; }
+    .row { display: flex; justify-content: space-between; font-size: 12px; margin: 4px 0; }
+    .label { color: #888; }
+    .val { color: #fff; }
+    .blocked { color: #f88; }
+    button { margin-top: 12px; width: 100%; padding: 6px; background: #1a6; border: none; color: #fff; cursor: pointer; font-family: monospace; font-size: 12px; }
+    button:hover { background: #2b7; }
+    #status { font-size: 11px; margin-top: 8px; color: #888; }
+  </style>
+</head>
+<body>
+  <h3>Cookie Bridge</h3>
+  <div class="row"><span class="label">domains</span><span class="val" id="domains">—</span></div>
+  <div class="row"><span class="label">cookies</span><span class="val" id="cookies">—</span></div>
+  <div class="row"><span class="label">oauth blocked</span><span class="blocked" id="blocked">—</span></div>
+  <div class="row"><span class="label">last sync</span><span class="val" id="lastSync">—</span></div>
+  <button id="syncBtn">Sync Now</button>
+  <div id="status"></div>
+  <script src="popup.js"></script>
+</body>
+</html>

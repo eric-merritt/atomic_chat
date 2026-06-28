@@ -14,7 +14,7 @@ export async function fetchMe(): Promise<AuthResponse> {
     if (!resp.ok) return { error: `Session check failed (HTTP ${resp.status})` };
     return await resp.json();
   } catch {
-    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 8297' };
   }
 }
 
@@ -30,7 +30,7 @@ export async function login(username: string, password: string): Promise<AuthRes
     if (!resp.ok) return { error: data.error || `Login failed (HTTP ${resp.status})` };
     return data;
   } catch {
-    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 8297' };
   }
 }
 
@@ -48,7 +48,7 @@ export async function register(
     if (!resp.ok) return { error: data.error || `Registration failed (HTTP ${resp.status})` };
     return data;
   } catch {
-    return { error: 'Cannot reach server — check your network or that the backend is running on port 5000' };
+    return { error: 'Cannot reach server — check your network or that the backend is running on port 8297' };
   }
 }
 

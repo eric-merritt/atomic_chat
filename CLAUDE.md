@@ -1,6 +1,6 @@
 ATOMIC CHAT // BRIEF
 Architecture: Flask (BE) + React/TS (FE) + qwen-agent + Ollama. NDJSON streaming. Atomic UI. Tailwind v4.
-RUN: ./start.sh restart -- Kills orphaned processes/running servers, starts all
+RUN: uv run python launch.py restart -- Stops running servers, starts all (start|stop|restart|status|stop-app|stop-llama|shell)
 Backend CORE: main.py (chat loop) | config.py (LLM/Ollama) | tools/ (impls) | auth/ (DB/models/routes) | routes/ (API) | pipeline/ (tool groups)
 Frontend CORE: frontend/CLAUDE.md = master spec | App.tsx = provider/router hub | Atomic hierarchy (atoms→pages)
 TASK → FILES:

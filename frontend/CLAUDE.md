@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- **Dev server:** `npm run dev` (Vite on port 5173, proxies `/api` and `/static` to Flask backend on port 5000)
+- **Dev server:** `npm run dev` (Vite on port 6612, proxies `/api` and `/static` to Flask backend on port 8297)
 - **Build:** `npm run build` (runs `tsc -b && vite build`, outputs to `dist/`)
 - **Lint:** `npm run lint` (ESLint with TypeScript + React hooks/refresh plugins)
 - **Test all:** `npx vitest run`
