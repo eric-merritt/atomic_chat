@@ -19,6 +19,7 @@ dependencies = [
     "requests>=2.32.5",
     "qwen-agent>=0.0.34",
     "json5>=0.13.0",
+    "opencv-python>=4.10.0",
     "ddgs>=9.13.0",
     "prompt-toolkit>=3.0.52",
     "rich>=13.0.0",
@@ -29,4 +30,5 @@ dependencies = [
     "chromadb>=0.6.0",
     "sentence-transformers>=3.0.0",
     "soundfile>=0.13.1",
+    "pyfiglet>=1.0.0",
 ]
