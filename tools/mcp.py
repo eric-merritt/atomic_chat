@@ -17,7 +17,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from tools._output import tool_result
 
-_DEFAULT_MCP_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:5100/")
+_DEFAULT_MCP_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8463/")
 
 
 @register_tool("mcp_init_conn")

@@ -799,25 +799,118 @@ class FilesystemTreeTool(BaseTool):
         try:
             p = json5.loads(params)
             path = _resolve(p["path"])
-            results = os.listdir(path)
-            return results
-        except NotADirectoryError:
-            print("Target must be a directory")
+            results = run(["tree", path], capture_output=True, text=True, timeout=30)
+
+            if not results.stdout:
+                return tool_result(
+                    error=results.stderr.strip() or "tree produced no output"
+                )
+            return tool_result(data=results.stdout)
+        except FileNotFoundError:
+            return tool_result(
+                error="Call to 'tree' failed. Not installed or missing from path."
+            )
 
 
 @register_tool("fs_list")
 class ListDirectoryFiles(BaseTool):
     """Print just the files in the provided directory"""
 
-    description = "This tool lists the files and directories in the provided directory"
-    "non-recursively."
+    description = (
+        "This tool lists the files and directories in the provided directory ("
+        "non-recursively)."
+    )
 
     parameters = {
         "type": "object",
         "properties": {
             "path": {
                 "type": "string",
-                "description": f"an absolute path or relative DIRECTORY path. You are at {os.environ.get(ROOT)}",
-            }
+                "description": f"an absolute path or relative DIRECTORY path. You are at {ROOT}",
+            },
         },
+        "required": ["path"],
     }
+
+    def call(self, params: str, **kwargs):
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
+        try:
+            p = json5.loads(params)
+            path = _resolve(p["path"])
+            results = os.listdir(path)
+            return tool_result(data=results)
+        except NotADirectoryError:
+            return tool_result(error="Invalid path. Not a directory.")
+        except FileNotFoundError:
+            return tool_result(
+                error="File not found. Try calling fs_find from a shallower path."
+            )
+
+
+@register_tool("fs_find")
+class FilesystemFindTool(BaseTool):
+    (
+        """A tool that finds files starting at a path (defaults to current directory  or """
+        """{ROOT})"""
+    )
+
+    description = (
+        "Find files/dirs using a query (required) and path (optional). Can filter results by type=file/directory"
+        " or extension=[mp4]/[mp4,wmv,mov]"
+    )
+
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The name of a file or directory to search for.",
+            },
+            "path": {
+                "type": "string",
+                "description": "The path where you would like the search to start",
+            },
+            "target_type": {
+                "type": "string",
+                "description": "Optionally pass one of: 'file' or 'directory' to filter results by type.",
+            },
+            "extension": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optionally pass one or more extensions to return rather than a filename query. e.g. extensions=['mp4','mpg','wmv']",
+            },
+        },
+        "required": ["query"],
+    }
+
+    def call(self, params: str, **kwargs):
+        r = check_fs_access(self.name, params)
+        if r is not None:
+            return r
+        try:
+            p = json5.loads(params)
+            query = p.get("query")
+            # No path given → omit it so fdfind searches the agent's working
+            # directory (which is the agent's root).
+            path = _resolve(p["path"]) if p.get("path") else ""
+            extension = p.get("extension", [])
+            target_type = p.get("target_type")
+            cmd = ["fdfind", query]
+            if path:
+                cmd.append(path)
+            if target_type:
+                if target_type in ["file", "directory"]:
+                    cmd.extend(["-t", target_type[0]])
+                else:
+                    return tool_result(
+                        error="Invalid target_type. Must be one of: [file,directory]."
+                    )
+            for ext in extension:
+                cmd.extend(["-e", ext])
+            results = run(cmd, capture_output=True, text=True, timeout=60)
+            data = results.stdout
+            return tool_result(data=data)
+        except FileNotFoundError:
+            return tool_result(error="No results.")

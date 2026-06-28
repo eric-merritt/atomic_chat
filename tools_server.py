@@ -1,6 +1,6 @@
 """MCP Tool Server — serves all tools via Model Context Protocol.
 
-Hosted at https://tools.eric-merritt.com via nginx proxy to localhost:5100.
+Hosted at https://tools.eric-merritt.com via nginx proxy to localhost:8463.
 
 Uses Streamable HTTP transport (stateless, JSON responses) so any
 MCP-compatible client (Claude Desktop, Claude Code, etc.) can connect.
@@ -26,7 +26,8 @@ import tools  # noqa: E402,F401 — triggers @register_tool side-effects for our
 
 logger = logging.getLogger(__name__)
 
-PORT = 5100
+from config import TOOLS_PORT
+PORT = TOOLS_PORT
 
 # Create MCP server — stateless HTTP with JSON responses, served at /
 mcp = FastMCP(

@@ -14,6 +14,7 @@ from pipeline.workflow_groups import WORKFLOW_GROUPS
 from auth.middleware import login_manager, auth_guard
 from auth.routes import auth_bp, init_oauth
 from auth.db import init_db, SessionLocal
+from config import BACKEND_PORT
 
 
 
@@ -201,7 +202,7 @@ def main():
   except Exception as e:
     print(f"Neo4j startup sync skipped (will use graph.json fallback): {e}")
 
-  port = 5000
+  port = BACKEND_PORT
   for arg in sys.argv:
     if arg.startswith("--port="):
       port = int(arg.split("=")[1])

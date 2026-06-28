@@ -230,7 +230,7 @@ def revoke_key(key_id):
 
 oauth = OAuth()
 
-OAUTH_REDIRECT_BASE = os.environ.get("OAUTH_REDIRECT_BASE", "http://localhost:5000")
+OAUTH_REDIRECT_BASE = os.environ.get("OAUTH_REDIRECT_BASE", "http://localhost:8297")
 
 
 def init_oauth(app):
