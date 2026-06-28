@@ -29,6 +29,8 @@ class ConversationTask(Base):
         nullable=True,
     )
     title = Column(Text, nullable=False)
+    action = Column(Text, nullable=True)
+    expected_output = Column(Text, nullable=True)
     status = Column(String(16), nullable=False, default="pending")
     depends_on = Column(
         String(36),
