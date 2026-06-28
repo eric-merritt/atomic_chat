@@ -716,6 +716,28 @@ def chat_stream():
     ]
     history = build_history(history_rows)
 
+    # Inline compaction: at the start of the turn (no stream active yet, so no
+    # write conflict), if the would-be prompt crosses the budget, fold old
+    # messages into conv.running_summary and send [summary] + recent instead of
+    # the full history. Non-destructive — db_messages stay intact. The full-
+    # history path leaves the main agent's prompt cache warm; only crossing the
+    # threshold changes the prefix.
+    from context.compaction import needs_compaction, fold_old_messages, compacted_history
+
+    pending = history + [{"role": "user", "content": user_msg}]
+    if db_messages and needs_compaction(_estimate_tokens(pending), LLAMA_ARG_CTX_SIZE):
+        try:
+            recent_rows = fold_old_messages(conv, db_messages)
+            db.commit()
+            # Replace full history with [summary] + recent. The real user message
+            # is still appended downstream (qwen_messages = history + [user msg]).
+            history = compacted_history(conv.running_summary, recent_rows)
+        except Exception as compaction_err:
+            db.rollback()
+            logging.getLogger(__name__).warning(
+                "Inline compaction failed, sending full history: %s", compaction_err
+            )
+
     # Resolve only the tools relevant to this task — not the full registry.
     # Neo4j scores tools against the task; falls back to LLM-based routing.
     # Always include task-management and introspection tools.

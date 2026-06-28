@@ -27,6 +27,10 @@ class Conversation(Base):
     model = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now)
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now)
+    # Inline compaction: gist of messages older than the recent window, plus the
+    # created_at of the last message folded in. Messages are never deleted.
+    running_summary = Column(Text, nullable=True)
+    summary_covers_through = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User")
     messages = relationship("ConversationMessage", back_populates="conversation",
