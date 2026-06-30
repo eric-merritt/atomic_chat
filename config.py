@@ -125,7 +125,7 @@ MAIN_LLAMA = {
     "alias": os.environ.get("MODEL_ALIAS", SUMMARIZE_MODEL),
     "host": "0.0.0.0",
     "port": LLAMA_PORT,
-    "ngl": int(os.environ.get("MODEL_NGL", "44")),
+    "ngl": int(os.environ.get("MODEL_NGL", "40")),
     "ctx": int(os.environ.get("MODEL_CTX", "24000")),
     "parallel": int(os.environ.get("MODEL_PARALLEL", "2")),
     "flash_attn": True,
