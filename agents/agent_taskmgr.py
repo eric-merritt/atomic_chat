@@ -14,41 +14,33 @@ summary model.
 
 from openai import OpenAI
 from flask import g
+from qwen_agent.agents import Assistant
 
-from config import qwen_summary_cfg, SUMMARIZE_MODEL, SUMMARIZE_SERVER_URL
+from config import qwen_summary_cfg, SUMMARIZE_MODEL, LLAMA_SERVER_URL
 
 TASKMGR_SYSTEM_PROMPT = """
-You break user requests into an atomic task list. You call ONE tool, `tg_sync`, every turn.
+Break user requests into an atomic task list. Call tg_sync once every turn — no exceptions.
 
-YOU SEE: latest user message + existing task list.
-YOU OUTPUT: only NEW tasks, plus EDITED tasks (resubmit with their existing id).
+INPUT: latest user message + existing task list
+OUTPUT: only NEW tasks or EDITED tasks (resubmit edited tasks with their existing id)
 
-A task is atomic when it needs no further breakdown, can be verified objectively,
-and can run on its own. Order tasks logically; use depends_on for ordering.
+ATOMIC = no further breakdown needed, objectively verifiable, self-contained
 
-Example — user: "Check the www_fetch_content tool for errors."
-1. List tree for the tools folder
-2. Search web tools for www_fetch_content
-3. Read its lines
-4. Identify errors
-5. Report to user
+TASK FIELDS: title, action, expected_output, depends_on (optional)
 
-Each task has: title, action (what to do), expected_output (proof of done),
-depends_on (id it waits on, optional).
-
-EVERY TURN: call tg_sync once.
-- New/changed tasks in the message -> pass them.
-- Nothing new -> call tg_sync with an empty tasks list.
+RULES:
+- Order tasks logically; use depends_on for sequencing
+- Nothing new → call tg_sync with empty tasks list
 """
 
 
 REVIEW_SYSTEM_PROMPT = """
-Your only responsibility is verifying task completion. If the main agent calls "tl_done" you are
-the LAST line of DEFENSE that decides if that claim is TRUE or FALSE.
+Verify task completion claims. You are the last gate before tl_done is accepted.
 
-FORMAT IF:
-- AGREE (agent did complete): {"agree": true, "reason": "<1 sentence>"}
-- DISAGREE (agent did not complete): {"agree": false, "reason": "<1 sentence>"}
+- Completed: {"agree": true, "reason": "<1 sentence>"}
+- Not completed: {"agree": false, "reason": "<1 sentence>"}
+
+Reply with JSON only.
 """
 
 
@@ -188,7 +180,7 @@ def run_taskmgr(conversation_id: str, user_message: str, existing_tasks: list) -
         + "Update the task list and call tg_sync once."
     )
 
-    client = OpenAI(base_url=SUMMARIZE_SERVER_URL + "/v1", api_key="EMPTY")
+    client = OpenAI(base_url=LLAMA_SERVER_URL + "/v1", api_key="EMPTY")
     response = client.chat.completions.create(
         model=SUMMARIZE_MODEL,
         messages=[
@@ -197,6 +189,7 @@ def run_taskmgr(conversation_id: str, user_message: str, existing_tasks: list) -
         ],
         tools=[_TG_SYNC_SCHEMA],
         tool_choice="required",
+        extra_body={"id_slot": 1},
     )
 
     msg = response.choices[0].message

@@ -172,7 +172,7 @@ def build_llama_argv(spec):
     "--jinja",
     "--reasoning", "off",
     "--no-webui",
-    "--parallel", "1",
+    "--parallel", str(spec.get("parallel", 1)),
     "-ngl", str(spec["ngl"]),
     "-c", str(spec["ctx"]),
   ]
@@ -182,8 +182,12 @@ def build_llama_argv(spec):
     argv += ["--cache-type-k", spec["cache_type"], "--cache-type-v", spec["cache_type"]]
   if spec.get("mmproj"):
     argv += ["--mmproj", spec["mmproj"]]
-  if spec.get("draft_model"):
-    argv += ["--model-draft", spec["draft_model"], "-ngld", str(spec["draft_ngl"])]
+  if spec.get("spec_type"):
+    argv += [
+      "--spec-type", spec["spec_type"],
+      "--spec-draft-n-max", str(spec["spec_draft_n_max"]),
+      "--spec-draft-p-min", str(spec["spec_draft_p_min"]),
+    ]
   return argv
 
 
@@ -292,14 +296,12 @@ def start_frontend():
 # Friendly name (CLI-facing) → internal name (pidfile/log) + how to start it.
 SERVICES = {
   "main":     { "internal": "llama",         "label": "llama-server",  "kind": "llama", "spec": config.MAIN_LLAMA },
-  "summary":  { "internal": "llama_summary", "label": "llama-summary", "kind": "llama", "spec": config.SUMMARY_LLAMA },
   "tools":    { "internal": "tools",         "label": "tools-server",  "kind": "app",   "starter": start_tools },
   "backend":  { "internal": "backend",       "label": "backend",       "kind": "app",   "starter": start_backend },
   "frontend": { "internal": "frontend",      "label": "frontend",      "kind": "app",   "starter": start_frontend },
 }
 
-# Dependency-safe order for bulk operations (main before summary for VRAM, etc.).
-STARTUP_ORDER = ["main", "summary", "tools", "backend", "frontend"]
+STARTUP_ORDER = ["main", "tools", "backend", "frontend"]
 
 
 def in_startup_order(names):
@@ -337,8 +339,7 @@ def stop_app():
 
 
 def stop_llama():
-  for name in ("main", "summary"):
-    stop_service(name)
+  stop_service("main")
 
 
 def stop_all():
@@ -349,12 +350,17 @@ def stop_all():
 
 # ── Orchestration ────────────────────────────────────────────────────────────
 def start_all():
-  start_neo4j()
+  # Neo4j only backs the "neo4j" tool router and the graph explorer UI. With
+  # TOOL_ROUTER=toolsdb (default), routing reads the MCP SQLite graph and the
+  # app's startup ingest is non-fatal — so skip the 532MB container. Start it
+  # manually (docker start neo4j) if you need the graph explorer.
+  if config.TOOL_ROUTER == "neo4j":
+    start_neo4j()
+  else:
+    print(f"⏭️  Skipping Neo4j (TOOL_ROUTER={config.TOOL_ROUTER}; graph explorer needs manual 'docker start neo4j')")
   if not start_service("main"):
-    print("❌ Main llama-server failed to come up — aborting before summary contends for VRAM")
+    print("❌ Main llama-server failed to come up — aborting")
     sys.exit(1)
-  if not start_service("summary"):
-    print("  ⚠️  summary did not come up — continuing (chat works, summaries degraded)")
   start_service("tools")
   start_service("backend")
   start_service("frontend")

@@ -7,7 +7,7 @@ here as this agent's own prompt.
 
 import requests
 
-from config import LLAMA_SERVER_URL, SUMMARIZE_MODEL, SUMMARIZE_SERVER_URL
+from config import LLAMA_SERVER_URL, SUMMARIZE_MODEL
 
 SUMMARY_SYSTEM_PROMPT = (
     "You compress conversation history. Each of the last 3 turns should be summarized in 2-3 sentences."
@@ -42,10 +42,6 @@ FOLD_SYSTEM_PROMPT = (
 )
 
 
-def _summary_server() -> str:
-    return SUMMARIZE_SERVER_URL or LLAMA_SERVER_URL
-
-
 def fold_summary(prev_summary: str, new_exchanges: str, timeout: int = 60) -> str:
     """Fold `new_exchanges` into `prev_summary`, returning the updated memory.
 
@@ -57,7 +53,7 @@ def fold_summary(prev_summary: str, new_exchanges: str, timeout: int = 60) -> st
         f"NEW EXCHANGES:\n{new_exchanges}"
     )
     resp = requests.post(
-        f"{_summary_server()}/v1/chat/completions",
+        f"{LLAMA_SERVER_URL}/v1/chat/completions",
         json={
             "model": SUMMARIZE_MODEL,
             "messages": [
@@ -66,6 +62,7 @@ def fold_summary(prev_summary: str, new_exchanges: str, timeout: int = 60) -> st
             ],
             "stream": False,
             "cache_prompt": False,
+            "id_slot": 1,
         },
         timeout=timeout,
     )
@@ -75,7 +72,7 @@ def fold_summary(prev_summary: str, new_exchanges: str, timeout: int = 60) -> st
 def summarize(transcript: str, timeout: int = 60) -> str:
     """Return a compressed summary of `transcript` from the summary model."""
     resp = requests.post(
-        f"{_summary_server()}/v1/chat/completions",
+        f"{LLAMA_SERVER_URL}/v1/chat/completions",
         json={
             "model": SUMMARIZE_MODEL,
             "messages": [
@@ -83,8 +80,8 @@ def summarize(transcript: str, timeout: int = 60) -> str:
                 {"role": "user", "content": transcript},
             ],
             "stream": False,
-            # No prompt-cache carryover — the summary server starts fresh each turn.
             "cache_prompt": False,
+            "id_slot": 1,
         },
         timeout=timeout,
     )
