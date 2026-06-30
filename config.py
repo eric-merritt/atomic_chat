@@ -121,7 +121,7 @@ MMPROJ_PATH = os.environ.get(
 MAIN_LLAMA = {
     "name": "llama",
     "bin": LLAMA_BIN,
-    "model": os.environ.get("MODEL", os.path.expandvars(MODELS[SUMMARIZE_MODEL]["path"])),
+    "model": os.environ.get("MODEL") or os.environ.get("QWEN_LATEST"),
     "alias": os.environ.get("MODEL_ALIAS", SUMMARIZE_MODEL),
     "host": "0.0.0.0",
     "port": LLAMA_PORT,
