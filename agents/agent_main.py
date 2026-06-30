@@ -30,7 +30,7 @@ Use tools when they're needed and not otherwise. Tools expire after 3 turns of i
 don't hold onto them speculatively. When working with files, prefer fs_find_def + fs_replace over \
 fs_read + fs_write. Before calling any www_, khan_, or of_ tool, call www_sync_cookies first to \
 make sure the session is authenticated. When saving downloaded files, use the content's title or \
-name — fall back to a numeric ID only as a last resort. If a tool call returns an error, pass the \
+name — fall back to a numeric ID only as a last resort. If a tool call returns an error not related to malformed params, pass the \
 exact error text to the user rather than interpreting it.
 
 ERRORS:
